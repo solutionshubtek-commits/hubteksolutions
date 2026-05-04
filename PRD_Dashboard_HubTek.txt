@@ -1,0 +1,194 @@
+# PROJECT ARCHITECTURE: Dashboard Hubtek Solutions
+
+## 1. CONTEXT & PROBLEM
+
+Empresas perdem clientes por falta de atendimento junto ao seu canal de atendimento principal "WhatsApp", a demora no retorno do atendimento faz com que os clientes busquem outra empresa para sanar sua necessidade. 
+Perdendo assim faturamento e vendas.
+
+## 2. PROPOSED SOLUTION
+
+Plataforma HubTek Solutions de Agente de Atendimento via WhatsApp
+
+## 1. Visão Geral da Solução
+
+A solução consiste em uma plataforma SaaS multi-tenant composta por dois módulos principais e interdependentes: o **Agente de Atendimento Inteligente** e o **Dashboard de Gestão**. A plataforma é projetada para ser operada por um administrador central (o fornecedor do serviço) e consumida por múltiplos clientes (tenants) de forma isolada, segura e escalável. Cada cliente possui seu próprio ambiente configurado de forma independente, sem interferência entre os dados, conversas ou configurações de outros clientes.
+
+---
+
+## 2. Módulo 1 — Agente de Atendimento Inteligente via WhatsApp
+
+### 2.1 Canal de Comunicação
+
+O agente opera exclusivamente pelo canal WhatsApp. O acesso do usuário final ocorre através de um botão de contato no site do cliente, que redireciona para uma conversa WhatsApp com o número vinculado àquele tenant. A integração entre o WhatsApp e a lógica do agente é feita via **Evolution API**, responsável por receber e enviar mensagens em tempo real.
+
+### 2.2 Capacidades do Agente
+
+O agente é capaz de realizar três funções principais dentro de uma mesma conversa, de forma fluida e contextualizada:
+
+**Suporte e Atendimento:** O agente identifica dúvidas, problemas e solicitações do usuário e responde com base nas informações disponíveis na base de conhecimento do cliente. Ele mantém o contexto da conversa ao longo de toda a interação, garantindo respostas coerentes e sem repetição desnecessária de perguntas.
+
+**Conhecimento sobre Produtos e Serviços:** O agente tem acesso completo às informações de produtos, serviços, preços, políticas e procedimentos do cliente, carregadas previamente na base de conhecimento vetorial. Ele é capaz de responder perguntas específicas, comparar opções e orientar o usuário na escolha mais adequada.
+
+**Agendamentos:** O agente é capaz de conduzir um fluxo de agendamento de forma conversacional, coletando as informações necessárias (data, horário, serviço, dados do cliente), confirmando a disponibilidade e registrando o agendamento no sistema.
+
+### 2.3 Base de Conhecimento Vetorial
+
+Cada tenant possui sua própria base de conhecimento isolada, armazenada em formato vetorial no **Supabase (pgvector)**. A base suporta a ingestão de diferentes tipos de conteúdo: documentos em PDF, textos descritivos, tabelas de produtos, perguntas e respostas frequentes e histórico de atendimentos anteriores. O sistema realiza buscas semânticas para recuperar os trechos mais relevantes a cada mensagem recebida, garantindo respostas precisas mesmo com variações na forma como o usuário faz a pergunta.
+
+### 2.4 Memória de Conversa
+
+O agente mantém o histórico completo de cada conversa ativa, armazenado no Supabase e vinculado ao número de telefone do usuário. Isso permite que, em um novo contato, o agente reconheça o usuário e tenha acesso ao contexto de interações anteriores, proporcionando uma experiência personalizada e contínua.
+
+### 2.5 Mecanismo de Pausa e Retomada
+
+O agente possui um sistema de controle de estado por conversa. Quando ativado o modo de pausa para uma conversa específica, o agente deixa de responder automaticamente àquele contato, sinalizando no dashboard que aquela conversa está sob atendimento humano. A retomada pode ser feita a qualquer momento pelo operador diretamente no dashboard, devolvendo o controle ao agente.
+
+### 2.6 Motor de Inteligência Artificial
+
+O processamento das mensagens e a geração das respostas são realizados pela **API do Claude (Anthropic)** ou **API da OpenAI**, configurável por tenant. Cada chamada à API registra automaticamente a quantidade de tokens consumidos, vinculando o custo ao tenant e ao ciclo mensal correspondente. Esses dados são visíveis exclusivamente no Módulo Administrativo do fornecedor, sendo utilizados para gestão de custos e faturamento ao cliente.
+
+---
+
+## 3. Módulo 2 — Dashboard de Gestão
+
+### 3.1 Acesso e Isolamento por Tenant
+
+Cada cliente acessa seu próprio dashboard através de uma URL dedicada com autenticação por e-mail e senha. Os dados exibidos são exclusivos daquele tenant, sem qualquer visibilidade sobre outros clientes da plataforma. O controle de acesso é gerenciado via **Supabase Auth** com Row Level Security (RLS), garantindo isolamento em nível de banco de dados.
+
+### 3.2 Visão Geral — Painel Principal
+
+O painel principal exibe os principais indicadores do período selecionado (dia, semana ou mês):
+
+- Total de novas conversas iniciadas no período
+- Total de mensagens trocadas (enviadas e recebidas)
+- Número de conversas atualmente ativas
+- Número de conversas pausadas (em atendimento humano)
+- Gráfico de volume de conversas por dia
+
+### 3.3 Histórico de Conversas
+
+O dashboard apresenta uma listagem completa de todas as conversas registradas, com filtros por data, status (ativa, pausada, encerrada) e número de telefone. Ao selecionar uma conversa, o operador visualiza o histórico completo de mensagens em formato de chat, incluindo data, horário e origem de cada mensagem.
+
+### 3.4 Controle de Pausa por Conversa
+
+Dentro do histórico de conversas, o operador pode pausar ou retomar o agente para qualquer conversa específica com um único clique. O status é atualizado em tempo real, e o agente respeita imediatamente o novo estado sem necessidade de reinicialização.
+
+### 3.5 Controle de Status do Agente
+
+O dashboard do cliente exibe de forma clara o status atual do agente (ativo ou pausado globalmente), permitindo que o operador visualize em tempo real se o atendimento automático está em funcionamento.
+
+---
+
+## 4. Módulo Administrativo — Painel do Fornecedor
+
+### 4.1 Gestão de Tenants
+
+O fornecedor da plataforma (administrador) possui um painel exclusivo para gerenciar todos os clientes cadastrados. Por este painel é possível: cadastrar um novo cliente, configurar suas credenciais iniciais, vincular o número de WhatsApp correspondente e ativar o ambiente. O processo de onboarding de um novo cliente é automatizado, criando toda a estrutura necessária no Supabase e na Evolution API a partir de um único formulário de cadastro.
+
+### 4.2 Configuração e Treinamento do Agente por Tenant
+
+Toda a gestão e configuração dos agentes é realizada exclusivamente pelo administrador através deste módulo, garantindo controle total sobre o comportamento e o conhecimento de cada agente antes de ser disponibilizado ao cliente final. As funcionalidades disponíveis por tenant incluem:
+
+**Prompt e Personalidade:** Edição completa do prompt principal do agente, definindo tom de voz, personalidade, regras de comportamento, limitações de escopo e instruções específicas do negócio do cliente. O administrador molda o agente conforme o perfil de cada cliente antes de colocá-lo em operação.
+
+**Gestão da Base de Conhecimento:** Interface para upload, organização e manutenção da base de conhecimento vetorial de cada tenant. Suporta documentos em PDF, textos descritivos, tabelas de produtos, políticas, procedimentos, perguntas frequentes e qualquer material relevante para o atendimento. Toda alteração é processada e indexada automaticamente. O administrador tem controle total sobre o que o agente sabe e como utiliza esse conhecimento.
+
+**Aprendizado Contínuo por Interação:** O agente é configurado para evoluir de forma contínua com base nas interações reais com os clientes do tenant. Conversas concluídas são analisadas e os padrões de perguntas, dúvidas recorrentes e lacunas de conhecimento são identificados automaticamente para enriquecer a base vetorial ao longo do tempo. O administrador mantém o controle sobre as informações base, podendo revisar e aprovar os aprendizados gerados antes de serem incorporados definitivamente à base de conhecimento.
+
+**Configurações Operacionais:** Ativação e desativação global do agente por tenant, definição de horário de funcionamento, configuração de mensagem de ausência e ajuste de parâmetros de comportamento como temperatura de resposta e limite de tokens por interação.
+
+### 4.3 Relatório de Custos de IA por Tenant
+
+O módulo administrativo concentra todo o controle financeiro de uso das APIs de IA, sendo o único local onde esses dados são visíveis. O sistema opera com ciclos mensais fechados, funcionando da seguinte forma:
+
+**Ciclo Mensal:** O período de apuração de custos é mensal, iniciando no primeiro dia de cada mês e encerrando automaticamente no último dia. Ao virar o mês, o ciclo anterior é fechado e um novo ciclo se inicia do zero, sem interferência entre os períodos.
+
+**Dados por Tenant no Ciclo Ativo:**
+- Total de tokens consumidos no mês corrente
+- Custo calculado em reais com base na tabela de preços vigente da API
+- Detalhamento de consumo por dia dentro do mês
+- Número de conversas e mensagens que geraram o consumo
+
+**Fechamento e Relatório Mensal:** Ao encerrar o ciclo, o sistema gera automaticamente um relatório do mês fechado por tenant, disponível para exportação. Esse relatório serve como base para a apresentação ao cliente e para o cálculo do valor a ser cobrado no faturamento mensal.
+
+**Histórico de Ciclos Fechados:** O administrador tem acesso ao histórico completo de todos os meses anteriores por tenant, permitindo comparações, análise de crescimento de uso e consulta a qualquer relatório já fechado.
+
+### 4.4 Visão Consolidada de Todos os Tenants
+
+O painel administrativo exibe uma visão geral consolidada de todos os clientes ativos, mostrando lado a lado: status do agente, volume de conversas no mês corrente, custo de API acumulado no ciclo ativo e indicação de ciclos com relatório pendente de fechamento. Essa visão permite ao administrador gerenciar toda a operação em um único lugar e identificar rapidamente qual cliente precisa de atenção antes da virada do mês.
+
+--
+
+## 5. Princípios de Isolamento Multi-Tenant
+
+Cada tenant possui: esquema de dados isolado no Supabase com Row Level Security, instância de número WhatsApp própria na Evolution API, base de conhecimento vetorial exclusiva, prompt e configurações independentes gerenciados pelo administrador, rastreamento de custos de API individualizado por ciclo mensal, e histórico de conversas e relatórios acessíveis apenas pelo administrador e pelo próprio tenant. Nenhuma informação de um tenant é acessível, visível ou compartilhada com outro tenant em nenhuma camada da aplicação.
+
+## 3. FUNCTIONAL REQUIREMENTS
+
+- Login e Autenticação
+- Dashboards
+- Multi usuário
+- Multi empresa
+- Permissões por usuário
+- Chat / Mensagens
+- Relatórios e Exportação
+- Integrações (API)
+- Upload de Arquivos
+- Busca e Filtros
+- Onboarding do Usuário
+
+Login e Autenticação — via Supabase Auth com e-mail e senha, controle de sessão e recuperação de senha por e-mail via Resend.
+Dashboard do Cliente — visão de conversas ativas, pausadas e encerradas, indicadores de novas interações por dia, semana e mês, controle de pausa individual por conversa sem afetar as demais, e reconexão simplificada do WhatsApp Web via Evolution API.
+Dashboard Administrativa — acompanhamento de custos de tokens por cliente com ciclo mensal fechado, visão consolidada de todos os tenants, relatório exportável por cliente ao virar o mês.
+Gestão e Treinamento do Agente — configuração de prompt por cliente, upload e gestão da base de conhecimento vetorial, aprendizado contínuo com aprovação pelo administrador, ativação e desativação global por tenant.
+Multi Usuários — cada empresa pode ter mais de um usuário com acesso ao dashboard, com níveis de permissão diferenciados (ex: operador visualiza conversas, administrador pode pausar agente e exportar relatórios).
+Multi Empresas — estrutura multi-tenant isolada, cada empresa com seus dados, agente, base de conhecimento e histórico completamente separados.
+Chat e Mensagens — visualização do histórico completo de cada conversa em formato de chat dentro do dashboard, com identificação do usuário, horário e status de cada mensagem.
+Relatórios e Exportação — exportação do histórico de conversas e do relatório de custos mensais em formato CSV ou PDF, filtrável por período e por cliente.
+Busca e Filtros — localização de conversas e clientes por nome, número de telefone, data, status da conversa e período de interação.
+Notificações — alertas internos quando uma conversa for pausada há muito tempo sem retomada, e notificação por e-mail via Resend para eventos críticos como falha na conexão do WhatsApp.
+Onboarding do Usuário — fluxo guiado para o administrador ao cadastrar um novo cliente, orientando passo a passo a configuração do agente, upload da base de conhecimento e conexão do WhatsApp.
+Integrações via API:
+
+Frontend: React (desenvolvido no Claude Code)
+Backend: Supabase
+Mensageria WhatsApp: Evolution API
+E-mail transacional: Resend
+Versionamento: Git e GitHub
+Deploy e Hospedagem: Hostinger VPS
+
+## 4. USER PERSONAS
+
+Administrador da Plataforma (Fornecedor) — Responsável por gerenciar toda a operação do SaaS. Cadastra novos clientes, configura e treina os agentes de atendimento, faz upload da base de conhecimento, monitora custos de IA por tenant e gera relatórios mensais para faturamento.
+Operador do Cliente (Usuário Final da Empresa) — Colaborador da empresa contratante que acessa o dashboard para acompanhar as conversas em andamento, visualizar indicadores de atendimento, pausar o agente em conversas específicas quando necessário e reconectar o WhatsApp em caso de queda.
+Gestor do Cliente (Admin da Empresa) — Responsável pela empresa contratante dentro da plataforma. Visualiza relatórios, acompanha o desempenho geral do agente, exporta históricos e tem visibilidade sobre todos os usuários da sua empresa cadastrados no sistema.
+Cliente Final (Usuário do WhatsApp) — Pessoa atendida pelo agente via WhatsApp. Não acessa a plataforma diretamente, mas é o principal impactado pela qualidade do atendimento automatizado. Suas interações alimentam o histórico e o aprendizado contínuo do agente.
+
+## 5. TECHNICAL STACK
+
+- Next.js
+- TypeScript
+- Tailwind CSS
+- shadcn/ui
+- Supabase
+- Claude Code
+- Resend (e-mails)
+- Vercel
+
+Next.js com TypeScript para frontend e backend unificados, Tailwind CSS e shadcn/ui para interface, Supabase para banco de dados, autenticação e base vetorial, Claude API como motor de IA, Evolution API para WhatsApp, Resend para e-mails, deploy do frontend na Vercel e Evolution API na Hostinger VPS.
+
+## 6. DESIGN LANGUAGE
+
+Linear — Interface extremamente limpa e dark mode nativo. Referência principal para o padrão visual do dashboard: tipografia precisa, espaçamento generoso, hierarquia de informação sem ruído visual. Exatamente o nível de sofisticação que a Hubtek busca.
+Vercel Dashboard — Painel administrativo com excelente organização de dados técnicos em dark mode. Referência direta para a estrutura do painel administrativo: métricas consolidadas, tabelas densas mas legíveis, e uso inteligente de verde como cor de status ativo.
+Resend — Produto SaaS moderno com dashboard minimalista em fundo preto absoluto, tipografia Inter e destaque em verde. Visual muito próximo da identidade Hubtek — serve como referência de como apresentar dados de uso e relatórios de forma limpa.
+Intercom — Referência para a tela de histórico e visualização de conversas. Organização do chat, separação entre conversas ativas e encerradas, e controle de status por atendimento são elementos que se alinham diretamente com o módulo de conversas do dashboard.
+Stripe Dashboard — Referência para o módulo de custos e relatórios mensais do painel administrativo. Excelente exemplo de como apresentar dados financeiros com clareza, gráficos de consumo por período e exportação de relatórios sem poluição visual.
+
+## 7. PROCESS
+
+- Break app build into logical milestones (steps)
+- Each milestone should be a deliverable increment
+- Prioritize core functionality first, then iterate
+- Test each milestone before moving to the next
+

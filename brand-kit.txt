@@ -1,0 +1,213 @@
+# 🎨 HUBTEK SOLUTIONS — BRAND KIT COMPLETO
+
+> Documento mestre de identidade visual e tom de voz.
+> Use este arquivo como referência ao criar qualquer novo produto, dashboard, landing page ou material gráfico da marca.
+> Cole o conteúdo relevante como prompt em ferramentas como **Claude Design, Lovable, v0, Cursor, Figma AI, ChatGPT**.
+
+---
+
+## 1. ESSÊNCIA DA MARCA
+
+**Nome oficial:** Hubtek Solutions
+**Tagline principal:** "IA para empresas que nunca param."
+**Categoria:** SaaS / Automação / Inteligência Artificial
+**Missão:** Conectar empresas a soluções tecnológicas inteligentes — sendo a ponte entre o negócio e a automação que ele precisa.
+
+**Conceito visual central:** Conectividade, integração, fluxo digital.
+As linhas horizontais que estendem "SOLUTIONS" no logo representam a ponte entre o cliente e a solução tecnológica.
+
+**Posicionamento:** Moderno, minimalista, futurista, sofisticado, direto ao ponto.
+
+---
+
+## 2. PALETA DE CORES
+
+### Cores Primárias
+
+| Cor | HEX | RGB | Uso |
+|-----|-----|-----|-----|
+| **Preto Absoluto** | `#000000` | 0, 0, 0 | Fundo principal, base da identidade |
+| **Branco** | `#FFFFFF` | 255, 255, 255 | Tipografia principal, logo sobre fundo escuro |
+
+### Cor de Destaque (Accent)
+
+| Cor | HEX | RGB | Uso |
+|-----|-----|-----|-----|
+| **Verde WhatsApp / Neon** | `#10B981` | 16, 185, 129 | Botões CTA, destaques, ícones ativos, indicadores de status |
+| **Verde Hover** | `#059669` | 5, 150, 105 | Estado hover de botões |
+| **Verde Suave** | `#34D399` | 52, 211, 153 | Detalhes sutis, badges |
+
+### Cores de Apoio (Dark Mode)
+
+| Cor | HEX | Uso |
+|-----|-----|-----|
+| **Cinza Card** | `#0A0A0A` | Fundo de cards sobre o preto |
+| **Cinza Borda** | `#1F1F1F` | Bordas sutis de cards |
+| **Cinza Texto Secundário** | `#A3A3A3` | Textos de apoio, descrições |
+| **Cinza Divisor** | `#262626` | Linhas separadoras |
+| **Vermelho Alerta** | `#EF4444` | Indicadores de perda, urgência (ex: "65%") |
+
+### Gradientes sugeridos
+- **CTA principal:** `linear-gradient(135deg, #10B981 0%, #059669 100%)`
+- **Fundo hero sutil:** `radial-gradient(circle at top, #0A0A0A 0%, #000000 70%)`
+
+---
+
+## 3. TIPOGRAFIA
+
+### Fonte do Logo
+O logo "HUBTEK SOLUTIONS" usa uma fonte **futurista e geométrica** com traços levemente arredondados, transmitindo inovação e fluxo digital. É uma fonte de display — **não deve ser usada em corpo de texto**.
+
+Fontes similares que remetem ao logo (para uso em materiais impressos ou títulos especiais): **Orbitron, Michroma, Rajdhani, Exo 2**.
+
+### Tipografia da Interface (Web / App / Dashboard)
+
+**Fonte principal:** **Inter** (ou alternativas: Geist, Satoshi, SF Pro)
+- É a fonte usada na landing page atual
+- Moderna, limpa, altíssima legibilidade, excelente para SaaS e dashboards
+
+### Hierarquia tipográfica
+
+| Nível | Tamanho (desktop) | Peso | Uso |
+|-------|-------------------|------|-----|
+| **H1 / Hero** | 56–72px | 700 (Bold) | Título principal de páginas |
+| **H2** | 40–48px | 700 (Bold) | Seções importantes |
+| **H3** | 28–32px | 600 (Semibold) | Subseções, títulos de cards |
+| **H4** | 20–24px | 600 (Semibold) | Títulos menores |
+| **Body Large** | 18px | 400 (Regular) | Texto de destaque, subtítulos |
+| **Body** | 16px | 400 (Regular) | Corpo de texto padrão |
+| **Body Small** | 14px | 400 (Regular) | Textos auxiliares, legendas |
+| **Caption** | 12px | 500 (Medium) | Labels, tags, badges |
+
+**Line-height recomendado:** 1.5 para corpo de texto, 1.1–1.2 para títulos.
+**Letter-spacing:** -0.02em em títulos grandes (tightening), 0 em corpo, +0.05em em CAPS/labels.
+
+---
+
+## 4. LOGO — REGRAS DE USO
+
+### Versões disponíveis
+1. **Horizontal (principal):** HUBTEK | SOLUTIONS — uso padrão em cabeçalhos, landing pages
+2. **Vertical (compacto):** HUB / TEK / SOLUTIONS empilhado — uso em avatares, ícones de app, favicons
+3. **Preto sobre branco** e **Branco sobre preto** — ambas válidas conforme o contexto
+
+### Regras
+- ✅ Manter área de respiro mínima ao redor do logo (equivalente à altura da letra "H")
+- ✅ Preferir o logo branco sobre fundos escuros (identidade principal)
+- ❌ Não distorcer, rotacionar ou alterar proporções
+- ❌ Não aplicar sombras, gradientes ou efeitos sobre o logo
+- ❌ Não usar sobre fundos com baixo contraste
+
+### Tamanhos mínimos
+- Web: altura mínima de 32px
+- Impresso: altura mínima de 15mm
+- Favicon: usar versão vertical compacta
+
+---
+
+## 5. TOM DE VOZ
+
+### Como a Hubtek fala
+
+A comunicação da Hubtek é **direta, provocadora e orientada a resultados**. Usa dados concretos para gerar urgência sem recorrer a pressão artificial.
+
+**Características:**
+- ✅ Direto e objetivo ("Sua clínica está perdendo pacientes")
+- ✅ Baseado em dados ("78% dos pacientes escolhem a primeira clínica que responde")
+- ✅ Empático com a dor do cliente ("Isso parece familiar?")
+- ✅ Confiante, sem arrogância
+- ✅ Usa linguagem simples, mesmo ao falar de tecnologia
+- ❌ Evita jargão técnico desnecessário
+- ❌ Não usa exagero ou promessas vagas
+- ❌ Não é formal ou corporativo rígido
+
+### Exemplos práticos
+
+**✅ Como a Hubtek escreve:**
+- "Sua equipe foca no que importa. A IA cuida do resto."
+- "Respostas instantâneas 24/7."
+- "Pare de perder clientes por demora no atendimento."
+
+**❌ Como a Hubtek NÃO escreve:**
+- "Nossa solução tecnológica de ponta revoluciona..."
+- "Entre em contato para saber mais sobre nossos produtos"
+- "Uma parceria estratégica de excelência"
+
+---
+
+## 6. PRINCÍPIOS DE DESIGN (UI/UX)
+
+Ao criar qualquer interface (landing page, dashboard, SaaS, app), seguir:
+
+### Layout
+- **Mobile-first**, sempre
+- Muito espaço em branco (negativo preto, neste caso) — respiro é fundamental
+- Seções bem delimitadas, uma ideia por bloco
+- Grid de 12 colunas, container max-width: 1200–1280px
+
+### Estilo visual
+- **Dark mode por padrão** (identidade da marca)
+- Cantos arredondados: `8px` em botões, `12px` em cards, `16px` em modais
+- Sombras sutis ou nenhuma — preferir bordas finas (`1px solid #1F1F1F`)
+- Ícones em linha fina (stroke), estilo Lucide ou Phosphor
+- Botões CTA sempre em verde `#10B981`, texto branco, bold
+
+### Interações
+- Transições suaves: `transition: all 200ms ease`
+- Hover states sempre visíveis (cor muda + leve scale se for CTA)
+- Estados de loading claros (skeleton ou spinner verde)
+
+### Componentes recomendados (para SaaS / Dashboards)
+- **Cards** com fundo `#0A0A0A`, borda `#1F1F1F`, padding generoso
+- **Tabelas** com linhas alternadas sutis e hover destacado
+- **Gráficos** em verde `#10B981` com variações de opacidade
+- **Formulários** com inputs escuros, bordas `#262626`, focus ring verde
+
+---
+
+## 7. PROMPT PRONTO PARA IA
+
+Use o bloco abaixo como prompt base em **Claude Design, Lovable, v0, Cursor, ChatGPT** ou qualquer ferramenta de geração de UI. Basta copiar e colar:
+
+```
+Estou criando uma interface para a HUBTEK SOLUTIONS — uma empresa de SaaS e IA
+focada em automação de atendimento via WhatsApp, dashboards e soluções
+financeiras.
+
+IDENTIDADE VISUAL:
+- Dark mode como padrão
+- Cor de fundo principal: #000000 (preto absoluto)
+- Cor de destaque / CTA: #10B981 (verde neon tipo WhatsApp)
+- Cor de texto principal: #FFFFFF
+- Cor de texto secundário: #A3A3A3
+- Cor de card: #0A0A0A com borda #1F1F1F
+- Fonte: Inter (400, 500, 600, 700)
+- Títulos grandes com letter-spacing -0.02em
+- Cantos arredondados: 8px (botões), 12px (cards)
+- Ícones: Lucide (linha fina, stroke)
+
+ESTILO:
+Moderno, minimalista, futurista, sofisticado. Muito espaço negativo.
+Bordas sutis em vez de sombras pesadas. Botões CTA em verde sólido com texto
+branco bold. Transições suaves de 200ms.
+
+TOM DE VOZ (se houver textos):
+Direto, objetivo, baseado em dados. Empático com a dor do cliente.
+Sem jargão técnico. Frases curtas e impactantes.
+
+-----
+
+## 8. CHECKLIST DE CONSISTÊNCIA
+
+Antes de finalizar qualquer projeto, verifique:
+
+- [ ] O fundo principal é preto (`#000000`)?
+- [ ] Os CTAs estão em verde (`#10B981`)?
+- [ ] A fonte Inter (ou equivalente) está carregada?
+- [ ] Os cards têm borda sutil em vez de sombra pesada?
+- [ ] O logo está na versão correta (horizontal em headers, vertical em ícones)?
+- [ ] O tom de voz é direto e focado em benefício real?
+- [ ] Há respiro suficiente entre os elementos?
+- [ ] Os botões têm estado hover visível?
+- [ ] A hierarquia tipográfica está clara (H1 > H2 > H3 > body)?
+- [ ] Funciona bem no mobile?
