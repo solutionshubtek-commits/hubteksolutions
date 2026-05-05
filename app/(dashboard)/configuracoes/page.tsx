@@ -69,23 +69,48 @@ function formatBytes(bytes: number) {
 }
 
 async function extractTextFromFile(file: File): Promise<string> {
-  if (file.type === 'text/plain') {
-    return await file.text()
-  }
-  // Para PDF e DOCX retorna vazio — extração server-side pode ser adicionada depois
+  if (file.type === 'text/plain') return await file.text()
   return ''
+}
+
+// ─── Toggle Component ─────────────────────────────────────────────────────────
+
+function Toggle({ ativo, onClick }: { ativo: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      type="button"
+      aria-checked={ativo}
+      role="switch"
+      style={{ width: 44, height: 24, flexShrink: 0 }}
+      className={`relative rounded-full transition-colors duration-200 focus:outline-none ${
+        ativo ? 'bg-[#10B981]' : 'bg-[#2A2A2A]'
+      }`}
+    >
+      <span
+        className="absolute top-[2px] inline-block bg-white rounded-full shadow transition-transform duration-200"
+        style={{
+          width: 20,
+          height: 20,
+          transform: ativo ? 'translateX(22px)' : 'translateX(2px)',
+        }}
+      />
+    </button>
+  )
 }
 
 // ─── Skeleton ────────────────────────────────────────────────────────────────
 
 function Skeleton() {
   return (
-    <div>
-      <h1 className="text-white text-2xl font-bold mb-6">Configurações</h1>
-      <div className="space-y-4 max-w-2xl">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-16 bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl animate-pulse" />
-        ))}
+    <div className="flex justify-center px-4 py-8">
+      <div className="w-full max-w-2xl">
+        <h1 className="text-white text-2xl font-bold mb-6">Configurações</h1>
+        <div className="space-y-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-16 bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl animate-pulse" />
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -141,7 +166,6 @@ export default function ConfiguracoesPage() {
           .select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
           .eq('tenant_id', userData.tenant_id)
           .order('criado_em', { ascending: false })
-
         setArquivos(files || [])
       }
 
@@ -150,13 +174,12 @@ export default function ConfiguracoesPage() {
     fetchData()
   }, [])
 
-  // ── Salvar configurações ───────────────────────────────────────────────────
+  // ── Salvar ─────────────────────────────────────────────────────────────────
   async function handleSalvar() {
     if (!tenant) return
     setSalvando(true)
     setSucesso(false)
     setErro('')
-
     const supabase = createClient()
     const { error } = await supabase
       .from('tenants')
@@ -166,7 +189,6 @@ export default function ConfiguracoesPage() {
         horario_funcionamento: horario,
       })
       .eq('id', tenant.id)
-
     setSalvando(false)
     if (error) {
       setErro('Erro ao salvar. Tente novamente.')
@@ -176,28 +198,23 @@ export default function ConfiguracoesPage() {
     }
   }
 
-  // ── Upload de arquivo ──────────────────────────────────────────────────────
+  // ── Upload ─────────────────────────────────────────────────────────────────
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
     setUploadando(true)
     setErro('')
-
     const supabase = createClient()
     const path = `${tenant.id}/${Date.now()}_${file.name}`
-
     const { error: uploadError } = await supabase.storage
       .from('knowledge-base')
       .upload(path, file)
-
     if (uploadError) {
       setErro('Erro no upload. Verifique o tipo/tamanho do arquivo.')
       setUploadando(false)
       return
     }
-
     const conteudo = await extractTextFromFile(file)
-
     const { data: novoArquivo, error: dbError } = await supabase
       .from('knowledge_base')
       .insert({
@@ -209,13 +226,11 @@ export default function ConfiguracoesPage() {
       })
       .select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
       .single()
-
     if (dbError) {
       setErro('Erro ao registrar arquivo no banco.')
     } else if (novoArquivo) {
       setArquivos(prev => [novoArquivo, ...prev])
     }
-
     setUploadando(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -224,27 +239,22 @@ export default function ConfiguracoesPage() {
   async function handleExcluir(id: string, nomeArquivo: string) {
     if (!tenant) return
     setExcluindo(id)
-
     const supabase = createClient()
-
-    // Remove do Storage (busca pelo nome — pode ajustar se guardar o path)
     const { data: lista } = await supabase.storage
       .from('knowledge-base')
       .list(tenant.id)
-
     const arquivo = lista?.find(f => f.name.endsWith(nomeArquivo))
     if (arquivo) {
       await supabase.storage
         .from('knowledge-base')
         .remove([`${tenant.id}/${arquivo.name}`])
     }
-
     await supabase.from('knowledge_base').delete().eq('id', id)
     setArquivos(prev => prev.filter(a => a.id !== id))
     setExcluindo(null)
   }
 
-  // ── Horário helpers ────────────────────────────────────────────────────────
+  // ── Helpers horário ────────────────────────────────────────────────────────
   function toggleDia(dia: keyof HorarioFuncionamento) {
     setHorario(prev => ({
       ...prev,
@@ -264,12 +274,12 @@ export default function ConfiguracoesPage() {
   if (carregando) return <Skeleton />
 
   return (
-    <div>
-      <h1 className="text-white text-2xl font-bold mb-6">Configurações</h1>
+    <div className="flex justify-center px-4 py-8">
+      <div className="w-full max-w-2xl space-y-6">
 
-      <div className="max-w-2xl space-y-6">
+        <h1 className="text-white text-2xl font-bold">Configurações</h1>
 
-        {/* ── Dados do tenant (todos os roles) ── */}
+        {/* ── Dados do tenant ── */}
         <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
           <h2 className="text-white font-semibold mb-4">Dados do tenant</h2>
           <div className="space-y-4">
@@ -292,7 +302,6 @@ export default function ConfiguracoesPage() {
               />
             </div>
           </div>
-
           {!isSelfManaged && (
             <p className="mt-4 text-[#6B6B6B] text-xs flex items-center gap-1.5">
               <AlertCircle size={12} />
@@ -301,61 +310,51 @@ export default function ConfiguracoesPage() {
           )}
         </div>
 
-        {/* ── Seções exclusivas para self_managed ── */}
+        {/* ── Seções self_managed ── */}
         {isSelfManaged && (
           <>
             {/* Agente */}
             <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
               <h2 className="text-white font-semibold mb-4">Agente de atendimento</h2>
-              <div>
-                <label className="text-[#A3A3A3] text-sm font-medium block mb-2">Prompt do agente</label>
-                <textarea
-                  value={tenant?.prompt_agente || ''}
-                  onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
-                  rows={6}
-                  placeholder="Descreva como o agente deve se comportar..."
-                  className="w-full bg-[#050505] border border-[#1F1F1F] text-white placeholder-[#6B6B6B] rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-[#10B981] resize-none"
-                />
-              </div>
+              <label className="text-[#A3A3A3] text-sm font-medium block mb-2">Prompt do agente</label>
+              <textarea
+                value={tenant?.prompt_agente || ''}
+                onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
+                rows={6}
+                placeholder="Descreva como o agente deve se comportar..."
+                className="w-full bg-[#050505] border border-[#1F1F1F] text-white placeholder-[#6B6B6B] rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-[#10B981] resize-none"
+              />
             </div>
 
             {/* Horário por dia */}
             <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
               <h2 className="text-white font-semibold mb-4">Horário de atendimento</h2>
-              <div className="space-y-2">
+
+              <div className="space-y-3">
                 {DIAS_SEMANA.map(({ key, label }) => (
-                  <div key={key} className="flex items-center gap-3 min-w-0">
+                  <div
+                    key={key}
+                    className="grid items-center gap-3"
+                    style={{ gridTemplateColumns: '44px 40px 1fr' }}
+                  >
+                    {/* Coluna 1: toggle fixo 44px */}
+                    <Toggle ativo={horario[key].ativo} onClick={() => toggleDia(key)} />
 
-                    {/* Toggle + label — largura fixa, nunca encolhe */}
-                    <div className="flex items-center gap-2 w-[72px] flex-shrink-0">
-                      <button
-                        onClick={() => toggleDia(key)}
-                        style={{ minWidth: '40px', minHeight: '24px' }}
-                        className={`w-10 h-6 rounded-full transition-colors duration-200 relative ${
-                          horario[key].ativo ? 'bg-[#10B981]' : 'bg-[#2A2A2A]'
-                        }`}
-                      >
-                        <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
-                          horario[key].ativo ? 'translate-x-[18px]' : 'translate-x-0.5'
-                        }`} />
-                      </button>
-                      <span className={`text-sm font-medium w-7 ${
-                        horario[key].ativo ? 'text-white' : 'text-[#6B6B6B]'
-                      }`}>
-                        {label}
-                      </span>
-                    </div>
+                    {/* Coluna 2: label fixo 40px */}
+                    <span className={`text-sm font-medium ${horario[key].ativo ? 'text-white' : 'text-[#6B6B6B]'}`}>
+                      {label}
+                    </span>
 
-                    {/* Horários ou "Fechado" */}
+                    {/* Coluna 3: horários ou "Fechado" */}
                     {horario[key].ativo ? (
-                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
                         <input
                           type="time"
                           value={horario[key].inicio}
                           onChange={(e) => updateHorarioDia(key, 'inicio', e.target.value)}
                           className="flex-1 min-w-0 bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#10B981]"
                         />
-                        <span className="text-[#6B6B6B] text-xs flex-shrink-0">até</span>
+                        <span className="text-[#6B6B6B] text-xs whitespace-nowrap flex-shrink-0">até</span>
                         <input
                           type="time"
                           value={horario[key].fim}
@@ -385,7 +384,7 @@ export default function ConfiguracoesPage() {
 
             {/* Base de conhecimento */}
             <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-1">
                 <h2 className="text-white font-semibold">Base de conhecimento</h2>
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -403,7 +402,6 @@ export default function ConfiguracoesPage() {
                   className="hidden"
                 />
               </div>
-
               <p className="text-[#6B6B6B] text-xs mb-4">Formatos aceitos: PDF, DOCX, TXT — máximo 50MB</p>
 
               {arquivos.length === 0 ? (
@@ -454,7 +452,7 @@ export default function ConfiguracoesPage() {
           </div>
         )}
 
-        {/* Botão salvar — só aparece para self_managed */}
+        {/* Botão salvar */}
         {isSelfManaged && (
           <button
             onClick={handleSalvar}
@@ -465,6 +463,7 @@ export default function ConfiguracoesPage() {
             {salvando ? 'Salvando...' : 'Salvar configurações'}
           </button>
         )}
+
       </div>
     </div>
   )
