@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { Smartphone, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import Image from 'next/image'
 
 interface StatusWA {
   status: string
@@ -47,7 +48,6 @@ export default function ReconexaoWhatsAppPage() {
   return (
     <div>
       <h1 className="text-white text-2xl font-bold mb-6">WhatsApp</h1>
-
       <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6 max-w-lg">
         <div className="flex items-center gap-4 mb-6">
           <div className="w-12 h-12 rounded-full bg-[#10B981]/10 flex items-center justify-center">
@@ -93,7 +93,13 @@ export default function ReconexaoWhatsAppPage() {
 
             {qrCode && (
               <div className="flex flex-col items-center gap-3 p-4 bg-white rounded-xl">
-                <img src={qrCode} alt="QR Code WhatsApp" className="w-48 h-48" />
+                <Image
+                  src={qrCode}
+                  alt="QR Code WhatsApp"
+                  width={192}
+                  height={192}
+                  unoptimized
+                />
                 <p className="text-black text-xs text-center">
                   Escaneie com o WhatsApp para conectar
                 </p>
