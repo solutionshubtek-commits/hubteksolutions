@@ -51,8 +51,8 @@ export default function LoginPage() {
         <Image
           src="/logo-horizontal.png"
           alt="Hubtek Solutions"
-          width={160}
-          height={32}
+          width={240}
+          height={60}
           priority
           onError={(e) => {
             const target = e.target as HTMLImageElement
