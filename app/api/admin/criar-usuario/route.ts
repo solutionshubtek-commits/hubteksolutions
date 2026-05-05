@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ success: true, user_id: authData.user.id })
-  } catch (_err) {
+  } catch {
     return NextResponse.json({ error: 'Erro interno.' }, { status: 500 })
   }
 }
