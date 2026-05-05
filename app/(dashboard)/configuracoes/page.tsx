@@ -322,43 +322,45 @@ export default function ConfiguracoesPage() {
             {/* Horário por dia */}
             <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
               <h2 className="text-white font-semibold mb-4">Horário de atendimento</h2>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {DIAS_SEMANA.map(({ key, label }) => (
-                  <div key={key} className="flex items-center gap-3">
-                    {/* Toggle */}
-                    <button
-                      onClick={() => toggleDia(key)}
-                      className={`w-10 h-6 rounded-full transition-colors duration-200 flex-shrink-0 relative ${
-                        horario[key].ativo ? 'bg-[#10B981]' : 'bg-[#2A2A2A]'
-                      }`}
-                    >
-                      <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
-                        horario[key].ativo ? 'translate-x-4' : 'translate-x-0.5'
-                      }`} />
-                    </button>
+                  <div key={key} className="flex items-center gap-3 min-w-0">
 
-                    {/* Dia */}
-                    <span className={`w-8 text-sm font-medium flex-shrink-0 ${
-                      horario[key].ativo ? 'text-white' : 'text-[#6B6B6B]'
-                    }`}>
-                      {label}
-                    </span>
+                    {/* Toggle + label — largura fixa, nunca encolhe */}
+                    <div className="flex items-center gap-2 w-[72px] flex-shrink-0">
+                      <button
+                        onClick={() => toggleDia(key)}
+                        style={{ minWidth: '40px', minHeight: '24px' }}
+                        className={`w-10 h-6 rounded-full transition-colors duration-200 relative ${
+                          horario[key].ativo ? 'bg-[#10B981]' : 'bg-[#2A2A2A]'
+                        }`}
+                      >
+                        <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                          horario[key].ativo ? 'translate-x-[18px]' : 'translate-x-0.5'
+                        }`} />
+                      </button>
+                      <span className={`text-sm font-medium w-7 ${
+                        horario[key].ativo ? 'text-white' : 'text-[#6B6B6B]'
+                      }`}>
+                        {label}
+                      </span>
+                    </div>
 
-                    {/* Horários */}
+                    {/* Horários ou "Fechado" */}
                     {horario[key].ativo ? (
-                      <div className="flex items-center gap-2 flex-1">
+                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
                         <input
                           type="time"
                           value={horario[key].inicio}
                           onChange={(e) => updateHorarioDia(key, 'inicio', e.target.value)}
-                          className="flex-1 bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#10B981]"
+                          className="flex-1 min-w-0 bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#10B981]"
                         />
-                        <span className="text-[#6B6B6B] text-sm">até</span>
+                        <span className="text-[#6B6B6B] text-xs flex-shrink-0">até</span>
                         <input
                           type="time"
                           value={horario[key].fim}
                           onChange={(e) => updateHorarioDia(key, 'fim', e.target.value)}
-                          className="flex-1 bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#10B981]"
+                          className="flex-1 min-w-0 bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#10B981]"
                         />
                       </div>
                     ) : (
