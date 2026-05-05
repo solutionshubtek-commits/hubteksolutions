@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, CSSProperties } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2 } from 'lucide-react'
 
@@ -73,28 +73,49 @@ async function extractTextFromFile(file: File): Promise<string> {
   return ''
 }
 
-// ─── Toggle Component ─────────────────────────────────────────────────────────
+// ─── Toggle (inline styles puros — imune a CSS global) ─────────────────────
 
 function Toggle({ ativo, onClick }: { ativo: boolean; onClick: () => void }) {
+  const trackStyle: CSSProperties = {
+    width: 44,
+    minWidth: 44,
+    maxWidth: 44,
+    height: 24,
+    minHeight: 24,
+    maxHeight: 24,
+    padding: 0,
+    margin: 0,
+    border: 'none',
+    outline: 'none',
+    borderRadius: 999,
+    position: 'relative',
+    cursor: 'pointer',
+    flexShrink: 0,
+    display: 'inline-block',
+    boxSizing: 'border-box',
+    backgroundColor: ativo ? '#10B981' : '#2A2A2A',
+    transition: 'background-color 0.2s ease',
+    appearance: 'none',
+    WebkitAppearance: 'none',
+  }
+
+  const thumbStyle: CSSProperties = {
+    position: 'absolute',
+    top: 2,
+    left: ativo ? 22 : 2,
+    width: 20,
+    height: 20,
+    borderRadius: '50%',
+    backgroundColor: '#FFFFFF',
+    transition: 'left 0.2s ease',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
+    display: 'block',
+    pointerEvents: 'none',
+  }
+
   return (
-    <button
-      onClick={onClick}
-      type="button"
-      aria-checked={ativo}
-      role="switch"
-      style={{ width: 44, height: 24, flexShrink: 0 }}
-      className={`relative rounded-full transition-colors duration-200 focus:outline-none ${
-        ativo ? 'bg-[#10B981]' : 'bg-[#2A2A2A]'
-      }`}
-    >
-      <span
-        className="absolute top-[2px] inline-block bg-white rounded-full shadow transition-transform duration-200"
-        style={{
-          width: 20,
-          height: 20,
-          transform: ativo ? 'translateX(22px)' : 'translateX(2px)',
-        }}
-      />
+    <button type="button" onClick={onClick} style={trackStyle} aria-checked={ativo} role="switch">
+      <span style={thumbStyle} />
     </button>
   )
 }
@@ -133,7 +154,6 @@ export default function ConfiguracoesPage() {
 
   const isSelfManaged = role === 'self_managed'
 
-  // ── Fetch inicial ──────────────────────────────────────────────────────────
   useEffect(() => {
     async function fetchData() {
       const supabase = createClient()
@@ -174,7 +194,6 @@ export default function ConfiguracoesPage() {
     fetchData()
   }, [])
 
-  // ── Salvar ─────────────────────────────────────────────────────────────────
   async function handleSalvar() {
     if (!tenant) return
     setSalvando(true)
@@ -198,7 +217,6 @@ export default function ConfiguracoesPage() {
     }
   }
 
-  // ── Upload ─────────────────────────────────────────────────────────────────
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
@@ -235,7 +253,6 @@ export default function ConfiguracoesPage() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  // ── Excluir arquivo ────────────────────────────────────────────────────────
   async function handleExcluir(id: string, nomeArquivo: string) {
     if (!tenant) return
     setExcluindo(id)
@@ -254,7 +271,6 @@ export default function ConfiguracoesPage() {
     setExcluindo(null)
   }
 
-  // ── Helpers horário ────────────────────────────────────────────────────────
   function toggleDia(dia: keyof HorarioFuncionamento) {
     setHorario(prev => ({
       ...prev,
@@ -269,8 +285,6 @@ export default function ConfiguracoesPage() {
     }))
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-
   if (carregando) return <Skeleton />
 
   return (
@@ -279,7 +293,7 @@ export default function ConfiguracoesPage() {
 
         <h1 className="text-white text-2xl font-bold">Configurações</h1>
 
-        {/* ── Dados do tenant ── */}
+        {/* Dados do tenant */}
         <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
           <h2 className="text-white font-semibold mb-4">Dados do tenant</h2>
           <div className="space-y-4">
@@ -310,7 +324,6 @@ export default function ConfiguracoesPage() {
           )}
         </div>
 
-        {/* ── Seções self_managed ── */}
         {isSelfManaged && (
           <>
             {/* Agente */}
@@ -326,44 +339,67 @@ export default function ConfiguracoesPage() {
               />
             </div>
 
-            {/* Horário por dia */}
+            {/* Horário */}
             <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
               <h2 className="text-white font-semibold mb-4">Horário de atendimento</h2>
 
-              <div className="space-y-3">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {DIAS_SEMANA.map(({ key, label }) => (
                   <div
                     key={key}
-                    className="grid items-center gap-3"
-                    style={{ gridTemplateColumns: '44px 40px 1fr' }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      minWidth: 0,
+                    }}
                   >
-                    {/* Coluna 1: toggle fixo 44px */}
+                    {/* Toggle (largura travada inline) */}
                     <Toggle ativo={horario[key].ativo} onClick={() => toggleDia(key)} />
 
-                    {/* Coluna 2: label fixo 40px */}
-                    <span className={`text-sm font-medium ${horario[key].ativo ? 'text-white' : 'text-[#6B6B6B]'}`}>
+                    {/* Label (largura travada inline) */}
+                    <span
+                      style={{
+                        width: 36,
+                        minWidth: 36,
+                        flexShrink: 0,
+                        fontSize: 14,
+                        fontWeight: 500,
+                        color: horario[key].ativo ? '#FFFFFF' : '#6B6B6B',
+                      }}
+                    >
                       {label}
                     </span>
 
-                    {/* Coluna 3: horários ou "Fechado" */}
+                    {/* Horários ou Fechado */}
                     {horario[key].ativo ? (
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
                         <input
                           type="time"
                           value={horario[key].inicio}
                           onChange={(e) => updateHorarioDia(key, 'inicio', e.target.value)}
-                          className="flex-1 min-w-0 bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#10B981]"
+                          style={{ flex: 1, minWidth: 0 }}
+                          className="bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#10B981]"
                         />
-                        <span className="text-[#6B6B6B] text-xs whitespace-nowrap flex-shrink-0">até</span>
+                        <span style={{ color: '#6B6B6B', fontSize: 12, flexShrink: 0 }}>até</span>
                         <input
                           type="time"
                           value={horario[key].fim}
                           onChange={(e) => updateHorarioDia(key, 'fim', e.target.value)}
-                          className="flex-1 min-w-0 bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#10B981]"
+                          style={{ flex: 1, minWidth: 0 }}
+                          className="bg-[#050505] border border-[#1F1F1F] text-white rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-[#10B981]"
                         />
                       </div>
                     ) : (
-                      <span className="text-[#3A3A3A] text-sm">Fechado</span>
+                      <span style={{ color: '#3A3A3A', fontSize: 14 }}>Fechado</span>
                     )}
                   </div>
                 ))}
@@ -438,7 +474,6 @@ export default function ConfiguracoesPage() {
           </>
         )}
 
-        {/* Feedback */}
         {erro && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2">
             <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
@@ -452,7 +487,6 @@ export default function ConfiguracoesPage() {
           </div>
         )}
 
-        {/* Botão salvar */}
         {isSelfManaged && (
           <button
             onClick={handleSalvar}
