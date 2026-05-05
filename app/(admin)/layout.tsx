@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { AdminSidebar } from '@/components/admin/AdminSidebar'
-import { Header } from '@/components/dashboard/Header'
+import { AdminHeader } from '@/components/admin/AdminHeader'
 
 export default async function AdminLayout({
   children,
@@ -11,9 +11,7 @@ export default async function AdminLayout({
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  if (!user) {
-    redirect('/login')
-  }
+  if (!user) redirect('/login')
 
   const { data: userData } = await supabase
     .from('users')
@@ -21,9 +19,7 @@ export default async function AdminLayout({
     .eq('id', user.id)
     .single()
 
-  if (userData?.role !== 'admin_hubtek') {
-    redirect('/visao-geral')
-  }
+  if (userData?.role !== 'admin_hubtek') redirect('/visao-geral')
 
   const nomeUsuario = userData?.nome ?? user.email ?? null
 
@@ -31,7 +27,7 @@ export default async function AdminLayout({
     <div className="min-h-screen bg-black">
       <AdminSidebar />
       <div className="ml-60 flex flex-col min-h-screen">
-        <Header nomeUsuario={nomeUsuario} />
+        <AdminHeader nomeUsuario={nomeUsuario} />
         <main className="flex-1 p-8">
           {children}
         </main>
