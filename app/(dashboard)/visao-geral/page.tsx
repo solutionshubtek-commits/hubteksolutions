@@ -84,7 +84,7 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
     <div className={`bg-[#0A0A0A] border rounded-xl p-5 ${alt ? 'border-[#F59E0B]/20' : 'border-[#1F1F1F]'}`}>
       <div className="flex items-center justify-between mb-3">
         <p className="text-[#A3A3A3] text-sm">{label}</p>
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center`} style={{ background: `${cor}18` }}>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${cor}18` }}>
           <Icon size={16} color={cor} />
         </div>
       </div>
@@ -157,9 +157,7 @@ export default function VisaoGeralPage() {
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'pausado'>('todos')
   const [carregando, setCarregando] = useState(true)
   const [nomeUsuario, setNomeUsuario] = useState('')
-  const [tenantNome, setTenantNome] = useState('')
   const [pausando, setPausando] = useState<string | null>(null)
-  const [tenantId, setTenantId] = useState<string | null>(null)
 
   const fetchTudo = useCallback(async () => {
     const supabase = createClient()
@@ -171,11 +169,6 @@ export default function VisaoGeralPage() {
     if (!userData?.tenant_id) return
 
     setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
-    setTenantId(userData.tenant_id)
-
-    const { data: tenantData } = await supabase
-      .from('tenants').select('nome').eq('id', userData.tenant_id).single()
-    if (tenantData) setTenantNome(tenantData.nome)
 
     const agora = new Date()
     const tenantId = userData.tenant_id
@@ -255,7 +248,6 @@ export default function VisaoGeralPage() {
   useEffect(() => { fetchTudo() }, [fetchTudo])
   useEffect(() => { fetchGrafico(periodo) }, [periodo, fetchGrafico])
 
-  // Filtro de status
   useEffect(() => {
     if (filtroStatus === 'todos') setConversasFiltradas(conversas)
     else if (filtroStatus === 'ativo') setConversasFiltradas(conversas.filter(c => !c.agente_pausado))
@@ -299,7 +291,6 @@ export default function VisaoGeralPage() {
             Como seu agente de atendimento performou nos últimos {periodo === '7' ? '7' : periodo === '90' ? '90' : '30'} dias.
           </p>
         </div>
-        {/* Seletor de período — canto superior direito */}
         <div className="flex items-center gap-1 bg-[#0A0A0A] border border-[#1F1F1F] rounded-lg p-1">
           {(['7', '30', '90'] as const).map(p => (
             <button
@@ -317,10 +308,10 @@ export default function VisaoGeralPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Novas conversas hoje"        valor={metrics!.conversasHoje}    d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}       icon={MessageSquare} cor="#10B981" />
-        <KpiCard label="Conversas na semana"          valor={metrics!.conversasSemana}  d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)}     icon={Clock}         cor="#3B82F6" />
-        <KpiCard label="Conversas no mês"             valor={metrics!.conversasMes}     d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}           icon={Users}         cor="#8B5CF6" />
-        <KpiCard label="Pausadas (atend. humano)"     valor={metrics!.pausadas}         d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}                   icon={PauseCircle}   cor="#F59E0B" alt />
+        <KpiCard label="Novas conversas hoje"       valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
+        <KpiCard label="Conversas na semana"         valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
+        <KpiCard label="Conversas no mês"            valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
+        <KpiCard label="Pausadas (atend. humano)"    valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
       </div>
 
       {/* Gráfico + Atividade */}
@@ -369,7 +360,6 @@ export default function VisaoGeralPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Filtro status */}
             <div className="flex items-center gap-1 bg-[#050505] border border-[#1F1F1F] rounded-lg p-1">
               {([['todos', 'Todos'], ['ativo', 'Ativos'], ['pausado', 'Pausados']] as const).map(([val, label]) => (
                 <button
@@ -384,7 +374,6 @@ export default function VisaoGeralPage() {
                 </button>
               ))}
             </div>
-            {/* Exportar */}
             <button
               onClick={() => exportarCSV(conversasFiltradas)}
               className="flex items-center gap-1.5 text-[#6B6B6B] hover:text-white text-xs border border-[#1F1F1F] rounded-lg px-3 py-2 transition-colors"
@@ -443,19 +432,17 @@ export default function VisaoGeralPage() {
                       <span className="text-[#6B6B6B] text-sm">{tempoRelativo(c.ultima_mensagem_em)}</span>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handlePausarRetomar(c)}
-                          disabled={pausando === c.id}
-                          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
-                            c.agente_pausado
-                              ? 'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30'
-                              : 'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'
-                          }`}
-                        >
-                          {c.agente_pausado ? <><Play size={11} /> Retomar</> : <><Pause size={11} /> Pausar</>}
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => handlePausarRetomar(c)}
+                        disabled={pausando === c.id}
+                        className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
+                          c.agente_pausado
+                            ? 'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30'
+                            : 'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'
+                        }`}
+                      >
+                        {c.agente_pausado ? <><Play size={11} /> Retomar</> : <><Pause size={11} /> Pausar</>}
+                      </button>
                     </td>
                   </tr>
                 ))}
