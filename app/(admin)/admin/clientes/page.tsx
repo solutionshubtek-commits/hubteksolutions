@@ -258,7 +258,7 @@ function PainelCliente({
     setDetalhe(data ?? [])
   }
 
-  useEffect(() => { if (aba === 'extrato') fetchExtrato() }, [aba])
+  useEffect(() => { if (aba === 'extrato') fetchExtrato() }, [aba, fetchExtrato])
 
   const abas = [
     { key: 'detalhes', label: 'Detalhes', icon: null },
