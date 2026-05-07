@@ -42,11 +42,6 @@ interface ResumoCiclo {
   valor_cobrado: string
 }
 
-interface StatusServico {
-  ok: boolean
-  mensagem: string
-  verificado_em: Date
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -533,9 +528,6 @@ export default function AdminVisaoGeralPage() {
           </div>
         )}
       </div>
-
-      {/* Status do sistema — rodapé */}
-      <StatusSistema />
 
       {/* Modal fechar ciclo */}
       {modalCiclo && (
