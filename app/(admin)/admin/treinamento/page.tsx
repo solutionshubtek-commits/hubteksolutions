@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
-  Bot, History, CheckCircle, Upload, X, Settings,
+  History, CheckCircle, Upload, X, Settings,
   AlertTriangle, ChevronDown,
 } from 'lucide-react'
 
@@ -82,7 +82,6 @@ export default function AdminTreinamentoPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [dirty, setDirty] = useState(false)
 
   // Editable fields
   const [prompt, setPrompt] = useState('')
@@ -107,6 +106,7 @@ export default function AdminTreinamentoPage() {
       setLoading(false)
     }
     load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── Load selected tenant data ─────────────────────────────────────────────
@@ -125,9 +125,9 @@ export default function AdminTreinamentoPage() {
     setHoraFim(h?.fim ?? '18:00')
     setDias(h?.dias ?? [1, 2, 3, 4, 5])
     setFuncoes(h?.funcoes ?? [])
-    setDirty(false)
 
     loadDocs(selectedId)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, tenants])
 
   const loadDocs = async (tenantId: string) => {
@@ -179,7 +179,6 @@ export default function AdminTreinamentoPage() {
       .eq('id', tenant.id)
     setSaving(false)
     setSaved(true)
-    setDirty(false)
     setTimeout(() => setSaved(false), 2000)
   }
 
@@ -236,14 +235,12 @@ export default function AdminTreinamentoPage() {
     setDias((prev) =>
       prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
     )
-    setDirty(true)
   }
 
   const toggleFuncao = (f: string) => {
     setFuncoes((prev) =>
       prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]
     )
-    setDirty(true)
   }
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -256,7 +253,6 @@ export default function AdminTreinamentoPage() {
     )
   }
 
-  const isDisconnected = tenant?.status === 'bloqueado' || (!agentOn && tenant?.agente_pausado_em && tenant.status === 'bloqueado')
   // Desconectado pelo admin = status bloqueado com agente_ativo false
   const adminDisconnected = tenant?.status === 'bloqueado' && !tenant?.agente_ativo
 
@@ -393,7 +389,7 @@ export default function AdminTreinamentoPage() {
 
           <textarea
             value={prompt}
-            onChange={(e) => { setPrompt(e.target.value); setDirty(true) }}
+            onChange={(e) => { setPrompt(e.target.value) }}
             placeholder="Digite aqui o prompt do agente..."
             className="w-full min-h-[300px] bg-neutral-950 border border-neutral-800 rounded-xl p-4
                        text-white text-[12.5px] leading-relaxed font-mono resize-y
@@ -407,7 +403,7 @@ export default function AdminTreinamentoPage() {
             </p>
             <div className="flex gap-2">
               <button
-                onClick={() => { setDirty(false); setSelectedId((id) => id) }}
+                onClick={() => setSelectedId((id) => id)}
                 className="px-4 py-2 text-xs font-semibold text-neutral-400 border border-neutral-800 rounded-lg hover:text-white hover:border-neutral-700 transition-colors"
               >
                 Descartar
@@ -436,7 +432,7 @@ export default function AdminTreinamentoPage() {
               <input
                 type="time"
                 value={horaInicio}
-                onChange={(e) => { setHoraInicio(e.target.value); setDirty(true) }}
+                onChange={(e) => { setHoraInicio(e.target.value) }}
                 className="flex-1 bg-neutral-950 border border-neutral-800 text-white text-xs font-mono
                            px-3 py-2 rounded-lg focus:outline-none focus:border-emerald-500 transition-colors"
                 style={{ colorScheme: 'dark' }}
@@ -445,7 +441,7 @@ export default function AdminTreinamentoPage() {
               <input
                 type="time"
                 value={horaFim}
-                onChange={(e) => { setHoraFim(e.target.value); setDirty(true) }}
+                onChange={(e) => { setHoraFim(e.target.value) }}
                 className="flex-1 bg-neutral-950 border border-neutral-800 text-white text-xs font-mono
                            px-3 py-2 rounded-lg focus:outline-none focus:border-emerald-500 transition-colors"
                 style={{ colorScheme: 'dark' }}
