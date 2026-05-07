@@ -42,7 +42,6 @@ interface ResumoCiclo {
   valor_cobrado: string
 }
 
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function deltaPct(atual: number, anterior: number) {
@@ -166,7 +165,6 @@ function ModalFecharCiclo({
     setErro('')
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-
     const res = await fetch('/api/admin/fechar-ciclo', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -186,7 +184,6 @@ function ModalFecharCiclo({
           <h2 className="text-white font-semibold">Fechar ciclo — {tenant.nome}</h2>
           <button onClick={onClose} className="text-[#6B6B6B] hover:text-white"><X size={18} /></button>
         </div>
-
         <div className="p-6">
           {resumo ? (
             <div className="space-y-4">
@@ -247,62 +244,18 @@ function ModalFecharCiclo({
             </div>
           )}
         </div>
-
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#1F1F1F]">
           <button onClick={onClose} className="text-[#A3A3A3] hover:text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
             {resumo ? 'Fechar' : 'Cancelar'}
           </button>
           {!resumo && (
-            <button
-              onClick={handleFechar}
-              disabled={fechando}
-              className="flex items-center gap-2 bg-[#F59E0B] hover:bg-[#D97706] disabled:opacity-50 text-black text-sm font-bold px-5 py-2 rounded-lg transition-colors"
-            >
+            <button onClick={handleFechar} disabled={fechando}
+              className="flex items-center gap-2 bg-[#F59E0B] hover:bg-[#D97706] disabled:opacity-50 text-black text-sm font-bold px-5 py-2 rounded-lg transition-colors">
               <RefreshCw size={14} className={fechando ? 'animate-spin' : ''} />
               {fechando ? 'Fechando...' : 'Confirmar fechamento'}
             </button>
           )}
         </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Status do sistema (sidebar footer) ──────────────────────────────────────
-
-function StatusSistema() {
-  const [status, setStatus] = useState<StatusServico>({ ok: true, mensagem: 'Verificando...', verificado_em: new Date() })
-
-  const verificar = useCallback(async () => {
-    try {
-      const supabase = createClient()
-      const inicio = Date.now()
-      const { error } = await supabase.from('tenants').select('id', { count: 'exact', head: true })
-      const latencia = Date.now() - inicio
-      if (error) throw error
-      setStatus({ ok: true, mensagem: `Todos os serviços operando. Latência: ${latencia}ms`, verificado_em: new Date() })
-    } catch {
-      setStatus({ ok: false, mensagem: 'Falha na conexão com o banco.', verificado_em: new Date() })
-    }
-  }, [])
-
-  useEffect(() => {
-    verificar()
-    const interval = setInterval(verificar, 30000)
-    return () => clearInterval(interval)
-  }, [verificar])
-
-  const segundos = Math.round((Date.now() - status.verificado_em.getTime()) / 1000)
-
-  return (
-    <div className="bg-[#050505] border border-[#1F1F1F] rounded-xl p-4">
-      <p className="text-white text-xs font-semibold mb-1">Status do sistema</p>
-      <p className="text-[#6B6B6B] text-xs leading-relaxed mb-2">{status.mensagem}</p>
-      <div className="flex items-center gap-1.5">
-        <span className={`w-1.5 h-1.5 rounded-full ${status.ok ? 'bg-[#10B981]' : 'bg-red-400'}`} />
-        <span className={`text-xs ${status.ok ? 'text-[#10B981]' : 'text-red-400'}`}>
-          {status.ok ? `status.hubtek.io · ${segundos}s atrás` : 'Serviço com falha'}
-        </span>
       </div>
     </div>
   )
@@ -342,13 +295,9 @@ export default function AdminVisaoGeralPage() {
     const custoAnt = (custoAntRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
 
     setKpi({
-      clientesAtivos: ativos,
-      clientesTotal: tenants.length,
-      clientesBloqueados: bloqueados,
-      conversasMes: convMesRes.count ?? 0,
-      conversasAnterior: convAntRes.count ?? 0,
-      custoUsdMes: custoMes,
-      custoUsdAnterior: custoAnt,
+      clientesAtivos: ativos, clientesTotal: tenants.length, clientesBloqueados: bloqueados,
+      conversasMes: convMesRes.count ?? 0, conversasAnterior: convAntRes.count ?? 0,
+      custoUsdMes: custoMes, custoUsdAnterior: custoAnt,
       acessosExpirando: expirandoRes.count ?? 0,
     })
 
@@ -360,12 +309,9 @@ export default function AdminVisaoGeralPage() {
       const tokens = (tokRes.data ?? []).reduce((s, r) => s + (r.tokens_total ?? 0), 0)
       const custoUsd = (tokRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
       return {
-        id: t.id, nome: t.nome, slug: t.slug,
-        status: t.status,
+        id: t.id, nome: t.nome, slug: t.slug, status: t.status,
         agente_status: t.agente_ativo === false ? 'pausado' : 'ativo',
-        expira_em: t.expira_em,
-        conversasMes: convRes.count ?? 0,
-        tokens, custoUsd,
+        expira_em: t.expira_em, conversasMes: convRes.count ?? 0, tokens, custoUsd,
       }
     }))
     setRows(detalhe)
@@ -406,7 +352,6 @@ export default function AdminVisaoGeralPage() {
   return (
     <div className="p-8 space-y-6">
 
-      {/* Page head */}
       <div className="flex items-start justify-between">
         <div>
           <p className="text-[#6B6B6B] text-sm mb-1">Painel Administrativo</p>
@@ -416,10 +361,8 @@ export default function AdminVisaoGeralPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => exportarConsolidado(rows)}
-            className="flex items-center gap-2 bg-[#0A0A0A] hover:bg-[#141414] border border-[#1F1F1F] text-[#A3A3A3] hover:text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
-          >
+          <button onClick={() => exportarConsolidado(rows)}
+            className="flex items-center gap-2 bg-[#0A0A0A] hover:bg-[#141414] border border-[#1F1F1F] text-[#A3A3A3] hover:text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors">
             <Download size={14} /> Exportar consolidado
           </button>
           <a href="/admin/clientes" className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors">
@@ -428,15 +371,13 @@ export default function AdminVisaoGeralPage() {
         </div>
       </div>
 
-      {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Clientes ativos"      value={kpi!.clientesAtivos}                                     sub={`${kpi!.clientesBloqueados} bloqueado · ${kpi!.clientesTotal} cadastrados`} icon={Users} />
-        <KpiCard label="Conversas no mês"     value={fmtCompact(kpi!.conversasMes)}                           sub="todos os clientes ativos" delta={deltaConversas}                           icon={MessageSquare} />
-        <KpiCard label={`Custo de IA · ${mesAtual}`} value={kpi!.custoUsdMes > 0 ? fmtBRL(kpi!.custoUsdMes) : '—'} sub="ciclo atual" delta={deltaCusto}                                    icon={Wallet} accent={kpi!.custoUsdMes > 0} />
-        <KpiCard label="Acessos a expirar"    value={kpi!.acessosExpirando}                                   sub="próximos 10 dias"                                                          icon={AlertTriangle} />
+        <KpiCard label="Clientes ativos"           value={kpi!.clientesAtivos}                                          sub={`${kpi!.clientesBloqueados} bloqueado · ${kpi!.clientesTotal} cadastrados`} icon={Users} />
+        <KpiCard label="Conversas no mês"           value={fmtCompact(kpi!.conversasMes)}                                sub="todos os clientes ativos" delta={deltaConversas}                           icon={MessageSquare} />
+        <KpiCard label={`Custo de IA · ${mesAtual}`} value={kpi!.custoUsdMes > 0 ? fmtBRL(kpi!.custoUsdMes) : '—'}     sub="ciclo atual" delta={deltaCusto}                                            icon={Wallet} accent={kpi!.custoUsdMes > 0} />
+        <KpiCard label="Acessos a expirar"          value={kpi!.acessosExpirando}                                        sub="próximos 10 dias"                                                          icon={AlertTriangle} />
       </div>
 
-      {/* Tabela consolidada */}
       <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl">
         <div className="flex items-start justify-between px-6 py-4 border-b border-[#1F1F1F]">
           <div>
@@ -511,10 +452,8 @@ export default function AdminVisaoGeralPage() {
                             <Settings size={12} />
                           </button>
                           {(exp === 'expiring' || exp === 'blocked' || r.conversasMes > 0) && (
-                            <button
-                              onClick={() => setModalCiclo(r)}
-                              className="flex items-center gap-1 bg-[#F59E0B]/10 hover:bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30 text-xs font-medium px-3 py-1.5 rounded-md transition-colors"
-                            >
+                            <button onClick={() => setModalCiclo(r)}
+                              className="flex items-center gap-1 bg-[#F59E0B]/10 hover:bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30 text-xs font-medium px-3 py-1.5 rounded-md transition-colors">
                               <AlertTriangle size={11} /> Fechar ciclo
                             </button>
                           )}
@@ -529,7 +468,6 @@ export default function AdminVisaoGeralPage() {
         )}
       </div>
 
-      {/* Modal fechar ciclo */}
       {modalCiclo && (
         <ModalFecharCiclo
           tenant={modalCiclo}
