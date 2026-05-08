@@ -23,7 +23,7 @@ interface AiUsageRow {
   tokens_saida: number
   custo_estimado_reais: number
   motor_utilizado: string
-  tenants: { nome: string } | null
+  tenants: { nome: string } | { nome: string }[] | null
 }
 
 interface TenantOption {
@@ -106,7 +106,7 @@ export default function CustosIAPage() {
       }
 
       const { data: usage } = await query
-      setRawData((usage ?? []) as AiUsageRow[])
+      setRawData((usage ?? []) as unknown as AiUsageRow[])
     } finally {
       setLoading(false)
     }
@@ -137,7 +137,7 @@ export default function CustosIAPage() {
   const clienteMap: Record<string, ClienteRow> = {}
   if (selectedTenant === 'todos') {
     rawData.forEach(r => {
-      const nome = r.tenants?.nome ?? r.tenant_id
+      const nome = (Array.isArray(r.tenants) ? r.tenants[0]?.nome : r.tenants?.nome) ?? r.tenant_id
       if (!clienteMap[r.tenant_id]) {
         clienteMap[r.tenant_id] = {
           tenantId: r.tenant_id, nome,
