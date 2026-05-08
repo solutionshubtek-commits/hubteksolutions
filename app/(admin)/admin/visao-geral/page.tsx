@@ -448,9 +448,9 @@ export default function AdminVisaoGeralPage() {
                           <a href="/admin/clientes" className="flex items-center gap-1 bg-[#1F1F1F] hover:bg-[#2A2A2A] text-[#A3A3A3] hover:text-white text-xs font-medium px-3 py-1.5 rounded-md transition-colors">
                             Detalhes
                           </a>
-                          <button className="flex items-center bg-[#1F1F1F] hover:bg-[#2A2A2A] text-[#6B6B6B] hover:text-white text-xs font-medium p-1.5 rounded-md transition-colors">
-                            <Settings size={12} />
-                          </button>
+                          <a href={`/admin/clientes?id=${r.id}`} className="flex items-center bg-[#1F1F1F] hover:bg-[#2A2A2A] text-[#6B6B6B] hover:text-white text-xs font-medium p-1.5 rounded-md transition-colors">
+  <Settings size={12} />
+</a>
                           {(exp === 'expiring' || exp === 'blocked' || r.conversasMes > 0) && (
                             <button onClick={() => setModalCiclo(r)}
                               className="flex items-center gap-1 bg-[#F59E0B]/10 hover:bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30 text-xs font-medium px-3 py-1.5 rounded-md transition-colors">
