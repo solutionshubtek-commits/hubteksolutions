@@ -2,479 +2,482 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
-  Users, MessageSquare, AlertTriangle, Wallet,
-  Plus, ArrowUp, ArrowDown, Download, Filter,
-  Search, ChevronDown, RefreshCw, Settings, X,
-  CheckCircle2, AlertCircle,
+  Plus, Search, AlertTriangle, CheckCircle2, AlertCircle,
+  X, Save, Eye, EyeOff, Lock, Unlock, Key, BarChart2,
+  ChevronRight, RefreshCw,
 } from 'lucide-react'
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface KpiData {
-  clientesAtivos: number
-  clientesTotal: number
-  clientesBloqueados: number
-  conversasMes: number
-  conversasAnterior: number
-  custoUsdMes: number
-  custoUsdAnterior: number
-  acessosExpirando: number
+interface Tenant {
+  id: string; nome: string; slug: string; status: string
+  expira_em: string | null; criado_em: string
+}
+interface TokenMes {
+  mes: string; conversas: number; tokens: number; custo_usd: number
+}
+interface NovoTenant {
+  nome: string; slug: string; email_admin: string
+  senha_admin: string; expira_em: string; self_managed: boolean
 }
 
-interface TenantRow {
-  id: string
-  nome: string
-  slug: string
-  status: string
-  agente_status: string
-  expira_em: string | null
-  conversasMes: number
-  tokens: number
-  custoUsd: number
+function statusConfig(status: string) {
+  const map: Record<string, { label: string; cor: string; bg: string; border: string }> = {
+    ativo:     { label: 'Ativo',     cor: '#10B981', bg: '#10B98118', border: '#10B98140' },
+    inativo:   { label: 'Inativo',   cor: '#6B6B6B', bg: '#6B6B6B18', border: '#6B6B6B40' },
+    bloqueado: { label: 'Bloqueado', cor: '#EF4444', bg: '#EF444418', border: '#EF444440' },
+  }
+  return map[status] ?? map['inativo']
 }
-
-interface ResumoCiclo {
-  tenant_nome: string
-  mes_ref: string
-  conversas: number
-  tokens: number
-  custo_brl: string
-  valor_cobrado: string
+function diasRestantes(expira_em: string | null) {
+  if (!expira_em) return null
+  return Math.ceil((new Date(expira_em).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function deltaPct(atual: number, anterior: number) {
-  if (!anterior) return null
-  return Math.round(((atual - anterior) / anterior) * 100)
+function slugify(nome: string) {
+  return nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
-
-function fmtBR(n: number) { return n.toLocaleString('pt-BR') }
 function fmtCompact(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
   return n.toString()
 }
-function fmtBRL(usd: number) {
-  return `R$ ${(usd * 5.8).toFixed(2).replace('.', ',')}`
-}
-function diasAteExpirar(expira_em: string | null) {
-  if (!expira_em) return null
-  return Math.ceil((new Date(expira_em).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-}
-function expiryStatus(expira_em: string | null) {
-  const d = diasAteExpirar(expira_em)
-  if (d === null) return 'none'
-  if (d < 0) return 'blocked'
-  if (d <= 10) return 'expiring'
-  return 'ok'
-}
-function exportarConsolidado(rows: TenantRow[]) {
-  const header = 'Cliente,Slug,Status,Conversas,Tokens,Custo BRL,Valor a cobrar (3x),Expiração\n'
-  const csv = rows.map(r => {
-    const custoBRL = (r.custoUsd * 5.8).toFixed(2)
-    const cobrar = (r.custoUsd * 5.8 * 3).toFixed(2)
-    const exp = r.expira_em ? new Date(r.expira_em).toLocaleDateString('pt-BR') : '—'
-    return `"${r.nome}","${r.slug}","${r.status}","${r.conversasMes}","${r.tokens}","${custoBRL}","${cobrar}","${exp}"`
-  }).join('\n')
-  const blob = new Blob([header + csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = `consolidado-${new Date().toISOString().slice(0, 10)}.csv`; a.click()
-  URL.revokeObjectURL(url)
-}
 
-// ─── Badges ──────────────────────────────────────────────────────────────────
-
-function AgentBadge({ status }: { status: string }) {
-  const cfg = {
-    ativo:        { cor: '#10B981', bg: '#10B98118', border: '#10B98140', label: 'Ativo' },
-    pausado:      { cor: '#F59E0B', bg: '#F59E0B18', border: '#F59E0B40', label: 'Pausado' },
-    desconectado: { cor: '#EF4444', bg: '#EF444418', border: '#EF444440', label: 'Desconectado' },
-  }[status] ?? { cor: '#6B6B6B', bg: '#6B6B6B18', border: '#6B6B6B40', label: 'Inativo' }
-  return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border" style={{ color: cfg.cor, background: cfg.bg, borderColor: cfg.border }}>
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.cor }} />
-      {cfg.label}
-    </span>
-  )
-}
-
-function ExpiryTag({ expira_em }: { expira_em: string | null }) {
-  if (!expira_em) return <span className="text-[#3A3A3A] text-xs">—</span>
-  const d = diasAteExpirar(expira_em)!
-  const status = expiryStatus(expira_em)
-  const dataFmt = new Date(expira_em).toLocaleDateString('pt-BR')
-  if (status === 'blocked') return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-red-500/10 border border-red-500/30 text-red-400">
-      <AlertTriangle size={11} /> Expirado · {Math.abs(d)}d
-    </span>
-  )
-  if (status === 'expiring') return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">
-      <AlertTriangle size={11} /> {dataFmt} · {d}d
-    </span>
-  )
-  return (
-    <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-mono bg-[#050505] border border-[#1F1F1F] text-[#A3A3A3]">
-      {dataFmt}
-    </span>
-  )
-}
-
-// ─── KPI Card ────────────────────────────────────────────────────────────────
-
-function KpiCard({ label, value, sub, delta, icon: Icon, accent }: {
-  label: string; value: string | number; sub?: string; delta?: number | null
-  icon: React.ElementType; accent?: boolean
-}) {
-  return (
-    <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-5">
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-[#A3A3A3] text-sm">{label}</p>
-        <div className="w-9 h-9 rounded-lg bg-[#10B981]/10 flex items-center justify-center">
-          <Icon size={16} className="text-[#10B981]" />
-        </div>
-      </div>
-      <p className={`text-3xl font-bold mb-2 ${accent ? 'text-[#10B981]' : 'text-white'}`}>{value}</p>
-      <div className="flex items-center justify-between">
-        {sub && <span className="text-[#6B6B6B] text-xs">{sub}</span>}
-        {delta != null && (
-          <span className={`flex items-center gap-0.5 text-xs font-semibold ${delta >= 0 ? 'text-[#10B981]' : 'text-red-400'}`}>
-            {delta >= 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />}
-            {delta >= 0 ? '+' : ''}{delta}%
-          </span>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── Modal Fechar Ciclo ───────────────────────────────────────────────────────
-
-function ModalFecharCiclo({
-  tenant, onClose, onFechado,
-}: { tenant: TenantRow; onClose: () => void; onFechado: () => void }) {
-  const [fechando, setFechando] = useState(false)
-  const [resumo, setResumo] = useState<ResumoCiclo | null>(null)
+function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: (t: Tenant) => void }) {
+  const [form, setForm] = useState<NovoTenant>({ nome: '', slug: '', email_admin: '', senha_admin: '', expira_em: '', self_managed: false })
+  const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
+  const [mostrarSenha, setMostrarSenha] = useState(false)
 
-  const mesAtual = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
-
-  async function handleFechar() {
-    setFechando(true)
-    setErro('')
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    const res = await fetch('/api/admin/fechar-ciclo', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tenant_id: tenant.id, usuario_id: user?.id }),
-    })
-    const data = await res.json()
-    setFechando(false)
-    if (!res.ok) { setErro(data.error ?? 'Erro desconhecido'); return }
-    setResumo(data.resumo)
-    onFechado()
+  function handleNome(nome: string) {
+    setForm(prev => ({ ...prev, nome, slug: prev.slug === slugify(prev.nome) || prev.slug === '' ? slugify(nome) : prev.slug }))
   }
+
+  async function handleSalvar() {
+    if (!form.nome || !form.slug || !form.email_admin || !form.senha_admin || !form.expira_em) {
+      setErro('Preencha todos os campos obrigatórios.'); return
+    }
+    setSalvando(true); setErro('')
+    const supabase = createClient()
+    const { data: slugExiste } = await supabase.from('tenants').select('id').eq('slug', form.slug).single()
+    if (slugExiste) { setErro('Esse slug já está em uso.'); setSalvando(false); return }
+    const { data: tenant, error: tenantErr } = await supabase.from('tenants')
+      .insert({ nome: form.nome, slug: form.slug, status: 'ativo', expira_em: form.expira_em })
+      .select().single()
+    if (tenantErr || !tenant) { setErro('Erro ao criar tenant: ' + (tenantErr?.message ?? 'desconhecido')); setSalvando(false); return }
+    const res = await fetch('/api/admin/criar-usuario', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: form.email_admin, senha: form.senha_admin, tenant_id: tenant.id, role: form.self_managed ? 'self_managed' : 'admin_tenant', nome: form.nome }),
+    })
+    const resData = await res.json()
+    if (!res.ok) {
+      await supabase.from('tenants').delete().eq('id', tenant.id)
+      setErro('Erro ao criar usuário: ' + (resData.error ?? 'desconhecido')); setSalvando(false); return
+    }
+    setSalvando(false); onSalvo(tenant)
+  }
+
+  const inp = "w-full bg-[#050505] border border-[#1F1F1F] text-white placeholder-[#6B6B6B] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[#10B981]"
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
-      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl w-full max-w-md">
+      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl w-full max-w-lg">
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#1F1F1F]">
-          <h2 className="text-white font-semibold">Fechar ciclo — {tenant.nome}</h2>
+          <h2 className="text-white font-semibold">Cadastrar novo cliente</h2>
           <button onClick={onClose} className="text-[#6B6B6B] hover:text-white"><X size={18} /></button>
         </div>
-        <div className="p-6">
-          {resumo ? (
-            <div className="space-y-4">
-              <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-4 flex items-center gap-2">
-                <CheckCircle2 size={16} className="text-[#10B981] flex-shrink-0" />
-                <p className="text-[#10B981] text-sm font-medium">Ciclo de {mesAtual} fechado com sucesso!</p>
-              </div>
-              <div className="bg-[#050505] border border-[#1F1F1F] rounded-xl p-4 space-y-3">
-                <p className="text-white text-sm font-semibold border-b border-[#1F1F1F] pb-2">Resumo do ciclo</p>
-                {[
-                  ['Cliente', resumo.tenant_nome],
-                  ['Mês de referência', resumo.mes_ref],
-                  ['Conversas', fmtBR(resumo.conversas)],
-                  ['Tokens consumidos', fmtCompact(resumo.tokens)],
-                  ['Custo de API', `R$ ${resumo.custo_brl}`],
-                  ['Valor a cobrar (3x)', `R$ ${resumo.valor_cobrado}`],
-                ].map(([label, value]) => (
-                  <div key={label} className="flex items-center justify-between">
-                    <span className="text-[#6B6B6B] text-xs">{label}</span>
-                    <span className={`text-sm font-medium ${label === 'Valor a cobrar (3x)' ? 'text-[#10B981] font-bold' : 'text-white'}`}>{value}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[#6B6B6B] text-xs">O relatório foi salvo e está disponível na aba Relatórios.</p>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Nome da empresa *</label>
+            <input type="text" value={form.nome} onChange={(e) => handleNome(e.target.value)} placeholder="Ex: Pizzaria Vesúvio" className={inp} />
+          </div>
+          <div>
+            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Slug (identificador único) *</label>
+            <input type="text" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })} placeholder="pizzaria-vesuvio" className={`${inp} font-mono`} />
+          </div>
+          <div>
+            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">E-mail do admin *</label>
+            <input type="email" value={form.email_admin} onChange={(e) => setForm({ ...form, email_admin: e.target.value })} placeholder="cliente@empresa.com" className={inp} />
+          </div>
+          <div>
+            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Senha inicial *</label>
+            <div className="relative">
+              <input type={mostrarSenha ? 'text' : 'password'} value={form.senha_admin} onChange={(e) => setForm({ ...form, senha_admin: e.target.value })} placeholder="Mínimo 8 caracteres" className={`${inp} pr-10`} />
+              <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6B6B] hover:text-white">
+                {mostrarSenha ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
             </div>
-          ) : (
-            <div className="space-y-4">
-              <p className="text-[#A3A3A3] text-sm">
-                Você está prestes a fechar o ciclo de <span className="text-white font-medium">{tenant.nome}</span> referente a <span className="text-white font-medium">{mesAtual}</span>.
-              </p>
-              <div className="bg-[#050505] border border-[#1F1F1F] rounded-xl p-4 space-y-2">
-                <p className="text-white text-xs font-semibold mb-1">O que acontece ao fechar:</p>
-                {[
-                  'Dados do ciclo são salvos nos Relatórios',
-                  'Conversas e tokens continuam visíveis no histórico',
-                  'O painel volta a calcular do zero para o próximo mês',
-                ].map(item => (
-                  <div key={item} className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] mt-1.5 flex-shrink-0" />
-                    <p className="text-[#6B6B6B] text-xs">{item}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="bg-[#050505] border border-[#1F1F1F] rounded-lg p-3">
-                <p className="text-[#6B6B6B] text-xs mb-1">Resumo atual do mês</p>
-                <div className="flex gap-6">
-                  <div><p className="text-[#6B6B6B] text-xs">Conversas</p><p className="text-white text-sm font-medium">{fmtBR(tenant.conversasMes)}</p></div>
-                  <div><p className="text-[#6B6B6B] text-xs">Tokens</p><p className="text-white text-sm font-medium">{fmtCompact(tenant.tokens)}</p></div>
-                  <div><p className="text-[#6B6B6B] text-xs">Custo API</p><p className="text-white text-sm font-medium">{tenant.custoUsd > 0 ? fmtBRL(tenant.custoUsd) : '—'}</p></div>
-                </div>
-              </div>
-              {erro && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2">
-                  <AlertCircle size={13} className="text-red-400 flex-shrink-0" />
-                  <p className="text-red-400 text-sm">{erro}</p>
-                </div>
-              )}
+          </div>
+          <div>
+            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Data de expiração *</label>
+            <input type="date" value={form.expira_em} onChange={(e) => setForm({ ...form, expira_em: e.target.value })} className={`${inp} [color-scheme:dark]`} />
+          </div>
+          <div className="flex items-center justify-between bg-[#050505] border border-[#1F1F1F] rounded-lg px-4 py-3">
+            <div>
+              <p className="text-white text-sm font-medium">Permitir autogestão do agente</p>
+              <p className="text-[#6B6B6B] text-xs mt-0.5">Cliente poderá editar prompt, horários e base de conhecimento</p>
             </div>
-          )}
+            <button type="button" onClick={() => setForm(prev => ({ ...prev, self_managed: !prev.self_managed }))}
+              style={{ width: 44, minWidth: 44, height: 24, padding: 0, border: 'none', outline: 'none', borderRadius: 999, position: 'relative', cursor: 'pointer', flexShrink: 0, backgroundColor: form.self_managed ? '#10B981' : '#2A2A2A', transition: 'background-color 0.2s' }}>
+              <span style={{ position: 'absolute', top: 2, left: form.self_managed ? 22 : 2, width: 20, height: 20, borderRadius: '50%', backgroundColor: '#fff', transition: 'left 0.2s ease', display: 'block' }} />
+            </button>
+          </div>
+          {erro && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400 flex-shrink-0" /><p className="text-red-400 text-sm">{erro}</p></div>}
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#1F1F1F]">
-          <button onClick={onClose} className="text-[#A3A3A3] hover:text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-            {resumo ? 'Fechar' : 'Cancelar'}
+          <button onClick={onClose} className="text-[#A3A3A3] hover:text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Cancelar</button>
+          <button onClick={handleSalvar} disabled={salvando} className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">
+            <Save size={14} />{salvando ? 'Salvando...' : 'Cadastrar cliente'}
           </button>
-          {!resumo && (
-            <button onClick={handleFechar} disabled={fechando}
-              className="flex items-center gap-2 bg-[#F59E0B] hover:bg-[#D97706] disabled:opacity-50 text-black text-sm font-bold px-5 py-2 rounded-lg transition-colors">
-              <RefreshCw size={14} className={fechando ? 'animate-spin' : ''} />
-              {fechando ? 'Fechando...' : 'Confirmar fechamento'}
-            </button>
-          )}
         </div>
       </div>
     </div>
   )
 }
 
-// ─── Main ────────────────────────────────────────────────────────────────────
+function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose: () => void; onAtualizado: (t: Tenant) => void }) {
+  const [aba, setAba] = useState<'detalhes' | 'editar' | 'senha' | 'extrato'>('detalhes')
+  const [nomeEdit, setNomeEdit] = useState(tenant.nome)
+  const [expiraEdit, setExpiraEdit] = useState(tenant.expira_em?.slice(0, 10) ?? '')
+  const [salvandoEdit, setSalvandoEdit] = useState(false)
+  const [erroEdit, setErroEdit] = useState('')
+  const [sucessoEdit, setSucessoEdit] = useState('')
+  const [novaSenha, setNovaSenha] = useState('')
+  const [mostrarSenha, setMostrarSenha] = useState(false)
+  const [salvandoSenha, setSalvandoSenha] = useState(false)
+  const [erroSenha, setErroSenha] = useState('')
+  const [sucessoSenha, setSucessoSenha] = useState('')
+  const [salvandoStatus, setSalvandoStatus] = useState(false)
+  const [extrato, setExtrato] = useState<TokenMes[]>([])
+  const [carregandoExtrato, setCarregandoExtrato] = useState(false)
 
-export default function AdminVisaoGeralPage() {
-  const [kpi, setKpi] = useState<KpiData | null>(null)
-  const [rows, setRows] = useState<TenantRow[]>([])
-  const [busca, setBusca] = useState('')
-  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'expirando' | 'bloqueado'>('todos')
-  const [carregando, setCarregando] = useState(true)
-  const [modalCiclo, setModalCiclo] = useState<TenantRow | null>(null)
+  useEffect(() => {
+    if (aba === 'extrato') carregarExtrato()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aba])
 
-  const fetchData = useCallback(async () => {
+  async function carregarExtrato() {
+    setCarregandoExtrato(true)
     const supabase = createClient()
-    const agora = new Date()
-    const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).toISOString()
-    const inicioMesAnt = new Date(agora.getFullYear(), agora.getMonth() - 1, 1).toISOString()
-    const fimMesAnt = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59).toISOString()
-    const em10Dias = new Date(agora.getTime() + 10 * 24 * 60 * 60 * 1000).toISOString()
+    const { data } = await supabase.from('token_usage')
+      .select('criado_em, tokens_total, custo_usd, conversation_id')
+      .eq('tenant_id', tenant.id)
+      .order('criado_em', { ascending: false })
+    if (data) {
+      const porMes: Record<string, TokenMes> = {}
+      const convIds = new Set<string>()
+      data.forEach(row => {
+        const mes = row.criado_em.slice(0, 7)
+        if (!porMes[mes]) porMes[mes] = { mes, conversas: 0, tokens: 0, custo_usd: 0 }
+        porMes[mes].tokens += row.tokens_total ?? 0
+        porMes[mes].custo_usd += row.custo_usd ?? 0
+        if (row.conversation_id && !convIds.has(row.conversation_id + mes)) {
+          convIds.add(row.conversation_id + mes)
+          porMes[mes].conversas += 1
+        }
+      })
+      setExtrato(Object.values(porMes).sort((a, b) => b.mes.localeCompare(a.mes)))
+    }
+    setCarregandoExtrato(false)
+  }
 
-    const [tenantsRes, convMesRes, convAntRes, custoMesRes, custoAntRes, expirandoRes] = await Promise.all([
-      supabase.from('tenants').select('id, nome, slug, status, expira_em, agente_ativo'),
-      supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('criado_em', inicioMes),
-      supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('criado_em', inicioMesAnt).lte('criado_em', fimMesAnt),
-      supabase.from('token_usage').select('custo_usd').gte('criado_em', inicioMes),
-      supabase.from('token_usage').select('custo_usd').gte('criado_em', inicioMesAnt).lte('criado_em', fimMesAnt),
-      supabase.from('tenants').select('id', { count: 'exact', head: true }).eq('status', 'ativo').lte('expira_em', em10Dias).gte('expira_em', agora.toISOString()),
-    ])
+  async function handleSalvarEdicao() {
+    setSalvandoEdit(true); setErroEdit(''); setSucessoEdit('')
+    const supabase = createClient()
+    const { error } = await supabase.from('tenants').update({ nome: nomeEdit, expira_em: expiraEdit || null }).eq('id', tenant.id)
+    setSalvandoEdit(false)
+    if (error) { setErroEdit('Erro ao salvar: ' + error.message); return }
+    setSucessoEdit('Salvo com sucesso!')
+    onAtualizado({ ...tenant, nome: nomeEdit, expira_em: expiraEdit || null })
+    setTimeout(() => setSucessoEdit(''), 2500)
+  }
 
-    const tenants = tenantsRes.data ?? []
-    const ativos = tenants.filter(t => t.status === 'ativo').length
-    const bloqueados = tenants.filter(t => t.status === 'bloqueado').length
-    const custoMes = (custoMesRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
-    const custoAnt = (custoAntRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
-
-    setKpi({
-      clientesAtivos: ativos, clientesTotal: tenants.length, clientesBloqueados: bloqueados,
-      conversasMes: convMesRes.count ?? 0, conversasAnterior: convAntRes.count ?? 0,
-      custoUsdMes: custoMes, custoUsdAnterior: custoAnt,
-      acessosExpirando: expirandoRes.count ?? 0,
+  async function handleResetarSenha() {
+    if (!novaSenha || novaSenha.length < 8) { setErroSenha('Mínimo 8 caracteres.'); return }
+    setSalvandoSenha(true); setErroSenha(''); setSucessoSenha('')
+    const res = await fetch('/api/admin/resetar-senha', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: tenant.id, nova_senha: novaSenha }),
     })
+    const data = await res.json()
+    setSalvandoSenha(false)
+    if (!res.ok) { setErroSenha(data.error ?? 'Erro desconhecido'); return }
+    setSucessoSenha('Senha redefinida com sucesso!')
+    setNovaSenha('')
+    setTimeout(() => setSucessoSenha(''), 2500)
+  }
 
-    const detalhe: TenantRow[] = await Promise.all(tenants.map(async (t) => {
-      const [convRes, tokRes] = await Promise.all([
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', t.id).gte('criado_em', inicioMes),
-        supabase.from('token_usage').select('tokens_total, custo_usd').eq('tenant_id', t.id).gte('criado_em', inicioMes),
-      ])
-      const tokens = (tokRes.data ?? []).reduce((s, r) => s + (r.tokens_total ?? 0), 0)
-      const custoUsd = (tokRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
-      return {
-        id: t.id, nome: t.nome, slug: t.slug, status: t.status,
-        agente_status: t.agente_ativo === false ? 'pausado' : 'ativo',
-        expira_em: t.expira_em, conversasMes: convRes.count ?? 0, tokens, custoUsd,
-      }
-    }))
-    setRows(detalhe)
+  async function handleToggleStatus() {
+    setSalvandoStatus(true)
+    const novoStatus = tenant.status === 'bloqueado' ? 'ativo' : 'bloqueado'
+    const supabase = createClient()
+    await supabase.from('tenants').update({ status: novoStatus }).eq('id', tenant.id)
+    setSalvandoStatus(false)
+    onAtualizado({ ...tenant, status: novoStatus })
+  }
+
+  const dias = diasRestantes(tenant.expira_em)
+  const expirando = dias !== null && dias <= 10 && dias >= 0
+  const expirado = dias !== null && dias < 0
+  const cfg = statusConfig(tenant.status)
+  const inp = "w-full bg-[#050505] border border-[#1F1F1F] text-white placeholder-[#6B6B6B] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[#10B981]"
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      <div className="fixed inset-y-0 right-0 w-full max-w-md bg-[#0A0A0A] border-l border-[#1F1F1F] z-50 flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#1F1F1F]">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[#1F1F1F] flex items-center justify-center text-[#A3A3A3] text-xs font-semibold">
+              {tenant.nome.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()}
+            </div>
+            <div>
+              <p className="text-white font-semibold text-sm">{tenant.nome}</p>
+              <p className="text-[#6B6B6B] text-xs font-mono">{tenant.slug}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-[#6B6B6B] hover:text-white"><X size={18} /></button>
+        </div>
+
+        <div className="flex border-b border-[#1F1F1F]">
+          {(['detalhes', 'editar', 'senha', 'extrato'] as const).map(a => (
+            <button key={a} onClick={() => setAba(a)}
+              className={`flex-1 py-3 text-xs font-semibold transition-colors ${aba === a ? 'text-[#10B981] border-b-2 border-[#10B981]' : 'text-[#6B6B6B] hover:text-white'}`}>
+              {a === 'detalhes' ? 'Detalhes' : a === 'editar' ? 'Editar' : a === 'senha' ? 'Senha' : 'Extrato'}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+
+          {aba === 'detalhes' && (
+            <div className="space-y-4">
+              <div className="space-y-3">
+                {([['Nome', tenant.nome], ['Slug', tenant.slug], ['Cadastrado em', new Date(tenant.criado_em).toLocaleDateString('pt-BR')], ['Expira em', tenant.expira_em ? new Date(tenant.expira_em).toLocaleDateString('pt-BR') : '—']] as [string, string][]).map(([label, value]) => (
+                  <div key={label} className="flex justify-between items-center py-2 border-b border-[#1F1F1F]">
+                    <span className="text-[#6B6B6B] text-sm">{label}</span>
+                    <span className={`text-sm font-medium ${label === 'Slug' ? 'font-mono text-[#A3A3A3]' : 'text-white'}`}>{value}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between items-center py-2 border-b border-[#1F1F1F]">
+                  <span className="text-[#6B6B6B] text-sm">Status</span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border" style={{ color: cfg.cor, background: cfg.bg, borderColor: cfg.border }}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.cor }} />{cfg.label}
+                  </span>
+                </div>
+              </div>
+              {(expirando || expirado) && (
+                <div className={`flex items-center gap-2 p-3 rounded-lg border ${expirado ? 'bg-red-500/10 border-red-500/30' : 'bg-[#F59E0B]/10 border-[#F59E0B]/30'}`}>
+                  <AlertTriangle size={14} className={expirado ? 'text-red-400' : 'text-[#F59E0B]'} />
+                  <p className={`text-xs font-medium ${expirado ? 'text-red-400' : 'text-[#F59E0B]'}`}>
+                    {expirado ? `Acesso expirado há ${Math.abs(dias!)} dias` : `Acesso expira em ${dias} dias`}
+                  </p>
+                </div>
+              )}
+              <button onClick={handleToggleStatus} disabled={salvandoStatus}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold border transition-colors disabled:opacity-50 ${tenant.status === 'bloqueado' ? 'bg-[#10B981]/10 border-[#10B981]/30 text-[#10B981] hover:bg-[#10B981]/20' : 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20'}`}>
+                {salvandoStatus ? <RefreshCw size={14} className="animate-spin" /> : tenant.status === 'bloqueado' ? <Unlock size={14} /> : <Lock size={14} />}
+                {tenant.status === 'bloqueado' ? 'Desbloquear acesso' : 'Bloquear acesso'}
+              </button>
+            </div>
+          )}
+
+          {aba === 'editar' && (
+            <div className="space-y-4">
+              <div>
+                <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Nome da empresa</label>
+                <input type="text" value={nomeEdit} onChange={(e) => setNomeEdit(e.target.value)} className={inp} />
+              </div>
+              <div>
+                <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Data de expiração</label>
+                <input type="date" value={expiraEdit} onChange={(e) => setExpiraEdit(e.target.value)} className={`${inp} [color-scheme:dark]`} />
+              </div>
+              {erroEdit && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroEdit}</p></div>}
+              {sucessoEdit && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoEdit}</p></div>}
+              <button onClick={handleSalvarEdicao} disabled={salvandoEdit} className="w-full flex items-center justify-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+                <Save size={14} />{salvandoEdit ? 'Salvando...' : 'Salvar alterações'}
+              </button>
+            </div>
+          )}
+
+          {aba === 'senha' && (
+            <div className="space-y-4">
+              <p className="text-[#A3A3A3] text-sm">Redefine a senha do usuário <span className="text-white font-medium">admin_tenant</span> deste cliente.</p>
+              <div>
+                <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Nova senha</label>
+                <div className="relative">
+                  <input type={mostrarSenha ? 'text' : 'password'} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} placeholder="Mínimo 8 caracteres" className={`${inp} pr-10`} />
+                  <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6B6B] hover:text-white">
+                    {mostrarSenha ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              </div>
+              {erroSenha && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroSenha}</p></div>}
+              {sucessoSenha && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoSenha}</p></div>}
+              <button onClick={handleResetarSenha} disabled={salvandoSenha} className="w-full flex items-center justify-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+                <Key size={14} />{salvandoSenha ? 'Redefinindo...' : 'Redefinir senha'}
+              </button>
+            </div>
+          )}
+
+          {aba === 'extrato' && (
+            <div className="space-y-3">
+              <p className="text-[#6B6B6B] text-xs">Consumo de tokens e custo estimado por mês.</p>
+              {carregandoExtrato ? (
+                <div className="space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-[#050505] rounded-xl animate-pulse" />)}</div>
+              ) : extrato.length === 0 ? (
+                <div className="p-8 text-center"><p className="text-[#6B6B6B] text-sm">Nenhum registro de uso ainda.</p></div>
+              ) : extrato.map(mes => {
+                const custoBRL = mes.custo_usd * 5.8
+                const cobrar = custoBRL * 3
+                const [ano, m] = mes.mes.split('-')
+                const nomeMes = new Date(+ano, +m - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+                return (
+                  <div key={mes.mes} className="bg-[#050505] border border-[#1F1F1F] rounded-xl p-4 space-y-2">
+                    <p className="text-white text-sm font-semibold capitalize">{nomeMes}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([['Conversas', mes.conversas.toLocaleString('pt-BR')], ['Tokens', fmtCompact(mes.tokens)], ['Custo API', `R$ ${custoBRL.toFixed(2).replace('.', ',')}`], ['Valor a cobrar (3x)', `R$ ${cobrar.toFixed(2).replace('.', ',')}`]] as [string, string][]).map(([label, value]) => (
+                        <div key={label} className={`rounded-lg p-2.5 ${label === 'Valor a cobrar (3x)' ? 'bg-[#10B981]/10 border border-[#10B981]/20 col-span-2' : 'bg-[#0A0A0A]'}`}>
+                          <p className="text-[#6B6B6B] text-[10px] mb-0.5">{label}</p>
+                          <p className={`text-sm font-semibold ${label === 'Valor a cobrar (3x)' ? 'text-[#10B981]' : 'text-white'}`}>{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+export default function AdminClientesPage() {
+  const [tenants, setTenants] = useState<Tenant[]>([])
+  const [busca, setBusca] = useState('')
+  const [carregando, setCarregando] = useState(true)
+  const [modalAberto, setModalAberto] = useState(false)
+  const [clienteSelecionado, setClienteSelecionado] = useState<Tenant | null>(null)
+  const [sucesso, setSucesso] = useState('')
+
+  const fetchTenants = useCallback(async () => {
+    const supabase = createClient()
+    const { data } = await supabase.from('tenants')
+      .select('id, nome, slug, status, expira_em, criado_em')
+      .order('criado_em', { ascending: false })
+    setTenants(data ?? [])
     setCarregando(false)
   }, [])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => { fetchTenants() }, [fetchTenants])
 
-  const rowsFiltradas = rows.filter(r => {
-    const matchBusca = r.nome.toLowerCase().includes(busca.toLowerCase()) || r.slug.toLowerCase().includes(busca.toLowerCase())
-    if (!matchBusca) return false
-    if (filtroStatus === 'todos') return true
-    if (filtroStatus === 'ativo') return r.status === 'ativo'
-    if (filtroStatus === 'bloqueado') return r.status === 'bloqueado'
-    if (filtroStatus === 'expirando') return expiryStatus(r.expira_em) === 'expiring'
-    return true
-  })
-
-  if (carregando) {
-    return (
-      <div className="p-8 space-y-6">
-        <div>
-          <p className="text-[#6B6B6B] text-sm mb-1">Painel Administrativo</p>
-          <h1 className="text-white text-2xl font-bold">Visão Geral Consolidada</h1>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-28 bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl animate-pulse" />)}
-        </div>
-        <div className="h-96 bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl animate-pulse" />
-      </div>
-    )
+  function handleSalvo(tenant: Tenant) {
+    setTenants(prev => [tenant, ...prev])
+    setModalAberto(false)
+    setSucesso(`Cliente "${tenant.nome}" cadastrado com sucesso!`)
+    setTimeout(() => setSucesso(''), 4000)
   }
 
-  const deltaConversas = deltaPct(kpi!.conversasMes, kpi!.conversasAnterior)
-  const deltaCusto = deltaPct(kpi!.custoUsdMes, kpi!.custoUsdAnterior)
-  const mesAtual = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+  function handleAtualizado(tenant: Tenant) {
+    setTenants(prev => prev.map(t => t.id === tenant.id ? tenant : t))
+    setClienteSelecionado(tenant)
+  }
+
+  const tenantsFiltrados = tenants.filter(t =>
+    t.nome.toLowerCase().includes(busca.toLowerCase()) || t.slug.toLowerCase().includes(busca.toLowerCase())
+  )
 
   return (
-    <div className="p-8 space-y-6">
-
-      <div className="flex items-start justify-between">
+    <div className="p-8">
+      <div className="flex items-start justify-between mb-8">
         <div>
-          <p className="text-[#6B6B6B] text-sm mb-1">Painel Administrativo</p>
-          <h1 className="text-white text-2xl font-bold">Visão Geral Consolidada</h1>
-          <p className="text-[#A3A3A3] text-sm mt-1">
-            Saúde da operação, custos e performance dos {kpi!.clientesAtivos} clientes ativos no ciclo atual.
-          </p>
+          <p className="text-[#6B6B6B] text-sm mb-1">Gestão</p>
+          <h1 className="text-white text-2xl font-bold">Clientes</h1>
+          <p className="text-[#A3A3A3] text-sm mt-1">{tenants.length} contas cadastradas.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => exportarConsolidado(rows)}
-            className="flex items-center gap-2 bg-[#0A0A0A] hover:bg-[#141414] border border-[#1F1F1F] text-[#A3A3A3] hover:text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors">
-            <Download size={14} /> Exportar consolidado
-          </button>
-          <a href="/admin/clientes" className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors">
-            <Plus size={14} /> Novo cliente
-          </a>
-        </div>
+        <button onClick={() => setModalAberto(true)} className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors">
+          <Plus size={15} /> Cadastrar cliente
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Clientes ativos"           value={kpi!.clientesAtivos}                                          sub={`${kpi!.clientesBloqueados} bloqueado · ${kpi!.clientesTotal} cadastrados`} icon={Users} />
-        <KpiCard label="Conversas no mês"           value={fmtCompact(kpi!.conversasMes)}                                sub="todos os clientes ativos" delta={deltaConversas}                           icon={MessageSquare} />
-        <KpiCard label={`Custo de IA · ${mesAtual}`} value={kpi!.custoUsdMes > 0 ? fmtBRL(kpi!.custoUsdMes) : '—'}     sub="ciclo atual" delta={deltaCusto}                                            icon={Wallet} accent={kpi!.custoUsdMes > 0} />
-        <KpiCard label="Acessos a expirar"          value={kpi!.acessosExpirando}                                        sub="próximos 10 dias"                                                          icon={AlertTriangle} />
+      {sucesso && (
+        <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2 mb-6">
+          <CheckCircle2 size={14} className="text-[#10B981]" />
+          <p className="text-[#10B981] text-sm">{sucesso}</p>
+        </div>
+      )}
+
+      <div className="relative mb-4 max-w-sm">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6B6B]" />
+        <input type="text" placeholder="Buscar por nome ou slug..." value={busca} onChange={(e) => setBusca(e.target.value)}
+          className="w-full bg-[#0A0A0A] border border-[#1F1F1F] text-white placeholder-[#6B6B6B] rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:border-[#10B981]" />
       </div>
 
-      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl">
-        <div className="flex items-start justify-between px-6 py-4 border-b border-[#1F1F1F]">
-          <div>
-            <h2 className="text-white font-semibold">Clientes — visão consolidada</h2>
-            <p className="text-[#6B6B6B] text-xs mt-0.5">Status do agente, consumo e custo por cliente. Feche ciclos próximos do vencimento à direita.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <select value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value as typeof filtroStatus)}
-                className="appearance-none bg-[#050505] border border-[#1F1F1F] text-white text-xs font-medium pl-3 pr-8 py-2 rounded-lg cursor-pointer hover:border-[#2A2A2A] focus:outline-none focus:border-[#10B981]">
-                <option value="todos">Todos os planos</option>
-                <option value="ativo">Apenas ativos</option>
-                <option value="expirando">Expirando</option>
-                <option value="bloqueado">Bloqueados</option>
-              </select>
-              <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#6B6B6B] pointer-events-none" />
-            </div>
-            <button className="flex items-center gap-1.5 bg-[#050505] border border-[#1F1F1F] text-[#A3A3A3] hover:text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors">
-              <Filter size={12} /> Filtrar
-            </button>
-            <div className="relative">
-              <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6B6B]" />
-              <input type="text" placeholder="Buscar..." value={busca} onChange={(e) => setBusca(e.target.value)}
-                className="bg-[#050505] border border-[#1F1F1F] text-white text-xs placeholder-[#6B6B6B] rounded-lg pl-8 pr-3 py-2 w-32 focus:outline-none focus:border-[#10B981]" />
-            </div>
-          </div>
-        </div>
-
-        {rowsFiltradas.length === 0 ? (
+      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl overflow-hidden">
+        {carregando ? (
+          <div className="p-6 space-y-3">{[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-[#050505] rounded-lg animate-pulse" />)}</div>
+        ) : tenantsFiltrados.length === 0 ? (
           <div className="p-12 text-center"><p className="text-[#6B6B6B] text-sm">Nenhum cliente encontrado.</p></div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[#1F1F1F]">
-                  {['Cliente', 'Status do agente', 'Expiração do acesso', 'Conversas', 'Tokens', 'Custo estimado', 'Ações'].map(h => (
-                    <th key={h} className={`text-[#6B6B6B] text-xs font-semibold px-6 py-3 uppercase tracking-wider ${['Conversas', 'Tokens', 'Custo estimado'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rowsFiltradas.map(r => {
-                  const exp = expiryStatus(r.expira_em)
-                  return (
-                    <tr key={r.id} className="border-b border-[#1F1F1F] last:border-0 hover:bg-[#141414] transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-lg bg-[#1F1F1F] flex items-center justify-center text-[#A3A3A3] text-xs font-semibold flex-shrink-0">
-                            {r.nome.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="text-white text-sm font-medium">{r.nome}</p>
-                            <p className="text-[#6B6B6B] text-xs font-mono">{r.slug}</p>
-                          </div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-[#1F1F1F]">
+                {['Cliente', 'Status', 'Expiração', 'Cadastro', ''].map(h => (
+                  <th key={h} className="text-left text-[#6B6B6B] text-xs font-medium px-5 py-3 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tenantsFiltrados.map(t => {
+                const cfg = statusConfig(t.status)
+                const dias = diasRestantes(t.expira_em)
+                const expirando = dias !== null && dias <= 10 && dias >= 0
+                const expirado = dias !== null && dias < 0
+                const selecionado = clienteSelecionado?.id === t.id
+                return (
+                  <tr key={t.id} onClick={() => setClienteSelecionado(t)}
+                    className={`border-b border-[#1F1F1F] last:border-0 cursor-pointer transition-colors ${selecionado ? 'bg-[#10B981]/5' : 'hover:bg-[#141414]'}`}>
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0 ${selecionado ? 'bg-[#10B981]/20 text-[#10B981]' : 'bg-[#1F1F1F] text-[#A3A3A3]'}`}>
+                          {t.nome.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()}
                         </div>
-                      </td>
-                      <td className="px-6 py-4"><AgentBadge status={r.agente_status} /></td>
-                      <td className="px-6 py-4"><ExpiryTag expira_em={r.expira_em} /></td>
-                      <td className="px-6 py-4 text-right"><span className="text-white text-sm font-mono font-medium">{fmtBR(r.conversasMes)}</span></td>
-                      <td className="px-6 py-4 text-right"><span className="text-[#A3A3A3] text-sm font-mono">{r.tokens > 0 ? fmtCompact(r.tokens) : '—'}</span></td>
-                      <td className="px-6 py-4 text-right">
-                        <span className={`text-sm font-mono font-semibold ${r.custoUsd > 0 ? 'text-[#10B981]' : 'text-[#3A3A3A]'}`}>
-                          {r.custoUsd > 0 ? fmtBRL(r.custoUsd) : '—'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
+                        <div>
+                          <p className="text-white text-sm font-medium">{t.nome}</p>
+                          <p className="text-[#6B6B6B] text-xs font-mono">{t.slug}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border" style={{ color: cfg.cor, background: cfg.bg, borderColor: cfg.border }}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.cor }} />{cfg.label}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      {t.expira_em ? (
                         <div className="flex items-center gap-2">
-                          <a href="/admin/clientes" className="flex items-center gap-1 bg-[#1F1F1F] hover:bg-[#2A2A2A] text-[#A3A3A3] hover:text-white text-xs font-medium px-3 py-1.5 rounded-md transition-colors">
-                            Detalhes
-                          </a>
-                          <button className="flex items-center bg-[#1F1F1F] hover:bg-[#2A2A2A] text-[#6B6B6B] hover:text-white text-xs font-medium p-1.5 rounded-md transition-colors">
-                            <Settings size={12} />
-                          </button>
-                          {(exp === 'expiring' || exp === 'blocked' || r.conversasMes > 0) && (
-                            <button onClick={() => setModalCiclo(r)}
-                              className="flex items-center gap-1 bg-[#F59E0B]/10 hover:bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30 text-xs font-medium px-3 py-1.5 rounded-md transition-colors">
-                              <AlertTriangle size={11} /> Fechar ciclo
-                            </button>
-                          )}
+                          <span className="text-[#A3A3A3] text-sm">{new Date(t.expira_em).toLocaleDateString('pt-BR')}</span>
+                          {expirado && <span className="flex items-center gap-1 text-red-400 text-xs"><AlertTriangle size={11} /> Expirado</span>}
+                          {expirando && <span className="flex items-center gap-1 text-[#F59E0B] text-xs"><AlertTriangle size={11} /> {dias}d</span>}
                         </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                      ) : <span className="text-[#3A3A3A] text-sm">—</span>}
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="text-[#6B6B6B] text-sm">{new Date(t.criado_em).toLocaleDateString('pt-BR')}</span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <ChevronRight size={15} className={selecionado ? 'text-[#10B981]' : 'text-[#3A3A3A]'} />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         )}
       </div>
 
-      {modalCiclo && (
-        <ModalFecharCiclo
-          tenant={modalCiclo}
-          onClose={() => setModalCiclo(null)}
-          onFechado={fetchData}
-        />
-      )}
+      {modalAberto && <ModalNovoCliente onClose={() => setModalAberto(false)} onSalvo={handleSalvo} />}
+      {clienteSelecionado && <SlideOver tenant={clienteSelecionado} onClose={() => setClienteSelecionado(null)} onAtualizado={handleAtualizado} />}
     </div>
   )
 }
