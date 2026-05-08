@@ -59,7 +59,14 @@ export function AdminSidebar() {
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}>
 
       <div className="h-16 flex items-center justify-between px-6" style={{ borderBottom: '1px solid var(--border)' }}>
-        <Image src="/logo-horizontal.png" alt="Hubtek Solutions" width={100} height={20} priority />
+        <Image
+  src="/logo-horizontal.png"
+  alt="HUBTEK SOLUTIONS"
+  width={100}
+  height={20}
+  priority
+  style={{ filter: 'var(--logo-filter)' }}
+/>
         <span className="text-[#10B981] text-xs font-semibold bg-[#10B981]/10 px-2 py-1 rounded-md">Admin</span>
       </div>
 
