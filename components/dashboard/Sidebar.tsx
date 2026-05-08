@@ -22,7 +22,14 @@ export function Sidebar() {
 
       {/* Logo */}
       <div className="h-16 flex items-center px-5" style={{ borderBottom: '1px solid var(--border)' }}>
-        <Image src="/logo-horizontal.png" alt="HUBTEK SOLUTIONS" width={100} height={20} priority />
+        <Image
+  src="/logo-horizontal.png"
+  alt="HUBTEK SOLUTIONS"
+  width={100}
+  height={20}
+  priority
+  style={{ filter: 'var(--logo-filter)' }}
+/>
       </div>
 
       {/* Label */}
