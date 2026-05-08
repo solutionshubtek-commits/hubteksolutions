@@ -28,6 +28,7 @@ body {
   --scrollbar-track:#000000;
   --scrollbar-thumb:#1F1F1F;
   --scrollbar-hover:#262626;
+  --logo-filter: invert(0);
 }
 
 /* ── LIGHT MODE ── */
@@ -46,6 +47,7 @@ body {
   --scrollbar-track:#F4F4F5;
   --scrollbar-thumb:#D4D4D8;
   --scrollbar-hover:#A1A1AA;
+  --logo-filter: invert(1);
 }
 
 ::-webkit-scrollbar        { width: 6px; height: 6px; }
