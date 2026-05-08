@@ -7,8 +7,6 @@ import {
   Filter, Download,
 } from 'lucide-react'
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
 interface Metrics {
   conversasHoje: number
   conversasHojeAnterior: number
@@ -34,8 +32,6 @@ interface DiaDado {
   dia: string
   total: number
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function delta(atual: number, anterior: number) {
   if (!anterior) return null
@@ -75,20 +71,24 @@ function exportarCSV(conversas: ConversaRecente[]) {
   URL.revokeObjectURL(url)
 }
 
-// ─── KPI Card ────────────────────────────────────────────────────────────────
-
 function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   label: string; valor: number; d: number | null; icon: React.ElementType; cor: string; alt?: boolean
 }) {
   return (
-    <div className={`bg-[#0A0A0A] border rounded-xl p-5 ${alt ? 'border-[#F59E0B]/20' : 'border-[#1F1F1F]'}`}>
+    <div
+      className="rounded-xl p-5"
+      style={{
+        background: 'var(--bg-surface)',
+        border: `1px solid ${alt ? 'rgba(245,158,11,0.2)' : 'var(--border)'}`,
+      }}
+    >
       <div className="flex items-center justify-between mb-3">
-        <p className="text-[#A3A3A3] text-sm">{label}</p>
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</p>
         <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${cor}18` }}>
           <Icon size={16} color={cor} />
         </div>
       </div>
-      <p className={`text-3xl font-bold mb-2 ${alt ? 'text-[#F59E0B]' : 'text-white'}`}>
+      <p className="text-3xl font-bold mb-2" style={{ color: alt ? '#F59E0B' : 'var(--text-primary)' }}>
         {valor.toLocaleString('pt-BR')}
       </p>
       {d != null ? (
@@ -97,17 +97,17 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
           {d >= 0 ? '+' : ''}{d}% vs. semana anterior
         </span>
       ) : (
-        <span className="text-[#3A3A3A] text-xs">sem dados anteriores</span>
+        <span className="text-xs" style={{ color: 'var(--text-label)' }}>sem dados anteriores</span>
       )}
     </div>
   )
 }
 
-// ─── Gráfico de barras ────────────────────────────────────────────────────────
-
 function GraficoBarras({ dados }: { dados: DiaDado[] }) {
   if (dados.length === 0) return (
-    <div className="flex items-center justify-center h-40 text-[#3A3A3A] text-sm">Nenhum dado no período</div>
+    <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--text-label)' }}>
+      Nenhum dado no período
+    </div>
   )
   const max = Math.max(...dados.map(d => d.total), 1)
   const total = dados.reduce((s, d) => s + d.total, 0)
@@ -117,9 +117,18 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
   return (
     <div>
       <div className="flex items-center gap-8 mb-4">
-        <div><p className="text-[#6B6B6B] text-xs mb-0.5">Total no período</p><p className="text-[#10B981] text-lg font-bold">{total.toLocaleString('pt-BR')}</p></div>
-        <div><p className="text-[#6B6B6B] text-xs mb-0.5">Média diária</p><p className="text-white text-lg font-bold">{media}</p></div>
-        <div><p className="text-[#6B6B6B] text-xs mb-0.5">Pico</p><p className="text-white text-lg font-bold">{pico}</p></div>
+        <div>
+          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Total no período</p>
+          <p className="text-lg font-bold text-[#10B981]">{total.toLocaleString('pt-BR')}</p>
+        </div>
+        <div>
+          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Média diária</p>
+          <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{media}</p>
+        </div>
+        <div>
+          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Pico</p>
+          <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
+        </div>
       </div>
       <div className="flex items-end gap-0.5 h-36">
         {dados.map((d, i) => {
@@ -128,7 +137,10 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
           const showLabel = dados.length <= 7 || i % Math.floor(dados.length / 6) === 0 || i === dados.length - 1
           return (
             <div key={i} className="flex flex-col items-center gap-0.5 flex-1 min-w-[4px] group relative">
-              <div className="absolute bottom-full mb-1 bg-[#1F1F1F] border border-[#2A2A2A] rounded px-2 py-1 text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 left-1/2 -translate-x-1/2">
+              <div
+                className="absolute bottom-full mb-1 rounded px-2 py-1 text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 left-1/2 -translate-x-1/2"
+                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-2)', color: 'var(--text-primary)' }}
+              >
                 {d.dia.slice(5)}: {d.total}
               </div>
               <div
@@ -136,7 +148,9 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
                 style={{ height: `${Math.max(pct, 2)}%`, minHeight: 2, background: `rgba(16,185,129,${opacity})` }}
               />
               {showLabel && (
-                <span className="text-[#3A3A3A] text-[9px] whitespace-nowrap">{d.dia.slice(8)}</span>
+                <span className="text-[9px] whitespace-nowrap" style={{ color: 'var(--text-label)' }}>
+                  {d.dia.slice(8)}
+                </span>
               )}
             </div>
           )
@@ -145,8 +159,6 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     </div>
   )
 }
-
-// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function VisaoGeralPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
@@ -163,16 +175,11 @@ export default function VisaoGeralPage() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-
-    const { data: userData } = await supabase
-      .from('users').select('nome, tenant_id').eq('id', user.id).single()
+    const { data: userData } = await supabase.from('users').select('nome, tenant_id').eq('id', user.id).single()
     if (!userData?.tenant_id) return
-
     setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
-
     const agora = new Date()
     const tenantId = userData.tenant_id
-
     const hojeInicio = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
     const ontemInicio = new Date(hojeInicio); ontemInicio.setDate(ontemInicio.getDate() - 1)
     const semanaInicio = new Date(agora); semanaInicio.setDate(semanaInicio.getDate() - 7)
@@ -180,7 +187,6 @@ export default function VisaoGeralPage() {
     const mesInicio = new Date(agora.getFullYear(), agora.getMonth(), 1)
     const mesAntInicio = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
     const mesAntFim = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
-
     const [hojeRes, ontemRes, semRes, semAntRes, mesRes, mesAntRes, pausadasRes, pausadasAntRes, convRes] =
       await Promise.all([
         supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('criado_em', hojeInicio.toISOString()),
@@ -193,7 +199,6 @@ export default function VisaoGeralPage() {
         supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('agente_pausado', true).lt('pausado_em', hojeInicio.toISOString()),
         supabase.from('conversations').select('id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em').eq('tenant_id', tenantId).eq('status', 'ativa').order('ultima_mensagem_em', { ascending: false }).limit(20),
       ])
-
     setMetrics({
       conversasHoje: hojeRes.count ?? 0,
       conversasHojeAnterior: ontemRes.count ?? 0,
@@ -204,7 +209,6 @@ export default function VisaoGeralPage() {
       pausadas: pausadasRes.count ?? 0,
       pausadasAnterior: pausadasAntRes.count ?? 0,
     })
-
     const convComMsg: ConversaRecente[] = await Promise.all(
       (convRes.data ?? []).map(async (c) => {
         const { data: msg } = await supabase
@@ -224,13 +228,10 @@ export default function VisaoGeralPage() {
     if (!user) return
     const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
     if (!userData?.tenant_id) return
-
     const dias = parseInt(p)
     const inicio = new Date(); inicio.setDate(inicio.getDate() - dias); inicio.setHours(0, 0, 0, 0)
-    const { data } = await supabase
-      .from('conversations').select('criado_em')
+    const { data } = await supabase.from('conversations').select('criado_em')
       .eq('tenant_id', userData.tenant_id).gte('criado_em', inicio.toISOString())
-
     const porDia: Record<string, number> = {}
     const curr = new Date(inicio)
     const hoje = new Date(); hoje.setHours(23, 59, 59, 999)
@@ -247,7 +248,6 @@ export default function VisaoGeralPage() {
 
   useEffect(() => { fetchTudo() }, [fetchTudo])
   useEffect(() => { fetchGrafico(periodo) }, [periodo, fetchGrafico])
-
   useEffect(() => {
     if (filtroStatus === 'todos') setConversasFiltradas(conversas)
     else if (filtroStatus === 'ativo') setConversasFiltradas(conversas.filter(c => !c.agente_pausado))
@@ -269,12 +269,14 @@ export default function VisaoGeralPage() {
   if (carregando) {
     return (
       <div className="p-8">
-        <div className="h-8 bg-[#0A0A0A] rounded w-48 mb-2 animate-pulse" />
-        <div className="h-4 bg-[#0A0A0A] rounded w-72 mb-8 animate-pulse" />
+        <div className="h-8 rounded w-48 mb-2 animate-pulse" style={{ background: 'var(--bg-surface)' }} />
+        <div className="h-4 rounded w-72 mb-8 animate-pulse" style={{ background: 'var(--bg-surface)' }} />
         <div className="grid grid-cols-4 gap-4 mb-6">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-28 bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl animate-pulse" />)}
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-28 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }} />
+          ))}
         </div>
-        <div className="h-64 bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl animate-pulse" />
+        <div className="h-64 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }} />
       </div>
     )
   }
@@ -285,20 +287,22 @@ export default function VisaoGeralPage() {
       {/* Page head */}
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-[#6B6B6B] text-sm">{saudacao()}, {nomeUsuario}</p>
-          <h1 className="text-white text-2xl font-bold">Visão Geral</h1>
-          <p className="text-[#A3A3A3] text-sm mt-0.5">
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Visão Geral</h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>
             Como seu agente de atendimento performou nos últimos {periodo === '7' ? '7' : periodo === '90' ? '90' : '30'} dias.
           </p>
         </div>
-        <div className="flex items-center gap-1 bg-[#0A0A0A] border border-[#1F1F1F] rounded-lg p-1">
+        <div className="flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           {(['7', '30', '90'] as const).map(p => (
             <button
               key={p}
               onClick={() => setPeriodo(p)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                periodo === p ? 'bg-[#10B981] text-white' : 'text-[#6B6B6B] hover:text-white'
-              }`}
+              className="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              style={{
+                background: periodo === p ? '#10B981' : 'transparent',
+                color: periodo === p ? '#fff' : 'var(--text-muted)',
+              }}
             >
               {p} dias
             </button>
@@ -308,75 +312,82 @@ export default function VisaoGeralPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Novas conversas hoje"       valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
-        <KpiCard label="Conversas na semana"         valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
-        <KpiCard label="Conversas no mês"            valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
-        <KpiCard label="Pausadas (atend. humano)"    valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
+        <KpiCard label="Novas conversas hoje"    valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
+        <KpiCard label="Conversas na semana"      valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
+        <KpiCard label="Conversas no mês"         valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
+        <KpiCard label="Pausadas (atend. humano)" valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
       </div>
 
       {/* Gráfico + Atividade */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
+        <div className="lg:col-span-2 rounded-xl p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h2 className="text-white font-semibold">Volume de conversas — últimos {periodo} dias</h2>
-              <p className="text-[#6B6B6B] text-xs mt-0.5">Total agregado por dia, incluindo automatizadas e humanas.</p>
+              <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Volume de conversas — últimos {periodo} dias</h2>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Total agregado por dia, incluindo automatizadas e humanas.</p>
             </div>
-            <button className="flex items-center gap-1.5 text-[#6B6B6B] hover:text-white text-xs border border-[#1F1F1F] rounded-lg px-3 py-1.5 transition-colors">
+            <button
+              className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5 transition-colors"
+              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+            >
               <Download size={12} />
             </button>
           </div>
           <GraficoBarras dados={grafico} />
         </div>
 
-        <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6">
-          <h2 className="text-white font-semibold mb-1">Atividade recente</h2>
-          <p className="text-[#6B6B6B] text-xs mb-4">Eventos do agente em tempo real.</p>
+        <div className="rounded-xl p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+          <h2 className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Atividade recente</h2>
+          <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>Eventos do agente em tempo real.</p>
           <div className="space-y-4">
             {conversas.slice(0, 6).map(c => (
               <div key={c.id} className="flex items-start gap-2.5">
                 <span className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${c.agente_pausado ? 'bg-[#F59E0B]' : 'bg-[#10B981]'}`} />
                 <div className="min-w-0">
-                  <p className="text-white text-xs font-medium leading-snug">
+                  <p className="text-xs font-medium leading-snug" style={{ color: 'var(--text-primary)' }}>
                     <span className="font-semibold">{c.contato_nome || c.contato_telefone}</span>{' '}
                     {c.agente_pausado ? 'solicitou atendimento humano.' : 'está em conversa com o agente.'}
                   </p>
-                  <p className="text-[#3A3A3A] text-xs mt-0.5">{tempoRelativo(c.ultima_mensagem_em)}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-label)' }}>{tempoRelativo(c.ultima_mensagem_em)}</p>
                 </div>
               </div>
             ))}
-            {conversas.length === 0 && <p className="text-[#3A3A3A] text-sm">Nenhuma atividade recente.</p>}
+            {conversas.length === 0 && (
+              <p className="text-sm" style={{ color: 'var(--text-label)' }}>Nenhuma atividade recente.</p>
+            )}
           </div>
         </div>
       </div>
 
       {/* Conversas recentes */}
-      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#1F1F1F]">
+      <div className="rounded-xl" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <div>
-            <h2 className="text-white font-semibold">Conversas recentes</h2>
-            <p className="text-[#6B6B6B] text-xs mt-0.5">
+            <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Conversas recentes</h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
               {conversasFiltradas.length} conversa{conversasFiltradas.length !== 1 ? 's' : ''} ativa{conversasFiltradas.length !== 1 ? 's' : ''}. Pause o agente em qualquer linha para assumir o controle.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-[#050505] border border-[#1F1F1F] rounded-lg p-1">
+            <div className="flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
               {([['todos', 'Todos'], ['ativo', 'Ativos'], ['pausado', 'Pausados']] as const).map(([val, label]) => (
                 <button
                   key={val}
                   onClick={() => setFiltroStatus(val)}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                    filtroStatus === val ? 'bg-[#1F1F1F] text-white' : 'text-[#6B6B6B] hover:text-white'
-                  }`}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors"
+                  style={{
+                    background: filtroStatus === val ? 'var(--bg-hover)' : 'transparent',
+                    color: filtroStatus === val ? 'var(--text-primary)' : 'var(--text-muted)',
+                  }}
                 >
-                  <Filter size={10} />
-                  {label}
+                  <Filter size={10} />{label}
                 </button>
               ))}
             </div>
             <button
               onClick={() => exportarCSV(conversasFiltradas)}
-              className="flex items-center gap-1.5 text-[#6B6B6B] hover:text-white text-xs border border-[#1F1F1F] rounded-lg px-3 py-2 transition-colors"
+              className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 transition-colors"
+              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
             >
               <Download size={12} /> Exportar
             </button>
@@ -385,37 +396,45 @@ export default function VisaoGeralPage() {
 
         {conversasFiltradas.length === 0 ? (
           <div className="p-12 text-center">
-            <MessageSquare size={24} className="text-[#3A3A3A] mx-auto mb-2" />
-            <p className="text-[#6B6B6B] text-sm">Nenhuma conversa encontrada.</p>
+            <MessageSquare size={24} className="mx-auto mb-2" style={{ color: 'var(--text-label)' }} />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhuma conversa encontrada.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-[#1F1F1F]">
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
                   {['Contato', 'Telefone', 'Última mensagem', 'Status', 'Hora', 'Ações'].map(h => (
-                    <th key={h} className="text-left text-[#6B6B6B] text-xs font-medium px-6 py-3 uppercase tracking-wider">{h}</th>
+                    <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
+                      style={{ color: 'var(--text-muted)' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {conversasFiltradas.map(c => (
-                  <tr key={c.id} className="border-b border-[#1F1F1F] last:border-0 hover:bg-[#141414] transition-colors">
+                  <tr key={c.id} className="transition-colors last:border-0"
+                    style={{ borderBottom: '1px solid var(--border)' }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                  >
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-[#1F1F1F] flex items-center justify-center text-[#A3A3A3] text-xs font-semibold flex-shrink-0">
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
+                          style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
                           {(c.contato_nome || c.contato_telefone).slice(0, 2).toUpperCase()}
                         </div>
-                        <span className="text-white text-sm font-medium">{c.contato_nome || '—'}</span>
+                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {c.contato_nome || '—'}
+                        </span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-1.5 text-[#A3A3A3] text-sm">
+                      <div className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--text-secondary)' }}>
                         <Phone size={12} />{formatFone(c.contato_telefone)}
                       </div>
                     </td>
                     <td className="px-6 py-4 max-w-xs">
-                      <p className="text-[#A3A3A3] text-sm truncate">{c.ultima_mensagem}</p>
+                      <p className="text-sm truncate" style={{ color: 'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
                     </td>
                     <td className="px-6 py-4">
                       {c.agente_pausado ? (
@@ -429,7 +448,7 @@ export default function VisaoGeralPage() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <span className="text-[#6B6B6B] text-sm">{tempoRelativo(c.ultima_mensagem_em)}</span>
+                      <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
                     </td>
                     <td className="px-6 py-4">
                       <button
@@ -451,7 +470,6 @@ export default function VisaoGeralPage() {
           </div>
         )}
       </div>
-
     </div>
   )
 }
