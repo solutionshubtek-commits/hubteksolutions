@@ -86,29 +86,25 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Nome da empresa *</label>
             <input type="text" value={form.nome} onChange={(e) => handleNome(e.target.value)}
-              placeholder="Ex: Pizzaria Vesúvio"
-              className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+              placeholder="Ex: Pizzaria Vesúvio" className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
           </div>
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Slug (identificador único) *</label>
             <input type="text" value={form.slug}
               onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
-              placeholder="pizzaria-vesuvio"
-              className="w-full rounded-lg px-4 py-2.5 text-sm font-mono focus:outline-none" style={inputStyle} />
+              placeholder="pizzaria-vesuvio" className="w-full rounded-lg px-4 py-2.5 text-sm font-mono focus:outline-none" style={inputStyle} />
           </div>
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>E-mail do admin *</label>
             <input type="email" value={form.email_admin} onChange={(e) => setForm({ ...form, email_admin: e.target.value })}
-              placeholder="cliente@empresa.com"
-              className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+              placeholder="cliente@empresa.com" className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
           </div>
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Senha inicial *</label>
             <div className="relative">
               <input type={mostrarSenha ? 'text' : 'password'} value={form.senha_admin}
                 onChange={(e) => setForm({ ...form, senha_admin: e.target.value })}
-                placeholder="Mínimo 8 caracteres"
-                className="w-full rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none" style={inputStyle} />
+                placeholder="Mínimo 8 caracteres" className="w-full rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none" style={inputStyle} />
               <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)}
                 className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }}>
                 {mostrarSenha ? <EyeOff size={15} /> : <Eye size={15} />}
@@ -166,12 +162,17 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
   const [extrato, setExtrato] = useState<TokenMes[]>([])
   const [carregandoExtrato, setCarregandoExtrato] = useState(false)
 
-  useEffect(() => { if (aba === 'extrato') carregarExtrato() }, [aba])
+  useEffect(() => {
+    if (aba === 'extrato') carregarExtrato()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aba])
 
   async function carregarExtrato() {
     setCarregandoExtrato(true)
     const supabase = createClient()
-    const { data } = await supabase.from('token_usage').select('criado_em, tokens_total, custo_usd, conversation_id').eq('tenant_id', tenant.id).order('criado_em', { ascending: false })
+    const { data } = await supabase.from('token_usage')
+      .select('criado_em, tokens_total, custo_usd, conversation_id')
+      .eq('tenant_id', tenant.id).order('criado_em', { ascending: false })
     if (data) {
       const porMes: Record<string, TokenMes> = {}
       const convIds = new Set<string>()
@@ -180,7 +181,9 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
         if (!porMes[mes]) porMes[mes] = { mes, conversas: 0, tokens: 0, custo_usd: 0 }
         porMes[mes].tokens += row.tokens_total ?? 0
         porMes[mes].custo_usd += row.custo_usd ?? 0
-        if (row.conversation_id && !convIds.has(row.conversation_id + mes)) { convIds.add(row.conversation_id + mes); porMes[mes].conversas += 1 }
+        if (row.conversation_id && !convIds.has(row.conversation_id + mes)) {
+          convIds.add(row.conversation_id + mes); porMes[mes].conversas += 1
+        }
       })
       setExtrato(Object.values(porMes).sort((a, b) => b.mes.localeCompare(a.mes)))
     }
@@ -201,7 +204,10 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
   async function handleResetarSenha() {
     if (!novaSenha || novaSenha.length < 8) { setErroSenha('Mínimo 8 caracteres.'); return }
     setSalvandoSenha(true); setErroSenha(''); setSucessoSenha('')
-    const res = await fetch('/api/admin/resetar-senha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tenant_id: tenant.id, nova_senha: novaSenha }) })
+    const res = await fetch('/api/admin/resetar-senha', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: tenant.id, nova_senha: novaSenha }),
+    })
     const data = await res.json()
     setSalvandoSenha(false)
     if (!res.ok) { setErroSenha(data.error ?? 'Erro desconhecido'); return }
@@ -257,7 +263,12 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
           {aba === 'detalhes' && (
             <div className="space-y-4">
               <div className="space-y-3">
-                {([['Nome', tenant.nome], ['Slug', tenant.slug], ['Cadastrado em', new Date(tenant.criado_em).toLocaleDateString('pt-BR')], ['Expira em', tenant.expira_em ? new Date(tenant.expira_em).toLocaleDateString('pt-BR') : '—']] as [string, string][]).map(([label, value]) => (
+                {([
+                  ['Nome', tenant.nome],
+                  ['Slug', tenant.slug],
+                  ['Cadastrado em', new Date(tenant.criado_em).toLocaleDateString('pt-BR')],
+                  ['Expira em', tenant.expira_em ? new Date(tenant.expira_em).toLocaleDateString('pt-BR') : '—'],
+                ] as [string, string][]).map(([label, value]) => (
                   <div key={label} className="flex justify-between items-center py-2" style={{ borderBottom: '1px solid var(--border)' }}>
                     <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</span>
                     <span className={`text-sm font-medium ${label === 'Slug' ? 'font-mono' : ''}`}
@@ -290,13 +301,16 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
 
           {aba === 'editar' && (
             <div className="space-y-4">
-              {[['Nome da empresa', 'text', nomeEdit, (v: string) => setNomeEdit(v)], ['Data de expiração', 'date', expiraEdit, (v: string) => setExpiraEdit(v)]].map(([label, type, value, onChange]) => (
-                <div key={label as string}>
-                  <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>{label as string}</label>
-                  <input type={type as string} value={value as string} onChange={(e) => (onChange as (v: string) => void)(e.target.value)}
-                    className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
-                </div>
-              ))}
+              <div>
+                <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Nome da empresa</label>
+                <input type="text" value={nomeEdit} onChange={(e) => setNomeEdit(e.target.value)}
+                  className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Data de expiração</label>
+                <input type="date" value={expiraEdit} onChange={(e) => setExpiraEdit(e.target.value)}
+                  className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none [color-scheme:dark]" style={inputStyle} />
+              </div>
               {erroEdit && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroEdit}</p></div>}
               {sucessoEdit && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoEdit}</p></div>}
               <button onClick={handleSalvarEdicao} disabled={salvandoEdit}
@@ -314,9 +328,11 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
               <div>
                 <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Nova senha</label>
                 <div className="relative">
-                  <input type={mostrarSenha ? 'text' : 'password'} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)}
-                    placeholder="Mínimo 8 caracteres" className="w-full rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none" style={inputStyle} />
-                  <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)} className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }}>
+                  <input type={mostrarSenha ? 'text' : 'password'} value={novaSenha}
+                    onChange={(e) => setNovaSenha(e.target.value)} placeholder="Mínimo 8 caracteres"
+                    className="w-full rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none" style={inputStyle} />
+                  <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }}>
                     {mostrarSenha ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
@@ -343,11 +359,18 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
                 const [ano, m] = mes.mes.split('-')
                 const nomeMes = new Date(+ano, +m - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
                 return (
-                  <div key={mes.mes} className="rounded-xl p-4 space-y-2" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+                  <div key={mes.mes} className="rounded-xl p-4 space-y-2"
+                    style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
                     <p className="text-sm font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>{nomeMes}</p>
                     <div className="grid grid-cols-2 gap-2">
-                      {([['Conversas', mes.conversas.toLocaleString('pt-BR')], ['Tokens', fmtCompact(mes.tokens)], ['Custo API', `R$ ${custoBRL.toFixed(2).replace('.', ',')}`], ['Valor a cobrar (3x)', `R$ ${cobrar.toFixed(2).replace('.', ',')}`]] as [string, string][]).map(([label, value]) => (
-                        <div key={label} className={`rounded-lg p-2.5 ${label === 'Valor a cobrar (3x)' ? 'bg-[#10B981]/10 border border-[#10B981]/20 col-span-2' : ''}`}
+                      {([
+                        ['Conversas', mes.conversas.toLocaleString('pt-BR')],
+                        ['Tokens', fmtCompact(mes.tokens)],
+                        ['Custo API', `R$ ${custoBRL.toFixed(2).replace('.', ',')}`],
+                        ['Valor a cobrar (3x)', `R$ ${cobrar.toFixed(2).replace('.', ',')}`],
+                      ] as [string, string][]).map(([label, value]) => (
+                        <div key={label}
+                          className={label === 'Valor a cobrar (3x)' ? 'bg-[#10B981]/10 border border-[#10B981]/20 col-span-2 rounded-lg p-2.5' : 'rounded-lg p-2.5'}
                           style={label !== 'Valor a cobrar (3x)' ? { background: 'var(--bg-surface)' } : {}}>
                           <p className="text-[10px] mb-0.5" style={{ color: 'var(--text-muted)' }}>{label}</p>
                           <p className={`text-sm font-semibold ${label === 'Valor a cobrar (3x)' ? 'text-[#10B981]' : ''}`}
@@ -385,7 +408,9 @@ export default function AdminClientesPage() {
 
   const fetchTenants = useCallback(async () => {
     const supabase = createClient()
-    const { data } = await supabase.from('tenants').select('id, nome, slug, status, expira_em, criado_em').order('criado_em', { ascending: false })
+    const { data } = await supabase.from('tenants')
+      .select('id, nome, slug, status, expira_em, criado_em')
+      .order('criado_em', { ascending: false })
     setTenants(data ?? [])
     setCarregando(false)
   }, [])
@@ -444,4 +469,69 @@ export default function AdminClientesPage() {
         ) : (
           <table className="w-full">
             <thead>
-              <tr sty
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                {['Cliente', 'Status', 'Expiração', 'Cadastro', ''].map(h => (
+                  <th key={h} className="text-left text-xs font-medium px-5 py-3 uppercase tracking-wider"
+                    style={{ color: 'var(--text-muted)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tenantsFiltrados.map(t => {
+                const cfg = statusConfig(t.status)
+                const dias = diasRestantes(t.expira_em)
+                const expirando = dias !== null && dias <= 10 && dias >= 0
+                const expirado = dias !== null && dias < 0
+                const selecionado = clienteSelecionado?.id === t.id
+                return (
+                  <tr key={t.id} onClick={() => setClienteSelecionado(t)}
+                    className="last:border-0 cursor-pointer transition-colors"
+                    style={{ borderBottom: '1px solid var(--border)', background: selecionado ? 'rgba(16,185,129,0.05)' : 'transparent' }}
+                    onMouseEnter={e => { if (!selecionado) (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
+                    onMouseLeave={e => { if (!selecionado) (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0"
+                          style={{ background: selecionado ? 'rgba(16,185,129,0.2)' : 'var(--bg-hover)', color: selecionado ? '#10B981' : 'var(--text-secondary)' }}>
+                          {t.nome.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{t.nome}</p>
+                          <p className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{t.slug}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border"
+                        style={{ color: cfg.cor, background: cfg.bg, borderColor: cfg.border }}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.cor }} />{cfg.label}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      {t.expira_em ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{new Date(t.expira_em).toLocaleDateString('pt-BR')}</span>
+                          {expirado && <span className="flex items-center gap-1 text-red-400 text-xs"><AlertTriangle size={11} /> Expirado</span>}
+                          {expirando && <span className="flex items-center gap-1 text-[#F59E0B] text-xs"><AlertTriangle size={11} /> {dias}d</span>}
+                        </div>
+                      ) : <span className="text-sm" style={{ color: 'var(--text-label)' }}>—</span>}
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(t.criado_em).toLocaleDateString('pt-BR')}</span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <ChevronRight size={15} style={{ color: selecionado ? '#10B981' : 'var(--text-label)' }} />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {modalAberto && <ModalNovoCliente onClose={() => setModalAberto(false)} onSalvo={handleSalvo} />}
+      {clienteSelecionado && <SlideOver tenant={clienteSelecionado} onClose={() => setClienteSelecionado(null)} onAtualizado={handleAtualizado} />}
+    </div>
+  )
+}
