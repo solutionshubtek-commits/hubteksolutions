@@ -36,18 +36,18 @@ body {
   --bg-page:        #F4F4F5;
   --bg-surface:     #FFFFFF;
   --bg-surface-2:   #F9FAFB;
-  --bg-hover:       #F0F0F0;
+  --bg-hover:       #EBEBEB;
   --bg-card:        #FFFFFF;
-  --border:         #E4E4E7;
-  --border-2:       #D1D5DB;
+  --border:         #D4D4D8;
+  --border-2:       #A1A1AA;
   --text-primary:   #09090B;
-  --text-secondary: #52525B;
-  --text-muted:     #A1A1AA;
-  --text-label:     #D4D4D8;
+  --text-secondary: #3F3F46;
+  --text-muted:     #71717A;
+  --text-label:     #52525B;
   --scrollbar-track:#F4F4F5;
   --scrollbar-thumb:#D4D4D8;
   --scrollbar-hover:#A1A1AA;
-  --logo-filter: invert(1);
+  --logo-filter:    invert(1);
 }
 
 ::-webkit-scrollbar        { width: 6px; height: 6px; }
