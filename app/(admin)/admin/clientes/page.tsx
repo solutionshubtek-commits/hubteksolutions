@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Plus, Search, AlertTriangle, CheckCircle2, AlertCircle,
-  X, Save, Eye, EyeOff, Lock, Unlock, Key, BarChart2,
+  X, Save, Eye, EyeOff, Lock, Unlock, Key,
   ChevronRight, RefreshCw,
 } from 'lucide-react'
 
