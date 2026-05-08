@@ -367,7 +367,7 @@ export default function AdminClientesPage() {
       const found = tenants.find(t => t.id === idParam)
       if (found) setClienteSelecionado(found)
     }
-  }, [tenants]))
+  }, [tenants])
 
   const fetchTenants = useCallback(async () => {
     const supabase = createClient()
