@@ -83,16 +83,25 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
           <button onClick={onClose} style={{ color: 'var(--text-muted)' }} className="hover:text-white"><X size={18} /></button>
         </div>
         <div className="p-6 space-y-4">
-          {[['Nome da empresa *', 'text', 'nome', 'Ex: Pizzaria Vesúvio'], ['Slug (identificador único) *', 'text', 'slug', 'pizzaria-vesuvio'], ['E-mail do admin *', 'email', 'email_admin', 'cliente@empresa.com']].map(([label, type, field, placeholder]) => (
-            <div key={field as string}>
-              <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>{label}</label>
-              <input type={type as string} value={(form as Record<string, string>)[field as string]}
-                onChange={(e) => field === 'nome' ? handleNome(e.target.value) : field === 'slug' ? setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }) : setForm({ ...form, [field as string]: e.target.value })}
-                placeholder={placeholder as string}
-                className={`w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none ${field === 'slug' ? 'font-mono' : ''}`}
-                style={inputStyle} />
-            </div>
-          ))}
+          <div>
+            <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Nome da empresa *</label>
+            <input type="text" value={form.nome} onChange={(e) => handleNome(e.target.value)}
+              placeholder="Ex: Pizzaria Vesúvio"
+              className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Slug (identificador único) *</label>
+            <input type="text" value={form.slug}
+              onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
+              placeholder="pizzaria-vesuvio"
+              className="w-full rounded-lg px-4 py-2.5 text-sm font-mono focus:outline-none" style={inputStyle} />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>E-mail do admin *</label>
+            <input type="email" value={form.email_admin} onChange={(e) => setForm({ ...form, email_admin: e.target.value })}
+              placeholder="cliente@empresa.com"
+              className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+          </div>
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Senha inicial *</label>
             <div className="relative">
@@ -122,7 +131,12 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
               <span style={{ position: 'absolute', top: 2, left: form.self_managed ? 22 : 2, width: 20, height: 20, borderRadius: '50%', backgroundColor: '#fff', transition: 'left 0.2s ease', display: 'block' }} />
             </button>
           </div>
-          {erro && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400 flex-shrink-0" /><p className="text-red-400 text-sm">{erro}</p></div>}
+          {erro && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2">
+              <AlertCircle size={13} className="text-red-400 flex-shrink-0" />
+              <p className="text-red-400 text-sm">{erro}</p>
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4" style={{ borderTop: '1px solid var(--border)' }}>
           <button onClick={onClose} className="text-sm font-medium px-4 py-2 rounded-lg transition-colors" style={{ color: 'var(--text-secondary)' }}>Cancelar</button>
