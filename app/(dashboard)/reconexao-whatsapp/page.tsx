@@ -39,42 +39,40 @@ export default function ReconexaoWhatsAppPage() {
     }
   }
 
-  useEffect(() => {
-    fetchStatus()
-  }, [])
+  useEffect(() => { fetchStatus() }, [])
 
   const conectado = statusWA?.status === 'open'
 
   return (
-    <div>
-      <h1 className="text-white text-2xl font-bold mb-6">WhatsApp</h1>
-      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl p-6 max-w-lg">
+    <div className="p-8 space-y-6">
+      <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>WhatsApp</h1>
+
+      <div className="rounded-xl p-6 max-w-lg" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
         <div className="flex items-center gap-4 mb-6">
-          <div className="w-12 h-12 rounded-full bg-[#10B981]/10 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-full flex items-center justify-center"
+            style={{ background: 'rgba(16,185,129,0.1)' }}>
             <Smartphone size={24} color="#10B981" />
           </div>
           <div>
-            <p className="text-white font-semibold">Instância hubtek</p>
+            <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>Instância hubtek</p>
             {carregando ? (
-              <p className="text-[#6B6B6B] text-sm">Verificando status...</p>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Verificando status...</p>
             ) : conectado ? (
-              <p className="text-[#A3A3A3] text-sm">{statusWA?.nome || statusWA?.numero}</p>
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{statusWA?.nome || statusWA?.numero}</p>
             ) : (
-              <p className="text-[#A3A3A3] text-sm">Desconectado</p>
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Desconectado</p>
             )}
           </div>
           <div className="ml-auto">
-            {carregando ? null : conectado ? (
+            {!carregando && (conectado ? (
               <div className="flex items-center gap-1.5 text-[#10B981] text-sm">
-                <CheckCircle size={16} />
-                Conectado
+                <CheckCircle size={16} /> Conectado
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 text-[#EF4444] text-sm">
-                <XCircle size={16} />
-                Desconectado
+              <div className="flex items-center gap-1.5 text-red-400 text-sm">
+                <XCircle size={16} /> Desconectado
               </div>
-            )}
+            ))}
           </div>
         </div>
 
@@ -83,38 +81,28 @@ export default function ReconexaoWhatsAppPage() {
             <button
               onClick={gerarQRCode}
               disabled={gerandoQR}
-              className="w-full bg-[#10B981] hover:bg-[#059669] disabled:opacity-50
-                text-white font-semibold py-3 rounded-lg transition-all duration-200
-                flex items-center justify-center gap-2"
+              className="w-full bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all duration-200 flex items-center justify-center gap-2"
             >
               <RefreshCw size={16} className={gerandoQR ? 'animate-spin' : ''} />
               {gerandoQR ? 'Gerando QR Code...' : 'Gerar QR Code'}
             </button>
-
             {qrCode && (
               <div className="flex flex-col items-center gap-3 p-4 bg-white rounded-xl">
-                <Image
-                  src={qrCode}
-                  alt="QR Code WhatsApp"
-                  width={192}
-                  height={192}
-                  unoptimized
-                />
-                <p className="text-black text-xs text-center">
-                  Escaneie com o WhatsApp para conectar
-                </p>
+                <Image src={qrCode} alt="QR Code WhatsApp" width={192} height={192} unoptimized />
+                <p className="text-black text-xs text-center">Escaneie com o WhatsApp para conectar</p>
               </div>
             )}
           </div>
         )}
 
         {conectado && (
-          <button
-            onClick={fetchStatus}
-            className="flex items-center gap-2 text-[#A3A3A3] text-sm hover:text-white transition-colors"
+          <button onClick={fetchStatus}
+            className="flex items-center gap-2 text-sm transition-colors"
+            style={{ color: 'var(--text-secondary)' }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
+            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'}
           >
-            <RefreshCw size={14} />
-            Atualizar status
+            <RefreshCw size={14} /> Atualizar status
           </button>
         )}
       </div>
