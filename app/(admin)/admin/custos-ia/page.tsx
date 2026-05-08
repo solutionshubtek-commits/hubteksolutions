@@ -5,7 +5,6 @@ import { createClient } from '@/lib/supabase/client'
 import {
   TrendingUp,
   TrendingDown,
-  Zap,
   DollarSign,
   BarChart3,
   ChevronDown,
@@ -71,8 +70,6 @@ function fmtTokens(val: number) {
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function CustosIAPage() {
-  const supabase = createClient()
-
   const [loading, setLoading] = useState(true)
   const [tenants, setTenants] = useState<TenantOption[]>([])
   const [selectedTenant, setSelectedTenant] = useState<string>('todos')
@@ -88,6 +85,7 @@ export default function CustosIAPage() {
 
   // ── Busca dados ──
   const fetchData = useCallback(async () => {
+    const supabase = createClient()
     setLoading(true)
     try {
       // Tenants
