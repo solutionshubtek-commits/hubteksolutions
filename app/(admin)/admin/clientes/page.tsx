@@ -11,9 +11,7 @@ interface Tenant {
   id: string; nome: string; slug: string; status: string
   expira_em: string | null; criado_em: string
 }
-interface TokenMes {
-  mes: string; conversas: number; tokens: number; custo_usd: number
-}
+interface TokenMes { mes: string; conversas: number; tokens: number; custo_usd: number }
 interface NovoTenant {
   nome: string; slug: string; email_admin: string
   senha_admin: string; expira_em: string; self_managed: boolean
@@ -22,7 +20,7 @@ interface NovoTenant {
 function statusConfig(status: string) {
   const map: Record<string, { label: string; cor: string; bg: string; border: string }> = {
     ativo:     { label: 'Ativo',     cor: '#10B981', bg: '#10B98118', border: '#10B98140' },
-    inativo:   { label: 'Inativo',   cor: '#6B6B6B', bg: '#6B6B6B18', border: '#6B6B6B40' },
+    inativo:   { label: 'Inativo',   cor: '#71717A', bg: '#71717A18', border: '#71717A40' },
     bloqueado: { label: 'Bloqueado', cor: '#EF4444', bg: '#EF444418', border: '#EF444440' },
   }
   return map[status] ?? map['inativo']
@@ -75,56 +73,61 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
     setSalvando(false); onSalvo(tenant)
   }
 
-  const inp = "w-full bg-[#050505] border border-[#1F1F1F] text-white placeholder-[#6B6B6B] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[#10B981]"
+  const inputStyle = { background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
-      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl w-full max-w-lg">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#1F1F1F]">
-          <h2 className="text-white font-semibold">Cadastrar novo cliente</h2>
-          <button onClick={onClose} className="text-[#6B6B6B] hover:text-white"><X size={18} /></button>
+      <div className="rounded-xl w-full max-w-lg" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
+          <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Cadastrar novo cliente</h2>
+          <button onClick={onClose} style={{ color: 'var(--text-muted)' }} className="hover:text-white"><X size={18} /></button>
         </div>
         <div className="p-6 space-y-4">
+          {[['Nome da empresa *', 'text', 'nome', 'Ex: Pizzaria Vesúvio'], ['Slug (identificador único) *', 'text', 'slug', 'pizzaria-vesuvio'], ['E-mail do admin *', 'email', 'email_admin', 'cliente@empresa.com']].map(([label, type, field, placeholder]) => (
+            <div key={field as string}>
+              <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>{label}</label>
+              <input type={type as string} value={(form as Record<string, string>)[field as string]}
+                onChange={(e) => field === 'nome' ? handleNome(e.target.value) : field === 'slug' ? setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }) : setForm({ ...form, [field as string]: e.target.value })}
+                placeholder={placeholder as string}
+                className={`w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none ${field === 'slug' ? 'font-mono' : ''}`}
+                style={inputStyle} />
+            </div>
+          ))}
           <div>
-            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Nome da empresa *</label>
-            <input type="text" value={form.nome} onChange={(e) => handleNome(e.target.value)} placeholder="Ex: Pizzaria Vesúvio" className={inp} />
-          </div>
-          <div>
-            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Slug (identificador único) *</label>
-            <input type="text" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })} placeholder="pizzaria-vesuvio" className={`${inp} font-mono`} />
-          </div>
-          <div>
-            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">E-mail do admin *</label>
-            <input type="email" value={form.email_admin} onChange={(e) => setForm({ ...form, email_admin: e.target.value })} placeholder="cliente@empresa.com" className={inp} />
-          </div>
-          <div>
-            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Senha inicial *</label>
+            <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Senha inicial *</label>
             <div className="relative">
-              <input type={mostrarSenha ? 'text' : 'password'} value={form.senha_admin} onChange={(e) => setForm({ ...form, senha_admin: e.target.value })} placeholder="Mínimo 8 caracteres" className={`${inp} pr-10`} />
-              <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6B6B] hover:text-white">
+              <input type={mostrarSenha ? 'text' : 'password'} value={form.senha_admin}
+                onChange={(e) => setForm({ ...form, senha_admin: e.target.value })}
+                placeholder="Mínimo 8 caracteres"
+                className="w-full rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none" style={inputStyle} />
+              <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)}
+                className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }}>
                 {mostrarSenha ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
           </div>
           <div>
-            <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Data de expiração *</label>
-            <input type="date" value={form.expira_em} onChange={(e) => setForm({ ...form, expira_em: e.target.value })} className={`${inp} [color-scheme:dark]`} />
+            <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Data de expiração *</label>
+            <input type="date" value={form.expira_em} onChange={(e) => setForm({ ...form, expira_em: e.target.value })}
+              className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none [color-scheme:dark]" style={inputStyle} />
           </div>
-          <div className="flex items-center justify-between bg-[#050505] border border-[#1F1F1F] rounded-lg px-4 py-3">
+          <div className="flex items-center justify-between rounded-lg px-4 py-3"
+            style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
             <div>
-              <p className="text-white text-sm font-medium">Permitir autogestão do agente</p>
-              <p className="text-[#6B6B6B] text-xs mt-0.5">Cliente poderá editar prompt, horários e base de conhecimento</p>
+              <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Permitir autogestão do agente</p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Cliente poderá editar prompt, horários e base de conhecimento</p>
             </div>
             <button type="button" onClick={() => setForm(prev => ({ ...prev, self_managed: !prev.self_managed }))}
-              style={{ width: 44, minWidth: 44, height: 24, padding: 0, border: 'none', outline: 'none', borderRadius: 999, position: 'relative', cursor: 'pointer', flexShrink: 0, backgroundColor: form.self_managed ? '#10B981' : '#2A2A2A', transition: 'background-color 0.2s' }}>
+              style={{ width: 44, minWidth: 44, height: 24, padding: 0, border: 'none', outline: 'none', borderRadius: 999, position: 'relative', cursor: 'pointer', flexShrink: 0, backgroundColor: form.self_managed ? '#10B981' : 'var(--border-2)', transition: 'background-color 0.2s' }}>
               <span style={{ position: 'absolute', top: 2, left: form.self_managed ? 22 : 2, width: 20, height: 20, borderRadius: '50%', backgroundColor: '#fff', transition: 'left 0.2s ease', display: 'block' }} />
             </button>
           </div>
           {erro && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400 flex-shrink-0" /><p className="text-red-400 text-sm">{erro}</p></div>}
         </div>
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#1F1F1F]">
-          <button onClick={onClose} className="text-[#A3A3A3] hover:text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">Cancelar</button>
-          <button onClick={handleSalvar} disabled={salvando} className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">
+        <div className="flex items-center justify-end gap-3 px-6 py-4" style={{ borderTop: '1px solid var(--border)' }}>
+          <button onClick={onClose} className="text-sm font-medium px-4 py-2 rounded-lg transition-colors" style={{ color: 'var(--text-secondary)' }}>Cancelar</button>
+          <button onClick={handleSalvar} disabled={salvando}
+            className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors">
             <Save size={14} />{salvando ? 'Salvando...' : 'Cadastrar cliente'}
           </button>
         </div>
@@ -149,18 +152,12 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
   const [extrato, setExtrato] = useState<TokenMes[]>([])
   const [carregandoExtrato, setCarregandoExtrato] = useState(false)
 
-  useEffect(() => {
-    if (aba === 'extrato') carregarExtrato()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aba])
+  useEffect(() => { if (aba === 'extrato') carregarExtrato() }, [aba])
 
   async function carregarExtrato() {
     setCarregandoExtrato(true)
     const supabase = createClient()
-    const { data } = await supabase.from('token_usage')
-      .select('criado_em, tokens_total, custo_usd, conversation_id')
-      .eq('tenant_id', tenant.id)
-      .order('criado_em', { ascending: false })
+    const { data } = await supabase.from('token_usage').select('criado_em, tokens_total, custo_usd, conversation_id').eq('tenant_id', tenant.id).order('criado_em', { ascending: false })
     if (data) {
       const porMes: Record<string, TokenMes> = {}
       const convIds = new Set<string>()
@@ -169,10 +166,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
         if (!porMes[mes]) porMes[mes] = { mes, conversas: 0, tokens: 0, custo_usd: 0 }
         porMes[mes].tokens += row.tokens_total ?? 0
         porMes[mes].custo_usd += row.custo_usd ?? 0
-        if (row.conversation_id && !convIds.has(row.conversation_id + mes)) {
-          convIds.add(row.conversation_id + mes)
-          porMes[mes].conversas += 1
-        }
+        if (row.conversation_id && !convIds.has(row.conversation_id + mes)) { convIds.add(row.conversation_id + mes); porMes[mes].conversas += 1 }
       })
       setExtrato(Object.values(porMes).sort((a, b) => b.mes.localeCompare(a.mes)))
     }
@@ -193,15 +187,11 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
   async function handleResetarSenha() {
     if (!novaSenha || novaSenha.length < 8) { setErroSenha('Mínimo 8 caracteres.'); return }
     setSalvandoSenha(true); setErroSenha(''); setSucessoSenha('')
-    const res = await fetch('/api/admin/resetar-senha', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tenant_id: tenant.id, nova_senha: novaSenha }),
-    })
+    const res = await fetch('/api/admin/resetar-senha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tenant_id: tenant.id, nova_senha: novaSenha }) })
     const data = await res.json()
     setSalvandoSenha(false)
     if (!res.ok) { setErroSenha(data.error ?? 'Erro desconhecido'); return }
-    setSucessoSenha('Senha redefinida com sucesso!')
-    setNovaSenha('')
+    setSucessoSenha('Senha redefinida com sucesso!'); setNovaSenha('')
     setTimeout(() => setSucessoSenha(''), 2500)
   }
 
@@ -218,48 +208,52 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
   const expirando = dias !== null && dias <= 10 && dias >= 0
   const expirado = dias !== null && dias < 0
   const cfg = statusConfig(tenant.status)
-  const inp = "w-full bg-[#050505] border border-[#1F1F1F] text-white placeholder-[#6B6B6B] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[#10B981]"
+  const inputStyle = { background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
 
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 w-full max-w-md bg-[#0A0A0A] border-l border-[#1F1F1F] z-50 flex flex-col shadow-2xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#1F1F1F]">
+      <div className="fixed inset-y-0 right-0 w-full max-w-md z-50 flex flex-col shadow-2xl"
+        style={{ background: 'var(--bg-surface)', borderLeft: '1px solid var(--border)' }}>
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#1F1F1F] flex items-center justify-center text-[#A3A3A3] text-xs font-semibold">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-semibold"
+              style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
               {tenant.nome.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()}
             </div>
             <div>
-              <p className="text-white font-semibold text-sm">{tenant.nome}</p>
-              <p className="text-[#6B6B6B] text-xs font-mono">{tenant.slug}</p>
+              <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{tenant.nome}</p>
+              <p className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{tenant.slug}</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-[#6B6B6B] hover:text-white"><X size={18} /></button>
+          <button onClick={onClose} style={{ color: 'var(--text-muted)' }} className="hover:text-white"><X size={18} /></button>
         </div>
 
-        <div className="flex border-b border-[#1F1F1F]">
+        <div className="flex" style={{ borderBottom: '1px solid var(--border)' }}>
           {(['detalhes', 'editar', 'senha', 'extrato'] as const).map(a => (
             <button key={a} onClick={() => setAba(a)}
-              className={`flex-1 py-3 text-xs font-semibold transition-colors ${aba === a ? 'text-[#10B981] border-b-2 border-[#10B981]' : 'text-[#6B6B6B] hover:text-white'}`}>
+              className="flex-1 py-3 text-xs font-semibold transition-colors"
+              style={{ color: aba === a ? '#10B981' : 'var(--text-muted)', borderBottom: aba === a ? '2px solid #10B981' : '2px solid transparent' }}>
               {a === 'detalhes' ? 'Detalhes' : a === 'editar' ? 'Editar' : a === 'senha' ? 'Senha' : 'Extrato'}
             </button>
           ))}
         </div>
 
         <div className="flex-1 overflow-y-auto p-6">
-
           {aba === 'detalhes' && (
             <div className="space-y-4">
               <div className="space-y-3">
                 {([['Nome', tenant.nome], ['Slug', tenant.slug], ['Cadastrado em', new Date(tenant.criado_em).toLocaleDateString('pt-BR')], ['Expira em', tenant.expira_em ? new Date(tenant.expira_em).toLocaleDateString('pt-BR') : '—']] as [string, string][]).map(([label, value]) => (
-                  <div key={label} className="flex justify-between items-center py-2 border-b border-[#1F1F1F]">
-                    <span className="text-[#6B6B6B] text-sm">{label}</span>
-                    <span className={`text-sm font-medium ${label === 'Slug' ? 'font-mono text-[#A3A3A3]' : 'text-white'}`}>{value}</span>
+                  <div key={label} className="flex justify-between items-center py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</span>
+                    <span className={`text-sm font-medium ${label === 'Slug' ? 'font-mono' : ''}`}
+                      style={{ color: label === 'Slug' ? 'var(--text-secondary)' : 'var(--text-primary)' }}>{value}</span>
                   </div>
                 ))}
-                <div className="flex justify-between items-center py-2 border-b border-[#1F1F1F]">
-                  <span className="text-[#6B6B6B] text-sm">Status</span>
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border" style={{ color: cfg.cor, background: cfg.bg, borderColor: cfg.border }}>
+                <div className="flex justify-between items-center py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+                  <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Status</span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border"
+                    style={{ color: cfg.cor, background: cfg.bg, borderColor: cfg.border }}>
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.cor }} />{cfg.label}
                   </span>
                 </div>
@@ -282,17 +276,17 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
 
           {aba === 'editar' && (
             <div className="space-y-4">
-              <div>
-                <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Nome da empresa</label>
-                <input type="text" value={nomeEdit} onChange={(e) => setNomeEdit(e.target.value)} className={inp} />
-              </div>
-              <div>
-                <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Data de expiração</label>
-                <input type="date" value={expiraEdit} onChange={(e) => setExpiraEdit(e.target.value)} className={`${inp} [color-scheme:dark]`} />
-              </div>
+              {[['Nome da empresa', 'text', nomeEdit, (v: string) => setNomeEdit(v)], ['Data de expiração', 'date', expiraEdit, (v: string) => setExpiraEdit(v)]].map(([label, type, value, onChange]) => (
+                <div key={label as string}>
+                  <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>{label as string}</label>
+                  <input type={type as string} value={value as string} onChange={(e) => (onChange as (v: string) => void)(e.target.value)}
+                    className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
+                </div>
+              ))}
               {erroEdit && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroEdit}</p></div>}
               {sucessoEdit && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoEdit}</p></div>}
-              <button onClick={handleSalvarEdicao} disabled={salvandoEdit} className="w-full flex items-center justify-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+              <button onClick={handleSalvarEdicao} disabled={salvandoEdit}
+                className="w-full flex items-center justify-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
                 <Save size={14} />{salvandoEdit ? 'Salvando...' : 'Salvar alterações'}
               </button>
             </div>
@@ -300,19 +294,23 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
 
           {aba === 'senha' && (
             <div className="space-y-4">
-              <p className="text-[#A3A3A3] text-sm">Redefine a senha do usuário <span className="text-white font-medium">admin_tenant</span> deste cliente.</p>
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                Redefine a senha do usuário <span className="font-medium" style={{ color: 'var(--text-primary)' }}>admin_tenant</span> deste cliente.
+              </p>
               <div>
-                <label className="text-[#A3A3A3] text-sm font-medium block mb-1.5">Nova senha</label>
+                <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Nova senha</label>
                 <div className="relative">
-                  <input type={mostrarSenha ? 'text' : 'password'} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} placeholder="Mínimo 8 caracteres" className={`${inp} pr-10`} />
-                  <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6B6B] hover:text-white">
+                  <input type={mostrarSenha ? 'text' : 'password'} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)}
+                    placeholder="Mínimo 8 caracteres" className="w-full rounded-lg px-4 py-2.5 pr-10 text-sm focus:outline-none" style={inputStyle} />
+                  <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)} className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }}>
                     {mostrarSenha ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
               </div>
               {erroSenha && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroSenha}</p></div>}
               {sucessoSenha && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoSenha}</p></div>}
-              <button onClick={handleResetarSenha} disabled={salvandoSenha} className="w-full flex items-center justify-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+              <button onClick={handleResetarSenha} disabled={salvandoSenha}
+                className="w-full flex items-center justify-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
                 <Key size={14} />{salvandoSenha ? 'Redefinindo...' : 'Redefinir senha'}
               </button>
             </div>
@@ -320,24 +318,26 @@ function SlideOver({ tenant, onClose, onAtualizado }: { tenant: Tenant; onClose:
 
           {aba === 'extrato' && (
             <div className="space-y-3">
-              <p className="text-[#6B6B6B] text-xs">Consumo de tokens e custo estimado por mês.</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Consumo de tokens e custo estimado por mês.</p>
               {carregandoExtrato ? (
-                <div className="space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-[#050505] rounded-xl animate-pulse" />)}</div>
+                <div className="space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface-2)' }} />)}</div>
               ) : extrato.length === 0 ? (
-                <div className="p-8 text-center"><p className="text-[#6B6B6B] text-sm">Nenhum registro de uso ainda.</p></div>
+                <div className="p-8 text-center"><p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhum registro de uso ainda.</p></div>
               ) : extrato.map(mes => {
                 const custoBRL = mes.custo_usd * 5.8
                 const cobrar = custoBRL * 3
                 const [ano, m] = mes.mes.split('-')
                 const nomeMes = new Date(+ano, +m - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
                 return (
-                  <div key={mes.mes} className="bg-[#050505] border border-[#1F1F1F] rounded-xl p-4 space-y-2">
-                    <p className="text-white text-sm font-semibold capitalize">{nomeMes}</p>
+                  <div key={mes.mes} className="rounded-xl p-4 space-y-2" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+                    <p className="text-sm font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>{nomeMes}</p>
                     <div className="grid grid-cols-2 gap-2">
                       {([['Conversas', mes.conversas.toLocaleString('pt-BR')], ['Tokens', fmtCompact(mes.tokens)], ['Custo API', `R$ ${custoBRL.toFixed(2).replace('.', ',')}`], ['Valor a cobrar (3x)', `R$ ${cobrar.toFixed(2).replace('.', ',')}`]] as [string, string][]).map(([label, value]) => (
-                        <div key={label} className={`rounded-lg p-2.5 ${label === 'Valor a cobrar (3x)' ? 'bg-[#10B981]/10 border border-[#10B981]/20 col-span-2' : 'bg-[#0A0A0A]'}`}>
-                          <p className="text-[#6B6B6B] text-[10px] mb-0.5">{label}</p>
-                          <p className={`text-sm font-semibold ${label === 'Valor a cobrar (3x)' ? 'text-[#10B981]' : 'text-white'}`}>{value}</p>
+                        <div key={label} className={`rounded-lg p-2.5 ${label === 'Valor a cobrar (3x)' ? 'bg-[#10B981]/10 border border-[#10B981]/20 col-span-2' : ''}`}
+                          style={label !== 'Valor a cobrar (3x)' ? { background: 'var(--bg-surface)' } : {}}>
+                          <p className="text-[10px] mb-0.5" style={{ color: 'var(--text-muted)' }}>{label}</p>
+                          <p className={`text-sm font-semibold ${label === 'Valor a cobrar (3x)' ? 'text-[#10B981]' : ''}`}
+                            style={{ color: label !== 'Valor a cobrar (3x)' ? 'var(--text-primary)' : '#10B981' }}>{value}</p>
                         </div>
                       ))}
                     </div>
@@ -371,9 +371,7 @@ export default function AdminClientesPage() {
 
   const fetchTenants = useCallback(async () => {
     const supabase = createClient()
-    const { data } = await supabase.from('tenants')
-      .select('id, nome, slug, status, expira_em, criado_em')
-      .order('criado_em', { ascending: false })
+    const { data } = await supabase.from('tenants').select('id, nome, slug, status, expira_em, criado_em').order('criado_em', { ascending: false })
     setTenants(data ?? [])
     setCarregando(false)
   }, [])
@@ -400,11 +398,12 @@ export default function AdminClientesPage() {
     <div className="p-8">
       <div className="flex items-start justify-between mb-8">
         <div>
-          <p className="text-[#6B6B6B] text-sm mb-1">Gestão</p>
-          <h1 className="text-white text-2xl font-bold">Clientes</h1>
-          <p className="text-[#A3A3A3] text-sm mt-1">{tenants.length} contas cadastradas.</p>
+          <p className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Gestão</p>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Clientes</h1>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{tenants.length} contas cadastradas.</p>
         </div>
-        <button onClick={() => setModalAberto(true)} className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors">
+        <button onClick={() => setModalAberto(true)}
+          className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors">
           <Plus size={15} /> Cadastrar cliente
         </button>
       </div>
@@ -417,76 +416,18 @@ export default function AdminClientesPage() {
       )}
 
       <div className="relative mb-4 max-w-sm">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6B6B]" />
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
         <input type="text" placeholder="Buscar por nome ou slug..." value={busca} onChange={(e) => setBusca(e.target.value)}
-          className="w-full bg-[#0A0A0A] border border-[#1F1F1F] text-white placeholder-[#6B6B6B] rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:border-[#10B981]" />
+          className="w-full rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none"
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
       </div>
 
-      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl overflow-hidden">
+      <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
         {carregando ? (
-          <div className="p-6 space-y-3">{[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-[#050505] rounded-lg animate-pulse" />)}</div>
+          <div className="p-6 space-y-3">{[...Array(5)].map((_, i) => <div key={i} className="h-12 rounded-lg animate-pulse" style={{ background: 'var(--bg-surface-2)' }} />)}</div>
         ) : tenantsFiltrados.length === 0 ? (
-          <div className="p-12 text-center"><p className="text-[#6B6B6B] text-sm">Nenhum cliente encontrado.</p></div>
+          <div className="p-12 text-center"><p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhum cliente encontrado.</p></div>
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="border-b border-[#1F1F1F]">
-                {['Cliente', 'Status', 'Expiração', 'Cadastro', ''].map(h => (
-                  <th key={h} className="text-left text-[#6B6B6B] text-xs font-medium px-5 py-3 uppercase tracking-wider">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {tenantsFiltrados.map(t => {
-                const cfg = statusConfig(t.status)
-                const dias = diasRestantes(t.expira_em)
-                const expirando = dias !== null && dias <= 10 && dias >= 0
-                const expirado = dias !== null && dias < 0
-                const selecionado = clienteSelecionado?.id === t.id
-                return (
-                  <tr key={t.id} onClick={() => setClienteSelecionado(t)}
-                    className={`border-b border-[#1F1F1F] last:border-0 cursor-pointer transition-colors ${selecionado ? 'bg-[#10B981]/5' : 'hover:bg-[#141414]'}`}>
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0 ${selecionado ? 'bg-[#10B981]/20 text-[#10B981]' : 'bg-[#1F1F1F] text-[#A3A3A3]'}`}>
-                          {t.nome.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()}
-                        </div>
-                        <div>
-                          <p className="text-white text-sm font-medium">{t.nome}</p>
-                          <p className="text-[#6B6B6B] text-xs font-mono">{t.slug}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border" style={{ color: cfg.cor, background: cfg.bg, borderColor: cfg.border }}>
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.cor }} />{cfg.label}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      {t.expira_em ? (
-                        <div className="flex items-center gap-2">
-                          <span className="text-[#A3A3A3] text-sm">{new Date(t.expira_em).toLocaleDateString('pt-BR')}</span>
-                          {expirado && <span className="flex items-center gap-1 text-red-400 text-xs"><AlertTriangle size={11} /> Expirado</span>}
-                          {expirando && <span className="flex items-center gap-1 text-[#F59E0B] text-xs"><AlertTriangle size={11} /> {dias}d</span>}
-                        </div>
-                      ) : <span className="text-[#3A3A3A] text-sm">—</span>}
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="text-[#6B6B6B] text-sm">{new Date(t.criado_em).toLocaleDateString('pt-BR')}</span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <ChevronRight size={15} className={selecionado ? 'text-[#10B981]' : 'text-[#3A3A3A]'} />
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {modalAberto && <ModalNovoCliente onClose={() => setModalAberto(false)} onSalvo={handleSalvo} />}
-      {clienteSelecionado && <SlideOver tenant={clienteSelecionado} onClose={() => setClienteSelecionado(null)} onAtualizado={handleAtualizado} />}
-    </div>
-  )
-}
+              <tr sty
