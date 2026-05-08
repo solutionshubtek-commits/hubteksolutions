@@ -360,6 +360,15 @@ export default function AdminClientesPage() {
   const [clienteSelecionado, setClienteSelecionado] = useState<Tenant | null>(null)
   const [sucesso, setSucesso] = useState('')
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const idParam = params.get('id')
+    if (idParam && tenants.length > 0) {
+      const found = tenants.find(t => t.id === idParam)
+      if (found) setClienteSelecionado(found)
+    }
+  }, [tenants]))
+
   const fetchTenants = useCallback(async () => {
     const supabase = createClient()
     const { data } = await supabase.from('tenants')
