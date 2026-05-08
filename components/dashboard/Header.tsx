@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { LogOut, Sun, Moon, Bell, Pause, Play } from 'lucide-react'
+import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle } from 'lucide-react'
 
 interface HeaderProps {
   nomeUsuario: string | null
@@ -11,6 +11,7 @@ interface HeaderProps {
 export function Header({ nomeUsuario }: HeaderProps) {
   const router = useRouter()
   const [agentAtivo, setAgentAtivo] = useState(true)
+  const [pausadoPorAdmin, setPausadoPorAdmin] = useState(false)
   const [tenantId, setTenantId] = useState<string | null>(null)
   const [tema, setTema] = useState<'dark' | 'light'>('dark')
   const [toggling, setToggling] = useState(false)
@@ -25,12 +26,17 @@ export function Header({ nomeUsuario }: HeaderProps) {
       if (!userData?.tenant_id) return
       setTenantId(userData.tenant_id)
       const { data: tenantData } = await supabase
-        .from('tenants').select('agente_ativo').eq('id', userData.tenant_id).single()
-      if (tenantData) setAgentAtivo(tenantData.agente_ativo ?? true)
+        .from('tenants')
+        .select('agente_ativo, pausado_por_admin')
+        .eq('id', userData.tenant_id)
+        .single()
+      if (tenantData) {
+        setAgentAtivo(tenantData.agente_ativo ?? true)
+        setPausadoPorAdmin(tenantData.pausado_por_admin ?? false)
+      }
     }
     fetchAgentStatus()
 
-    // Carregar tema salvo
     const temaSalvo = localStorage.getItem('hubtek-tema') as 'dark' | 'light' | null
     if (temaSalvo) {
       setTema(temaSalvo)
@@ -39,6 +45,8 @@ export function Header({ nomeUsuario }: HeaderProps) {
   }, [])
 
   async function handleToggleAgent() {
+    // Bloqueado pelo admin — não permite reativar
+    if (pausadoPorAdmin) return
     if (!tenantId || toggling) return
     setToggling(true)
     const novoEstado = !agentAtivo
@@ -71,26 +79,36 @@ export function Header({ nomeUsuario }: HeaderProps) {
   return (
     <header className="h-16 bg-[#0A0A0A] border-b border-[#1F1F1F] flex items-center justify-end px-8 gap-3 sticky top-0 z-30">
 
-      {/* Toggle Agente Global */}
-      <button
-        onClick={handleToggleAgent}
-        disabled={toggling}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all disabled:opacity-50 ${
-          agentAtivo
-            ? 'bg-[#10B981]/10 border-[#10B981]/40 text-[#10B981] hover:bg-[#10B981]/20'
-            : 'bg-red-500/10 border-red-500/40 text-red-400 hover:bg-red-500/20'
-        }`}
-      >
-        <span className={`relative flex h-2 w-2`}>
-          {agentAtivo && (
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75" />
-          )}
-          <span className={`relative inline-flex rounded-full h-2 w-2 ${agentAtivo ? 'bg-[#10B981]' : 'bg-red-400'}`} />
-        </span>
-        <span>Agente</span>
-        <span className="font-bold">{agentAtivo ? 'Ativo' : 'Pausado'}</span>
-        {agentAtivo ? <Pause size={11} /> : <Play size={11} />}
-      </button>
+      {/* Aviso pausado por admin */}
+      {pausadoPorAdmin && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-500/10 border border-red-500/40 text-red-400">
+          <AlertTriangle size={11} />
+          <span>Agente suspenso · entre em contato com a HubTek Solutions</span>
+        </div>
+      )}
+
+      {/* Toggle Agente Global — oculto se pausado por admin */}
+      {!pausadoPorAdmin && (
+        <button
+          onClick={handleToggleAgent}
+          disabled={toggling}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all disabled:opacity-50 ${
+            agentAtivo
+              ? 'bg-[#10B981]/10 border-[#10B981]/40 text-[#10B981] hover:bg-[#10B981]/20'
+              : 'bg-red-500/10 border-red-500/40 text-red-400 hover:bg-red-500/20'
+          }`}
+        >
+          <span className="relative flex h-2 w-2">
+            {agentAtivo && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75" />
+            )}
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${agentAtivo ? 'bg-[#10B981]' : 'bg-red-400'}`} />
+          </span>
+          <span>Agente</span>
+          <span className="font-bold">{agentAtivo ? 'Ativo' : 'Pausado'}</span>
+          {agentAtivo ? <Pause size={11} /> : <Play size={11} />}
+        </button>
+      )}
 
       {/* Toggle tema */}
       <button
@@ -107,7 +125,6 @@ export function Header({ nomeUsuario }: HeaderProps) {
         <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#10B981]" />
       </button>
 
-      {/* Divider */}
       <div className="w-px h-6 bg-[#1F1F1F]" />
 
       {/* Usuário */}

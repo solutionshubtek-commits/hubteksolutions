@@ -149,6 +149,7 @@ export default function AdminTreinamentoPage() {
       .from('tenants')
       .update({
         agente_ativo: next,
+        pausado_por_admin: !next,
         agente_pausado_em: next ? null : new Date().toISOString(),
       })
       .eq('id', tenant.id)
@@ -253,11 +254,10 @@ export default function AdminTreinamentoPage() {
     )
   }
 
-  // Desconectado pelo admin = status bloqueado com agente_ativo false
-  const adminDisconnected = tenant?.status === 'bloqueado' && !tenant?.agente_ativo
+  const adminDisconnected = !agentOn
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
 
       {/* ── Page head ── */}
       <div className="flex items-start justify-between mb-6">
@@ -391,7 +391,7 @@ export default function AdminTreinamentoPage() {
             value={prompt}
             onChange={(e) => { setPrompt(e.target.value) }}
             placeholder="Digite aqui o prompt do agente..."
-            className="w-full min-h-[300px] bg-neutral-950 border border-neutral-800 rounded-xl p-4
+            className="w-full min-h-[420px] bg-neutral-950 border border-neutral-800 rounded-xl p-4
                        text-white text-[12.5px] leading-relaxed font-mono resize-y
                        focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20
                        placeholder:text-neutral-600 transition-colors"
