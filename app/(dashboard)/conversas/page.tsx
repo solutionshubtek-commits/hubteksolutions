@@ -22,14 +22,9 @@ export default function ConversasPage() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-      const { data: userData } = await supabase
-        .from('users')
-        .select('tenant_id')
-        .eq('id', user.id)
-        .single()
+      const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
       if (!userData?.tenant_id) return
-      const { data } = await supabase
-        .from('conversations')
+      const { data } = await supabase.from('conversations')
         .select('id, contato_nome, contato_telefone, status, ultima_mensagem_em')
         .eq('tenant_id', userData.tenant_id)
         .order('ultima_mensagem_em', { ascending: false })
@@ -40,25 +35,21 @@ export default function ConversasPage() {
   }, [])
 
   const conversasFiltradas = conversas.filter((c) => {
-    const matchBusca =
-      c.contato_nome?.toLowerCase().includes(busca.toLowerCase()) ||
-      c.contato_telefone?.includes(busca)
+    const matchBusca = c.contato_nome?.toLowerCase().includes(busca.toLowerCase()) || c.contato_telefone?.includes(busca)
     const matchStatus = filtroStatus === 'todos' || c.status === filtroStatus
     return matchBusca && matchStatus
   })
 
   function statusBadge(status: string) {
     const map: Record<string, { label: string; color: string }> = {
-      ativa: { label: 'Ativa', color: '#10B981' },
-      pausada: { label: 'Pausada', color: '#F59E0B' },
-      encerrada: { label: 'Encerrada', color: '#6B6B6B' },
+      ativa:      { label: 'Ativa',      color: '#10B981' },
+      pausada:    { label: 'Pausada',    color: '#F59E0B' },
+      encerrada:  { label: 'Encerrada', color: '#71717A' },
     }
-    const s = map[status] || { label: status, color: '#6B6B6B' }
+    const s = map[status] || { label: status, color: '#71717A' }
     return (
-      <span
-        className="text-xs font-medium px-2 py-1 rounded-full"
-        style={{ color: s.color, backgroundColor: s.color + '20' }}
-      >
+      <span className="text-xs font-medium px-2.5 py-1 rounded-full"
+        style={{ color: s.color, backgroundColor: s.color + '20' }}>
         {s.label}
       </span>
     )
@@ -66,9 +57,7 @@ export default function ConversasPage() {
 
   function formatarData(data: string) {
     if (!data) return '-'
-    return new Date(data).toLocaleString('pt-BR', {
-      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-    })
+    return new Date(data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
   }
 
   function iniciais(nome: string) {
@@ -77,26 +66,34 @@ export default function ConversasPage() {
   }
 
   return (
-    <div>
-      <h1 className="text-white text-2xl font-bold mb-6">Conversas</h1>
+    <div className="p-8 space-y-6">
+      <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Conversas</h1>
 
-      <div className="flex gap-3 mb-6">
+      <div className="flex gap-3">
         <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6B6B]" />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
           <input
             type="text"
             placeholder="Buscar por nome ou telefone..."
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
-            className="w-full bg-[#0A0A0A] border border-[#1F1F1F] text-white placeholder-[#6B6B6B]
-              rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:border-[#10B981]"
+            className="w-full rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none"
+            style={{
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-primary)',
+            }}
           />
         </div>
         <select
           value={filtroStatus}
           onChange={(e) => setFiltroStatus(e.target.value)}
-          className="bg-[#0A0A0A] border border-[#1F1F1F] text-white rounded-lg px-3 py-2.5
-            text-sm focus:outline-none focus:border-[#10B981]"
+          className="rounded-lg px-3 py-2.5 text-sm focus:outline-none"
+          style={{
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)',
+            color: 'var(--text-primary)',
+          }}
         >
           <option value="todos">Todos</option>
           <option value="ativa">Ativas</option>
@@ -105,42 +102,48 @@ export default function ConversasPage() {
         </select>
       </div>
 
-      <div className="bg-[#0A0A0A] border border-[#1F1F1F] rounded-xl overflow-hidden">
+      <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
         {carregando ? (
           <div className="p-6 space-y-4">
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-12 bg-[#1F1F1F] rounded animate-pulse" />
+              <div key={i} className="h-12 rounded animate-pulse" style={{ background: 'var(--bg-hover)' }} />
             ))}
           </div>
         ) : conversasFiltradas.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-[#6B6B6B]">
+          <div className="flex flex-col items-center justify-center py-16" style={{ color: 'var(--text-muted)' }}>
             <MessageCircle size={40} className="mb-3" />
             <p className="text-sm">Nenhuma conversa encontrada</p>
           </div>
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="border-b border-[#1F1F1F]">
-                <th className="text-left text-[#6B6B6B] text-xs font-medium px-6 py-3">CONTATO</th>
-                <th className="text-left text-[#6B6B6B] text-xs font-medium px-6 py-3">TELEFONE</th>
-                <th className="text-left text-[#6B6B6B] text-xs font-medium px-6 py-3">STATUS</th>
-                <th className="text-left text-[#6B6B6B] text-xs font-medium px-6 py-3">ÚLTIMA MENSAGEM</th>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                {['Contato', 'Telefone', 'Status', 'Última Mensagem'].map(h => (
+                  <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
+                    style={{ color: 'var(--text-muted)' }}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {conversasFiltradas.map((c, i) => (
-                <tr key={c.id} className={`border-b border-[#1F1F1F] hover:bg-[#141414] transition-colors ${i === conversasFiltradas.length - 1 ? 'border-b-0' : ''}`}>
+                <tr key={c.id}
+                  className="transition-colors"
+                  style={{ borderBottom: i === conversasFiltradas.length - 1 ? 'none' : '1px solid var(--border)' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                >
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-[#10B981]/20 flex items-center justify-center text-[#10B981] text-xs font-semibold">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold"
+                        style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981' }}>
                         {iniciais(c.contato_nome)}
                       </div>
-                      <span className="text-white text-sm">{c.contato_nome || 'Sem nome'}</span>
+                      <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{c.contato_nome || 'Sem nome'}</span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-[#A3A3A3] text-sm">{c.contato_telefone}</td>
+                  <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{c.contato_telefone}</td>
                   <td className="px-6 py-4">{statusBadge(c.status)}</td>
-                  <td className="px-6 py-4 text-[#A3A3A3] text-sm">{formatarData(c.ultima_mensagem_em)}</td>
+                  <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{formatarData(c.ultima_mensagem_em)}</td>
                 </tr>
               ))}
             </tbody>
