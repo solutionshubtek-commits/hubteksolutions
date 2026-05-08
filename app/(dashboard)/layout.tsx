@@ -24,7 +24,7 @@ export default async function DashboardLayout({
   const nomeUsuario = userData?.nome ?? user.email ?? null
 
   return (
-    <div className="min-h-screen bg-black">
+    <div className="min-h-screen bg-[var(--bg-page)]">
       <Sidebar />
       <div className="ml-60 flex flex-col min-h-screen">
         <Header nomeUsuario={nomeUsuario} />
