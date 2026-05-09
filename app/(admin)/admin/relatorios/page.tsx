@@ -333,7 +333,7 @@ export default function RelatoriosPage() {
           <div className="p-10 text-center" style={{ background: 'var(--bg-card)' }}>
             <FileText size={32} className="mx-auto mb-3 opacity-30" style={{ color: 'var(--text-secondary)' }} />
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Nenhum ciclo fechado encontrado.</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>Use o botão "Fechar ciclo" na Visão Geral do Admin.</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>Use o botão &quot;Fechar ciclo&quot; na Visão Geral do Admin.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
