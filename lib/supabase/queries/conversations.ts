@@ -15,17 +15,35 @@ export async function getTenantBySlug(
   return data as { id: string } | null
 }
 
+// Nova função: busca tenant pelo instance_name via tabela tenant_instances
+export async function getTenantByInstanceName(
+  supabase: SupabaseClient,
+  instanceName: string
+): Promise<{ id: string } | null> {
+  const { data } = await supabase
+    .from('tenant_instances')
+    .select('tenant_id, tenants!inner(id, status)')
+    .eq('instance_name', instanceName)
+    .eq('tenants.status', 'ativo')
+    .maybeSingle()
+
+  if (!data) return null
+  return { id: data.tenant_id }
+}
+
 export async function findOrCreateConversation(
   supabase: SupabaseClient,
   tenantId: string,
   phone: string,
-  nome?: string
+  nome?: string,
+  instanceName?: string
 ): Promise<Conversation> {
   const { data: existing } = await supabase
     .from('conversations')
     .select('*')
     .eq('tenant_id', tenantId)
     .eq('contato_telefone', phone)
+    .eq('instance_name', instanceName ?? '')
     .neq('status', 'encerrado')
     .order('criado_em', { ascending: false })
     .limit(1)
@@ -39,6 +57,7 @@ export async function findOrCreateConversation(
       tenant_id: tenantId,
       contato_telefone: phone,
       contato_nome: nome ?? null,
+      instance_name: instanceName ?? null,
     })
     .select()
     .single()
@@ -85,7 +104,6 @@ export async function getRecentMessages(
     .order('criado_em', { ascending: false })
     .limit(limit)
 
-  // Reverte para ordem cronológica para uso como contexto
   return ((data ?? []) as Message[]).reverse()
 }
 
