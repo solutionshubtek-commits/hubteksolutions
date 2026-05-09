@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
         }
 
         const instanceData = await createResponse.json()
-        const instance_token = instanceData?.hash?.apikey || instanceData?.instance?.token || null
+        const instance_token = instanceData?.hash || instanceData?.instance?.token || null
 
         // 2. Configurar webhook
         await fetch(`${EVOLUTION_API_URL}/webhook/set/${instance_name}`, {
