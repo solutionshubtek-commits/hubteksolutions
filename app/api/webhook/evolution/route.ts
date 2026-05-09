@@ -8,7 +8,7 @@ import {
   extractTextContent,
 } from '@/lib/evolution/webhook'
 import { processIncomingMessage } from '@/lib/ai/process-message'
-import { getTenantBySlug } from '@/lib/supabase/queries/conversations'
+import { getTenantByInstanceName } from '@/lib/supabase/queries/conversations'
 
 const WHATSAPP_STATUS: Record<string, string> = {
   open: 'conectado',
@@ -17,7 +17,6 @@ const WHATSAPP_STATUS: Record<string, string> = {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  // Valida o token do webhook para rejeitar chamadas não autorizadas
   const apikey = request.headers.get('apikey')
   if (apikey !== process.env.EVOLUTION_WEBHOOK_SECRET) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
@@ -35,18 +34,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Payload inválido' }, { status: 400 })
   }
 
-  // Responde 200 imediatamente para não bloquear a Evolution API enquanto processa
   const response = NextResponse.json({ received: true })
 
   if (event.event === 'messages.upsert' && isMessageUpsertData(event.data)) {
     const data = event.data
-
-    // Ignora mensagens enviadas pelo próprio agente e mensagens de grupos
     if (data.key.fromMe) return response
     if (data.key.remoteJid.includes('@g.us')) return response
 
     const supabase = createServiceClient()
-    const tenant = await getTenantBySlug(supabase, event.instance)
+    const tenant = await getTenantByInstanceName(supabase, event.instance)
 
     if (!tenant) {
       console.error(`[webhook/evolution] Nenhum tenant ativo para instância: ${event.instance}`)
@@ -55,7 +51,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const phone = extractPhone(data.key.remoteJid)
 
-    // Fire-and-forget: responde ao cliente enquanto processa em background
     processIncomingMessage({
       tenantId: tenant.id,
       instanceName: event.instance,
@@ -72,10 +67,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (event.event === 'connection.update' && isConnectionUpdateData(event.data)) {
     const whatsapp_status = WHATSAPP_STATUS[event.data.state] ?? 'desconectado'
     const supabase = createServiceClient()
+
+    // Atualiza status na tabela tenant_instances
     await supabase
-      .from('tenants')
-      .update({ whatsapp_status, atualizado_em: new Date().toISOString() })
-      .eq('slug', event.instance)
+      .from('tenant_instances')
+      .update({ status: whatsapp_status })
+      .eq('instance_name', event.instance)
   }
 
   return response
