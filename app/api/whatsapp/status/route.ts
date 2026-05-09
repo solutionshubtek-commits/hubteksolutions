@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient } from '@supabase/supabase-js'
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const tenant_id = searchParams.get('tenant_id')
 
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    )
+
     if (!tenant_id) {
-      // Fallback legado: busca por instance único
       const instanceName = searchParams.get('instance') || 'hubtek'
       const res = await fetch(
         `${process.env.EVOLUTION_API_URL}/instance/fetchInstances`,
@@ -22,19 +27,23 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Busca todas as instâncias do tenant no Supabase
-    const supabase = createClient()
-    const { data: instances } = await supabase
+    // Busca instâncias do tenant via service role (bypassa RLS)
+    const { data: instances, error } = await supabase
       .from('tenant_instances')
       .select('id, instance_name, apelido, status')
       .eq('tenant_id', tenant_id)
       .order('criado_em', { ascending: true })
 
+    if (error) {
+      console.error('Erro ao buscar instâncias:', error)
+      return NextResponse.json({ instancias: [] })
+    }
+
     if (!instances || instances.length === 0) {
       return NextResponse.json({ instancias: [] })
     }
 
-    // Busca status atualizado da Evolution para cada instância
+    // Busca status atualizado da Evolution
     const evolutionRes = await fetch(
       `${process.env.EVOLUTION_API_URL}/instance/fetchInstances`,
       { headers: { apikey: process.env.EVOLUTION_API_KEY! }, cache: 'no-store' }
@@ -56,7 +65,8 @@ export async function GET(request: NextRequest) {
     })
 
     return NextResponse.json({ instancias })
-  } catch {
+  } catch (err) {
+    console.error('Erro na API de status:', err)
     return NextResponse.json({ instancias: [] })
   }
 }
