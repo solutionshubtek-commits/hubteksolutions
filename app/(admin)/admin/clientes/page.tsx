@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Plus, Search, AlertTriangle, CheckCircle2, AlertCircle,
   X, Save, Eye, EyeOff, Lock, Unlock, Key,
-  ChevronRight, RefreshCw,
+  ChevronRight, RefreshCw, Trash2, Smartphone,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -13,12 +13,16 @@ interface Tenant {
   id: string; nome: string; slug: string; status: string
   expira_em: string | null; criado_em: string; plano: string
 }
+interface TenantInstance {
+  id: string; instance_name: string; apelido: string; status: string
+}
 interface ExtratoMes {
   mes: string; conversas: number; tokens: number; custo_brl: number
 }
 interface NovoTenant {
   nome: string; slug: string; email_admin: string
   senha_admin: string; expira_em: string; self_managed: boolean; plano: string
+  instancias: { apelido: string }[]
 }
 
 // ─── Planos ───────────────────────────────────────────────────────────────────
@@ -33,8 +37,6 @@ const PLANOS = [
 function planoConfig(plano: string) {
   return PLANOS.find(p => p.value === plano) ?? PLANOS[0]
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function statusConfig(status: string) {
   const map: Record<string, { label: string; cor: string; bg: string; border: string }> = {
@@ -71,6 +73,7 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
   const [form, setForm] = useState<NovoTenant>({
     nome: '', slug: '', email_admin: '', senha_admin: '',
     expira_em: '', self_managed: false, plano: 'essencial',
+    instancias: [{ apelido: 'Principal' }],
   })
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
@@ -78,6 +81,26 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
 
   function handleNome(nome: string) {
     setForm(prev => ({ ...prev, nome, slug: prev.slug === slugify(prev.nome) || prev.slug === '' ? slugify(nome) : prev.slug }))
+  }
+
+  function addInstancia() {
+    if (form.instancias.length >= 5) return
+    setForm(prev => ({
+      ...prev,
+      instancias: [...prev.instancias, { apelido: `Conexão ${prev.instancias.length + 1}` }],
+    }))
+  }
+
+  function removeInstancia(idx: number) {
+    if (form.instancias.length <= 1) return
+    setForm(prev => ({ ...prev, instancias: prev.instancias.filter((_, i) => i !== idx) }))
+  }
+
+  function updateApelido(idx: number, apelido: string) {
+    setForm(prev => ({
+      ...prev,
+      instancias: prev.instancias.map((inst, i) => i === idx ? { apelido } : inst),
+    }))
   }
 
   async function handleSalvar() {
@@ -88,17 +111,19 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
     const supabase = createClient()
     const { data: slugExiste } = await supabase.from('tenants').select('id').eq('slug', form.slug).single()
     if (slugExiste) { setErro('Esse slug já está em uso.'); setSalvando(false); return }
+
     const { data: tenant, error: tenantErr } = await supabase.from('tenants')
       .insert({ nome: form.nome, slug: form.slug, status: 'ativo', expira_em: form.expira_em, plano: form.plano })
       .select().single()
     if (tenantErr || !tenant) { setErro('Erro ao criar tenant: ' + (tenantErr?.message ?? 'desconhecido')); setSalvando(false); return }
+
     const res = await fetch('/api/admin/criar-usuario', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-  email: form.email_admin, senha: form.senha_admin, tenant_id: tenant.id,
-  role: form.self_managed ? 'self_managed' : 'admin_tenant', nome: form.nome,
-  slug: form.slug,
-}),
+        email: form.email_admin, senha: form.senha_admin, tenant_id: tenant.id,
+        role: form.self_managed ? 'self_managed' : 'admin_tenant', nome: form.nome,
+        slug: form.slug, instancias: form.instancias,
+      }),
     })
     const resData = await res.json()
     if (!res.ok) {
@@ -170,15 +195,53 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
                     background: form.plano === p.value ? '#10B98118' : 'var(--bg-surface-2)',
                     border: form.plano === p.value ? '1px solid #10B98160' : '1px solid var(--border)',
                   }}>
-                  <p className="text-sm font-semibold" style={{ color: form.plano === p.value ? '#10B981' : 'var(--text-primary)' }}>
-                    {p.label}
-                  </p>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    até {p.limite} conv. · {fmtBRL(p.valor)}/mês
-                  </p>
+                  <p className="text-sm font-semibold" style={{ color: form.plano === p.value ? '#10B981' : 'var(--text-primary)' }}>{p.label}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>até {p.limite} conv. · {fmtBRL(p.valor)}/mês</p>
                 </button>
               ))}
             </div>
+          </div>
+          {/* Instâncias WhatsApp */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                Instâncias WhatsApp ({form.instancias.length}/5)
+              </label>
+              {form.instancias.length < 5 && (
+                <button type="button" onClick={addInstancia}
+                  className="flex items-center gap-1 text-xs font-medium text-[#10B981] hover:text-[#059669] transition-colors">
+                  <Plus size={13} /> Adicionar
+                </button>
+              )}
+            </div>
+            <div className="space-y-2">
+              {form.instancias.map((inst, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'rgba(16,185,129,0.1)' }}>
+                    <Smartphone size={14} color="#10B981" />
+                  </div>
+                  <input
+                    type="text"
+                    value={inst.apelido}
+                    onChange={(e) => updateApelido(idx, e.target.value)}
+                    placeholder={`Ex: Vendas, Suporte...`}
+                    className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={inputStyle}
+                  />
+                  {form.instancias.length > 1 && (
+                    <button type="button" onClick={() => removeInstancia(idx)}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-red-500/10"
+                      style={{ color: 'var(--text-muted)' }}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
+              Cada instância = 1 número de WhatsApp conectado. Máximo 5 por cliente.
+            </p>
           </div>
           {/* Self managed */}
           <div className="flex items-center justify-between rounded-lg px-4 py-3"
@@ -222,7 +285,7 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
 function SlideOver({ tenant, onClose, onAtualizado }: {
   tenant: Tenant; onClose: () => void; onAtualizado: (t: Tenant) => void
 }) {
-  const [aba, setAba] = useState<'detalhes' | 'editar' | 'senha' | 'extrato'>('detalhes')
+  const [aba, setAba] = useState<'detalhes' | 'editar' | 'senha' | 'extrato' | 'instancias'>('detalhes')
   const [nomeEdit, setNomeEdit] = useState(tenant.nome)
   const [expiraEdit, setExpiraEdit] = useState(tenant.expira_em?.slice(0, 10) ?? '')
   const [planoEdit, setPlanoEdit] = useState(tenant.plano ?? 'essencial')
@@ -237,17 +300,55 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   const [salvandoStatus, setSalvandoStatus] = useState(false)
   const [extrato, setExtrato] = useState<ExtratoMes[]>([])
   const [carregandoExtrato, setCarregandoExtrato] = useState(false)
+  // Instâncias
+  const [instancias, setInstancias] = useState<TenantInstance[]>([])
+  const [carregandoInst, setCarregandoInst] = useState(false)
+  const [novasInstancias, setNovasInstancias] = useState<{ apelido: string }[]>([])
+  const [adicionandoInst, setAdicionandoInst] = useState(false)
+  const [erroInst, setErroInst] = useState('')
+  const [sucessoInst, setSucessoInst] = useState('')
 
   useEffect(() => {
     if (aba === 'extrato') carregarExtrato()
+    if (aba === 'instancias') carregarInstancias()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aba])
+
+  async function carregarInstancias() {
+    setCarregandoInst(true)
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('tenant_instances')
+      .select('id, instance_name, apelido, status')
+      .eq('tenant_id', tenant.id)
+      .order('criado_em', { ascending: true })
+    setInstancias((data ?? []) as TenantInstance[])
+    setCarregandoInst(false)
+  }
+
+  async function handleAdicionarInstancias() {
+    if (novasInstancias.length === 0) return
+    const totalAtual = instancias.length + novasInstancias.length
+    if (totalAtual > 5) { setErroInst('Máximo de 5 instâncias por cliente.'); return }
+    setAdicionandoInst(true); setErroInst(''); setSucessoInst('')
+    const res = await fetch('/api/admin/criar-instancia-evolution', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: tenant.id, instancias: novasInstancias }),
+    })
+    const data = await res.json()
+    setAdicionandoInst(false)
+    if (!res.ok || !data.success) {
+      setErroInst('Erro ao criar instância: ' + (data.error ?? 'desconhecido')); return
+    }
+    setSucessoInst(`${data.criadas.length} instância(s) criada(s) com sucesso!`)
+    setNovasInstancias([])
+    await carregarInstancias()
+    setTimeout(() => setSucessoInst(''), 3000)
+  }
 
   async function carregarExtrato() {
     setCarregandoExtrato(true)
     const supabase = createClient()
-
-    // Busca da tabela ai_usage (correta)
     const { data } = await supabase
       .from('ai_usage')
       .select('ciclo_mes, ciclo_ano, tokens_entrada, tokens_saida, custo_estimado_reais')
@@ -263,19 +364,13 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
         porMes[key].tokens += (row.tokens_entrada ?? 0) + (row.tokens_saida ?? 0)
         porMes[key].custo_brl += Number(row.custo_estimado_reais ?? 0)
       })
-
-      // Busca conversas por mês
       const { data: convData } = await supabase
-        .from('conversations')
-        .select('criado_em')
-        .eq('tenant_id', tenant.id)
-
+        .from('conversations').select('criado_em').eq('tenant_id', tenant.id)
       ;(convData ?? []).forEach((c: { criado_em: string }) => {
         const d = new Date(c.criado_em)
         const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
         if (porMes[key]) porMes[key].conversas += 1
       })
-
       setExtrato(Object.values(porMes).sort((a, b) => b.mes.localeCompare(a.mes)))
     }
     setCarregandoExtrato(false)
@@ -324,6 +419,10 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   const plano = planoConfig(tenant.plano)
   const inputStyle = { background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
 
+  const statusInstancia = (s: string) => s === 'open' || s === 'conectado'
+    ? { label: 'Conectado', cor: '#10B981' }
+    : { label: 'Desconectado', cor: '#EF4444' }
+
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
@@ -341,8 +440,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
               <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{tenant.nome}</p>
               <div className="flex items-center gap-2 mt-0.5">
                 <p className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{tenant.slug}</p>
-                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
-                  style={{ background: '#10B98118', color: '#10B981' }}>
+                <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#10B98118', color: '#10B981' }}>
                   {plano.label}
                 </span>
               </div>
@@ -352,15 +450,15 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
         </div>
 
         {/* Abas */}
-        <div className="flex" style={{ borderBottom: '1px solid var(--border)' }}>
-          {(['detalhes', 'editar', 'senha', 'extrato'] as const).map(a => (
+        <div className="flex overflow-x-auto" style={{ borderBottom: '1px solid var(--border)' }}>
+          {(['detalhes', 'instancias', 'editar', 'senha', 'extrato'] as const).map(a => (
             <button key={a} onClick={() => setAba(a)}
-              className="flex-1 py-3 text-xs font-semibold transition-colors"
+              className="flex-shrink-0 py-3 px-3 text-xs font-semibold transition-colors"
               style={{
                 color: aba === a ? '#10B981' : 'var(--text-muted)',
                 borderBottom: aba === a ? '2px solid #10B981' : '2px solid transparent',
               }}>
-              {a === 'detalhes' ? 'Detalhes' : a === 'editar' ? 'Editar' : a === 'senha' ? 'Senha' : 'Extrato'}
+              {a === 'detalhes' ? 'Detalhes' : a === 'instancias' ? 'WhatsApp' : a === 'editar' ? 'Editar' : a === 'senha' ? 'Senha' : 'Extrato'}
             </button>
           ))}
         </div>
@@ -377,26 +475,19 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                   ['Cadastrado em', new Date(tenant.criado_em).toLocaleDateString('pt-BR')],
                   ['Expira em', tenant.expira_em ? new Date(tenant.expira_em).toLocaleDateString('pt-BR') : '—'],
                 ] as [string, string][]).map(([label, value]) => (
-                  <div key={label} className="flex justify-between items-center py-2"
-                    style={{ borderBottom: '1px solid var(--border)' }}>
+                  <div key={label} className="flex justify-between items-center py-2" style={{ borderBottom: '1px solid var(--border)' }}>
                     <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</span>
                     <span className={`text-sm font-medium ${label === 'Slug' ? 'font-mono' : ''}`}
-                      style={{ color: label === 'Slug' ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
-                      {value}
-                    </span>
+                      style={{ color: label === 'Slug' ? 'var(--text-secondary)' : 'var(--text-primary)' }}>{value}</span>
                   </div>
                 ))}
-                {/* Plano */}
                 <div className="flex justify-between items-center py-2" style={{ borderBottom: '1px solid var(--border)' }}>
                   <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Plano</span>
                   <div className="text-right">
                     <span className="text-sm font-semibold" style={{ color: '#10B981' }}>{plano.label}</span>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      até {plano.limite} conv. · {fmtBRL(plano.valor)}/mês
-                    </p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>até {plano.limite} conv. · {fmtBRL(plano.valor)}/mês</p>
                   </div>
                 </div>
-                {/* Status */}
                 <div className="flex justify-between items-center py-2" style={{ borderBottom: '1px solid var(--border)' }}>
                   <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Status</span>
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border"
@@ -405,7 +496,6 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                   </span>
                 </div>
               </div>
-
               {(expirando || expirado) && (
                 <div className={`flex items-center gap-2 p-3 rounded-lg border ${expirado ? 'bg-red-500/10 border-red-500/30' : 'bg-[#F59E0B]/10 border-[#F59E0B]/30'}`}>
                   <AlertTriangle size={14} className={expirado ? 'text-red-400' : 'text-[#F59E0B]'} />
@@ -414,12 +504,86 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                   </p>
                 </div>
               )}
-
               <button onClick={handleToggleStatus} disabled={salvandoStatus}
                 className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold border transition-colors disabled:opacity-50 ${tenant.status === 'bloqueado' ? 'bg-[#10B981]/10 border-[#10B981]/30 text-[#10B981]' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
                 {salvandoStatus ? <RefreshCw size={14} className="animate-spin" /> : tenant.status === 'bloqueado' ? <Unlock size={14} /> : <Lock size={14} />}
                 {tenant.status === 'bloqueado' ? 'Desbloquear acesso' : 'Bloquear acesso'}
               </button>
+            </div>
+          )}
+
+          {/* Aba WhatsApp / Instâncias */}
+          {aba === 'instancias' && (
+            <div className="space-y-4">
+              {carregandoInst ? (
+                <div className="space-y-2">
+                  {[...Array(2)].map((_, i) => <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface-2)' }} />)}
+                </div>
+              ) : instancias.length === 0 ? (
+                <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>Nenhuma instância configurada.</p>
+              ) : (
+                <div className="space-y-2">
+                  {instancias.map(inst => {
+                    const sc = statusInstancia(inst.status)
+                    return (
+                      <div key={inst.id} className="flex items-center gap-3 rounded-xl p-3"
+                        style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                          style={{ background: 'rgba(16,185,129,0.1)' }}>
+                          <Smartphone size={16} color="#10B981" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{inst.apelido}</p>
+                          <p className="text-xs font-mono truncate" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</p>
+                        </div>
+                        <span className="text-xs font-medium flex-shrink-0" style={{ color: sc.cor }}>
+                          {sc.label}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Adicionar novas instâncias */}
+              {instancias.length < 5 && (
+                <div className="space-y-3 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+                  <div className="flex items-center justify-between pt-2">
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                      Adicionar instâncias ({instancias.length + novasInstancias.length}/5)
+                    </p>
+                    {novasInstancias.length < (5 - instancias.length) && (
+                      <button type="button"
+                        onClick={() => setNovasInstancias(prev => [...prev, { apelido: `Conexão ${instancias.length + prev.length + 1}` }])}
+                        className="flex items-center gap-1 text-xs font-medium text-[#10B981]">
+                        <Plus size={13} /> Adicionar
+                      </button>
+                    )}
+                  </div>
+                  {novasInstancias.map((inst, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input type="text" value={inst.apelido}
+                        onChange={(e) => setNovasInstancias(prev => prev.map((n, i) => i === idx ? { apelido: e.target.value } : n))}
+                        placeholder="Nome da conexão (ex: Vendas)"
+                        className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none" style={inputStyle} />
+                      <button type="button"
+                        onClick={() => setNovasInstancias(prev => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 rounded-lg hover:bg-red-500/10" style={{ color: 'var(--text-muted)' }}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  {novasInstancias.length > 0 && (
+                    <button onClick={handleAdicionarInstancias} disabled={adicionandoInst}
+                      className="w-full flex items-center justify-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+                      <Plus size={14} />{adicionandoInst ? 'Criando...' : 'Criar instâncias'}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {erroInst && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroInst}</p></div>}
+              {sucessoInst && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoInst}</p></div>}
             </div>
           )}
 
@@ -436,32 +600,21 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                 <input type="date" value={expiraEdit} onChange={(e) => setExpiraEdit(e.target.value)}
                   className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none [color-scheme:dark]" style={inputStyle} />
               </div>
-              {/* Plano */}
               <div>
                 <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Plano contratado</label>
                 <div className="grid grid-cols-2 gap-2">
                   {PLANOS.map(p => (
-                    <button key={p.value} type="button"
-                      onClick={() => setPlanoEdit(p.value)}
+                    <button key={p.value} type="button" onClick={() => setPlanoEdit(p.value)}
                       className="rounded-lg px-3 py-2.5 text-left transition-all"
-                      style={{
-                        background: planoEdit === p.value ? '#10B98118' : 'var(--bg-surface-2)',
-                        border: planoEdit === p.value ? '1px solid #10B98160' : '1px solid var(--border)',
-                      }}>
-                      <p className="text-sm font-semibold" style={{ color: planoEdit === p.value ? '#10B981' : 'var(--text-primary)' }}>
-                        {p.label}
-                      </p>
-                      <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        até {p.limite} conv. · {fmtBRL(p.valor)}/mês
-                      </p>
+                      style={{ background: planoEdit === p.value ? '#10B98118' : 'var(--bg-surface-2)', border: planoEdit === p.value ? '1px solid #10B98160' : '1px solid var(--border)' }}>
+                      <p className="text-sm font-semibold" style={{ color: planoEdit === p.value ? '#10B981' : 'var(--text-primary)' }}>{p.label}</p>
+                      <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>até {p.limite} conv. · {fmtBRL(p.valor)}/mês</p>
                     </button>
                   ))}
                 </div>
               </div>
-
               {erroEdit && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroEdit}</p></div>}
               {sucessoEdit && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoEdit}</p></div>}
-
               <button onClick={handleSalvarEdicao} disabled={salvandoEdit}
                 className="w-full flex items-center justify-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
                 <Save size={14} />{salvandoEdit ? 'Salvando...' : 'Salvar alterações'}
@@ -499,27 +652,18 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
           {/* Aba Extrato */}
           {aba === 'extrato' && (
             <div className="space-y-3">
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Consumo de tokens e custo estimado por mês. Baseado na tabela de uso de IA.
-              </p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Consumo de tokens e custo estimado por mês.</p>
               {carregandoExtrato ? (
-                <div className="space-y-2">
-                  {[...Array(3)].map((_, i) => (
-                    <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface-2)' }} />
-                  ))}
-                </div>
+                <div className="space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface-2)' }} />)}</div>
               ) : extrato.length === 0 ? (
-                <div className="p-8 text-center">
-                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhum registro de uso ainda.</p>
-                </div>
+                <div className="p-8 text-center"><p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhum registro de uso ainda.</p></div>
               ) : extrato.map(mes => {
                 const [ano, m] = mes.mes.split('-')
                 const nomeMes = new Date(+ano, +m - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
                 const valorPlano = planoConfig(tenant.plano).valor
                 const margem = valorPlano - mes.custo_brl
                 return (
-                  <div key={mes.mes} className="rounded-xl p-4 space-y-2"
-                    style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+                  <div key={mes.mes} className="rounded-xl p-4 space-y-2" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
                     <p className="text-sm font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>{nomeMes}</p>
                     <div className="grid grid-cols-2 gap-2">
                       {([
@@ -528,16 +672,10 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                         ['Custo API', fmtBRL(mes.custo_brl), false],
                         ['Margem estimada', fmtBRL(margem), true],
                       ] as [string, string, boolean][]).map(([label, value, destaque]) => (
-                        <div key={label}
-                          className={destaque ? 'col-span-2 rounded-lg p-2.5' : 'rounded-lg p-2.5'}
-                          style={destaque
-                            ? { background: margem >= 0 ? '#10B98110' : '#EF444410', border: `1px solid ${margem >= 0 ? '#10B98120' : '#EF444420'}` }
-                            : { background: 'var(--bg-surface)' }}>
+                        <div key={label} className={destaque ? 'col-span-2 rounded-lg p-2.5' : 'rounded-lg p-2.5'}
+                          style={destaque ? { background: margem >= 0 ? '#10B98110' : '#EF444410', border: `1px solid ${margem >= 0 ? '#10B98120' : '#EF444420'}` } : { background: 'var(--bg-surface)' }}>
                           <p className="text-[10px] mb-0.5" style={{ color: 'var(--text-muted)' }}>{label}</p>
-                          <p className="text-sm font-semibold"
-                            style={{ color: destaque ? (margem >= 0 ? '#10B981' : '#EF4444') : 'var(--text-primary)' }}>
-                            {value}
-                          </p>
+                          <p className="text-sm font-semibold" style={{ color: destaque ? (margem >= 0 ? '#10B981' : '#EF4444') : 'var(--text-primary)' }}>{value}</p>
                         </div>
                       ))}
                     </div>
@@ -585,7 +723,7 @@ export default function AdminClientesPage() {
   function handleSalvo(tenant: Tenant) {
     setTenants(prev => [tenant, ...prev])
     setModalAberto(false)
-    setSucesso(`Cliente cadastrado com sucesso!`)
+    setSucesso('Cliente cadastrado com sucesso!')
     setTimeout(() => setSucesso(''), 4000)
   }
 
@@ -630,22 +768,15 @@ export default function AdminClientesPage() {
 
       <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
         {carregando ? (
-          <div className="p-6 space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-12 rounded-lg animate-pulse" style={{ background: 'var(--bg-surface-2)' }} />
-            ))}
-          </div>
+          <div className="p-6 space-y-3">{[...Array(5)].map((_, i) => <div key={i} className="h-12 rounded-lg animate-pulse" style={{ background: 'var(--bg-surface-2)' }} />)}</div>
         ) : tenantsFiltrados.length === 0 ? (
-          <div className="p-12 text-center">
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhum cliente encontrado.</p>
-          </div>
+          <div className="p-12 text-center"><p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhum cliente encontrado.</p></div>
         ) : (
           <table className="w-full">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 {['Cliente', 'Plano', 'Status', 'Expiração', 'Cadastro', ''].map(h => (
-                  <th key={h} className="text-left text-xs font-medium px-5 py-3 uppercase tracking-wider"
-                    style={{ color: 'var(--text-muted)' }}>{h}</th>
+                  <th key={h} className="text-left text-xs font-medium px-5 py-3 uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -660,10 +791,7 @@ export default function AdminClientesPage() {
                 return (
                   <tr key={t.id} onClick={() => setClienteSelecionado(t)}
                     className="last:border-0 cursor-pointer transition-colors"
-                    style={{
-                      borderBottom: '1px solid var(--border)',
-                      background: selecionado ? 'rgba(16,185,129,0.05)' : 'transparent',
-                    }}
+                    style={{ borderBottom: '1px solid var(--border)', background: selecionado ? 'rgba(16,185,129,0.05)' : 'transparent' }}
                     onMouseEnter={e => { if (!selecionado) (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
                     onMouseLeave={e => { if (!selecionado) (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
                     <td className="px-5 py-4">
@@ -679,10 +807,7 @@ export default function AdminClientesPage() {
                       </div>
                     </td>
                     <td className="px-5 py-4">
-                      <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                        style={{ background: '#10B98118', color: '#10B981' }}>
-                        {plano.label}
-                      </span>
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: '#10B98118', color: '#10B981' }}>{plano.label}</span>
                     </td>
                     <td className="px-5 py-4">
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border"
@@ -693,18 +818,14 @@ export default function AdminClientesPage() {
                     <td className="px-5 py-4">
                       {t.expira_em ? (
                         <div className="flex items-center gap-2">
-                          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                            {new Date(t.expira_em).toLocaleDateString('pt-BR')}
-                          </span>
+                          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{new Date(t.expira_em).toLocaleDateString('pt-BR')}</span>
                           {expirado && <span className="flex items-center gap-1 text-red-400 text-xs"><AlertTriangle size={11} /> Expirado</span>}
                           {expirando && <span className="flex items-center gap-1 text-[#F59E0B] text-xs"><AlertTriangle size={11} /> {dias}d</span>}
                         </div>
                       ) : <span className="text-sm" style={{ color: 'var(--text-muted)' }}>—</span>}
                     </td>
                     <td className="px-5 py-4">
-                      <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                        {new Date(t.criado_em).toLocaleDateString('pt-BR')}
-                      </span>
+                      <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(t.criado_em).toLocaleDateString('pt-BR')}</span>
                     </td>
                     <td className="px-5 py-4">
                       <ChevronRight size={15} style={{ color: selecionado ? '#10B981' : 'var(--text-muted)' }} />
