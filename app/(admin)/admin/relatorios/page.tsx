@@ -489,7 +489,7 @@ export default function RelatoriosPage() {
               <p>O email incluirá:</p>
               <p>· KPIs do mês (conversas, tokens, custo API, valor do plano)</p>
               {emailModal.tipo === 'consolidado' && <p>· Tabela com todos os clientes</p>}
-              <p>· Enviado de <span style={{ color: 'var(--text-primary)' }}>noreply@hubteksolutions.tech</span></p>
+              <p>· Enviado de: noreply@hubteksolutions.tech</p>
             </div>
 
             <div className="flex gap-3">
