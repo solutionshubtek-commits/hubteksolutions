@@ -17,18 +17,10 @@ import { sendTextMessage, downloadMediaAsBase64 } from '@/lib/evolution/client'
 import type { EvolutionMessageKey, WhatsAppMessageType } from '@/lib/evolution/webhook'
 import type { ChatMessage } from './openai'
 
-// Dia da semana em pt-BR para comparar com dias_funcionamento
 const DIAS_PT: Record<number, string> = {
-  0: 'dom',
-  1: 'seg',
-  2: 'ter',
-  3: 'qua',
-  4: 'qui',
-  5: 'sex',
-  6: 'sab',
+  0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab',
 }
 
-// Custo aproximado em BRL por 1k tokens (referência mai/2025)
 const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
   openai: { entrada: 0.025, saida: 0.1 },
   anthropic: { entrada: 0.015, saida: 0.075 },
@@ -47,11 +39,9 @@ function isWithinOperatingHours(
   const agora = new Date()
   const diaSemana = DIAS_PT[agora.getDay()]
   if (!diasFuncionamento.includes(diaSemana)) return false
-
   const [hI, mI] = horarioInicio.split(':').map(Number)
   const [hF, mF] = horarioFim.split(':').map(Number)
   const minutoAtual = agora.getHours() * 60 + agora.getMinutes()
-
   return minutoAtual >= hI * 60 + mI && minutoAtual <= hF * 60 + mF
 }
 
@@ -59,18 +49,12 @@ function buildSystemPrompt(
   promptPrincipal: string,
   knowledgeDocs: Array<{ conteudo_texto: string }>
 ): string {
-  let prompt =
-    promptPrincipal ||
-    'Você é um assistente de atendimento ao cliente prestativo e cordial.'
-
+  let prompt = promptPrincipal || 'Você é um assistente de atendimento ao cliente prestativo e cordial.'
   if (knowledgeDocs.length > 0) {
     prompt += '\n\nBase de conhecimento relevante:\n'
     prompt += knowledgeDocs.map(d => d.conteudo_texto).join('\n---\n')
   }
-
-  prompt +=
-    '\n\nResponda sempre em português brasileiro. Seja direto e objetivo. Se não souber a resposta, informe que vai verificar.'
-
+  prompt += '\n\nResponda sempre em português brasileiro. Seja direto e objetivo. Se não souber a resposta, informe que vai verificar.'
   return prompt
 }
 
@@ -86,28 +70,27 @@ export interface ProcessMessagePayload {
   caption?: string
 }
 
-export async function processIncomingMessage(
-  payload: ProcessMessagePayload
-): Promise<void> {
+export async function processIncomingMessage(payload: ProcessMessagePayload): Promise<void> {
   const supabase = createServiceClient()
 
-  // 1. Encontra ou cria conversa ativa para este contato
+  // 1. Encontra ou cria conversa — agora salva instanceName para identificar o número
   const conversa = await findOrCreateConversation(
     supabase,
     payload.tenantId,
     payload.phone,
-    payload.pushName
+    payload.pushName,
+    payload.instanceName
   )
 
-  // 2. Agente pausado → silêncio total, operador humano assumiu
+  // 2. Agente pausado
   const pausado = await isAgentPaused(supabase, conversa.id)
   if (pausado) return
 
-  // 3. Configuração do agente para este tenant
+  // 3. Config do agente
   const config = await getAgentConfig(supabase, payload.tenantId)
   if (!config || !config.ativo) return
 
-  // 4. Fora do horário → envia mensagem de ausência e encerra
+  // 4. Fora do horário
   const dentroDoHorario = isWithinOperatingHours(
     config.horario_inicio,
     config.horario_fim,
@@ -118,7 +101,7 @@ export async function processIncomingMessage(
     return
   }
 
-  // 5. Persiste a mensagem do cliente no banco
+  // 5. Persiste mensagem do cliente
   let tipoDb = 'texto'
   if (payload.messageType === 'audioMessage') tipoDb = 'audio'
   else if (payload.messageType === 'imageMessage') tipoDb = 'imagem'
@@ -134,15 +117,12 @@ export async function processIncomingMessage(
     metadata: { messageId: payload.messageId, pushName: payload.pushName },
   })
 
-  // 6. Processa mídia e extrai conteúdo textual para o agente
+  // 6. Processa mídia
   let conteudoProcessado = payload.conteudo ?? ''
 
   if (payload.messageType === 'audioMessage') {
     try {
-      const { base64, mimetype } = await downloadMediaAsBase64(
-        payload.instanceName,
-        payload.messageKey
-      )
+      const { base64, mimetype } = await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
       const transcricao = await transcribeAudio(base64, mimetype)
       await updateMessageTranscription(supabase, mensagemSalva.id, transcricao)
       conteudoProcessado = transcricao
@@ -154,14 +134,9 @@ export async function processIncomingMessage(
 
   if (payload.messageType === 'imageMessage') {
     try {
-      const { base64, mimetype } = await downloadMediaAsBase64(
-        payload.instanceName,
-        payload.messageKey
-      )
+      const { base64, mimetype } = await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
       const descricao = await interpretImage(base64, mimetype, payload.caption)
-      conteudoProcessado = payload.caption
-        ? `${payload.caption}\n[Imagem: ${descricao}]`
-        : `[Imagem: ${descricao}]`
+      conteudoProcessado = payload.caption ? `${payload.caption}\n[Imagem: ${descricao}]` : `[Imagem: ${descricao}]`
     } catch (err) {
       console.error('[process-message] Falha ao interpretar imagem:', err)
       conteudoProcessado = payload.caption || '[Imagem recebida]'
@@ -170,7 +145,7 @@ export async function processIncomingMessage(
 
   if (!conteudoProcessado.trim()) return
 
-  // 7. Busca semântica na base de conhecimento do tenant
+  // 7. Busca semântica
   let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number }> = []
   try {
     const embedding = await generateEmbedding(conteudoProcessado)
@@ -185,14 +160,10 @@ export async function processIncomingMessage(
     console.error('[process-message] Falha na busca semântica:', err)
   }
 
-  // 8. Monta histórico de mensagens como contexto para a IA
+  // 8. Histórico
   const historico = await getRecentMessages(supabase, conversa.id, 10)
   const chatMessages: ChatMessage[] = [
-    {
-      role: 'system',
-      content: buildSystemPrompt(config.prompt_principal ?? '', knowledgeDocs),
-    },
-    // Exclui a última mensagem do histórico (é a que acabamos de salvar)
+    { role: 'system', content: buildSystemPrompt(config.prompt_principal ?? '', knowledgeDocs) },
     ...historico.slice(0, -1).map(m => ({
       role: (m.origem === 'agente' ? 'assistant' : 'user') as 'assistant' | 'user',
       content: m.transcricao || m.conteudo || '',
@@ -200,43 +171,31 @@ export async function processIncomingMessage(
     { role: 'user', content: conteudoProcessado },
   ]
 
-  // 9. Geração de resposta com failover automático entre motores de IA
+  // 9. Geração de resposta com failover
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
   let motorUsado = config.motor_ia_principal
-
-  const chatConfig = {
-    temperature: Number(config.temperatura),
-    maxTokens: config.max_tokens,
-  }
+  const chatConfig = { temperature: Number(config.temperatura), maxTokens: config.max_tokens }
 
   try {
-    resultado =
-      config.motor_ia_principal === 'openai'
-        ? await openAIChatCompletion(chatMessages, chatConfig)
-        : await anthropicChatCompletion(chatMessages, chatConfig)
+    resultado = config.motor_ia_principal === 'openai'
+      ? await openAIChatCompletion(chatMessages, chatConfig)
+      : await anthropicChatCompletion(chatMessages, chatConfig)
   } catch (errPrimario) {
-    console.error(
-      `[process-message] Motor primário (${config.motor_ia_principal}) falhou:`,
-      errPrimario
-    )
+    console.error(`[process-message] Motor primário (${config.motor_ia_principal}) falhou:`, errPrimario)
     try {
       motorUsado = config.motor_ia_backup
-      resultado =
-        config.motor_ia_backup === 'anthropic'
-          ? await anthropicChatCompletion(chatMessages, chatConfig)
-          : await openAIChatCompletion(chatMessages, chatConfig)
+      resultado = config.motor_ia_backup === 'anthropic'
+        ? await anthropicChatCompletion(chatMessages, chatConfig)
+        : await openAIChatCompletion(chatMessages, chatConfig)
     } catch (errBackup) {
-      console.error(
-        `[process-message] Motor backup (${config.motor_ia_backup}) também falhou:`,
-        errBackup
-      )
+      console.error(`[process-message] Motor backup (${config.motor_ia_backup}) também falhou:`, errBackup)
       return
     }
   }
 
   if (!resultado?.content) return
 
-  // 10. Persiste resposta do agente e envia pelo WhatsApp
+  // 10. Salva resposta e envia
   await saveMessage(supabase, {
     conversationId: conversa.id,
     tenantId: payload.tenantId,
@@ -249,7 +208,7 @@ export async function processIncomingMessage(
   await sendTextMessage(payload.instanceName, payload.phone, resultado.content)
   await updateConversationTimestamp(supabase, conversa.id)
 
-  // 11. Registra uso de IA para controle de custos por ciclo
+  // 11. Registra uso de IA
   await logAiUsage(supabase, {
     tenantId: payload.tenantId,
     conversationId: conversa.id,
