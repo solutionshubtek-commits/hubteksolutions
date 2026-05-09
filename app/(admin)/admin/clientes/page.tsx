@@ -95,9 +95,10 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
     const res = await fetch('/api/admin/criar-usuario', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: form.email_admin, senha: form.senha_admin, tenant_id: tenant.id,
-        role: form.self_managed ? 'self_managed' : 'admin_tenant', nome: form.nome,
-      }),
+  email: form.email_admin, senha: form.senha_admin, tenant_id: tenant.id,
+  role: form.self_managed ? 'self_managed' : 'admin_tenant', nome: form.nome,
+  slug: form.slug,
+}),
     })
     const resData = await res.json()
     if (!res.ok) {
