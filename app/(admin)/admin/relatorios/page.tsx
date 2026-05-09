@@ -293,7 +293,7 @@ export default function RelatoriosPage() {
           </button>
 
           <button
-            onClick={() => { setEmailModal({ tipo: 'consolidado' }); setEmailDestino('') }}
+            onClick={() => { setEmailModal({ tipo: selectedTenant !== 'todos' ? 'individual' : 'consolidado' }); setEmailDestino('') }}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold"
             style={{ background: '#10B981', color: '#fff' }}>
             <Mail size={14} /> Enviar por email
