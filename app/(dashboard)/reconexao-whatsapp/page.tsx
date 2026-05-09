@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Smartphone, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
 import Image from 'next/image'
+import { createClient } from '@/lib/supabase/client'
 
 interface StatusWA {
   status: string
@@ -14,10 +15,43 @@ export default function ReconexaoWhatsAppPage() {
   const [carregando, setCarregando] = useState(true)
   const [gerandoQR, setGerandoQR] = useState(false)
   const [qrCode, setQrCode] = useState<string | null>(null)
+  const [instanceName, setInstanceName] = useState<string>('hubtek')
+  const [nomeInstancia, setNomeInstancia] = useState<string>('hubtek')
+
+  useEffect(() => {
+    async function carregarInstancia() {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: userData } = await supabase
+        .from('users')
+        .select('tenant_id')
+        .eq('id', user.id)
+        .single()
+
+      if (!userData?.tenant_id) return
+
+      const { data: tenant } = await supabase
+        .from('tenants')
+        .select('instance_name, nome')
+        .eq('id', userData.tenant_id)
+        .single()
+
+      if (tenant?.instance_name) {
+        setInstanceName(tenant.instance_name)
+        setNomeInstancia(tenant.instance_name)
+      } else if (tenant?.nome) {
+        setNomeInstancia(tenant.nome)
+      }
+    }
+
+    carregarInstancia()
+  }, [])
 
   async function fetchStatus() {
     try {
-      const res = await fetch('/api/whatsapp/status')
+      const res = await fetch(`/api/whatsapp/status?instance=${instanceName}`)
       const data = await res.json()
       setStatusWA(data)
     } catch {
@@ -31,7 +65,7 @@ export default function ReconexaoWhatsAppPage() {
     setGerandoQR(true)
     setQrCode(null)
     try {
-      const res = await fetch('/api/whatsapp/qrcode')
+      const res = await fetch(`/api/whatsapp/qrcode?instance=${instanceName}`)
       const data = await res.json()
       if (data.qrcode) setQrCode(data.qrcode)
     } finally {
@@ -39,7 +73,10 @@ export default function ReconexaoWhatsAppPage() {
     }
   }
 
-  useEffect(() => { fetchStatus() }, [])
+  useEffect(() => {
+    if (instanceName) fetchStatus()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instanceName])
 
   const conectado = statusWA?.status === 'open'
 
@@ -54,7 +91,7 @@ export default function ReconexaoWhatsAppPage() {
             <Smartphone size={24} color="#10B981" />
           </div>
           <div>
-            <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>Instância hubtek</p>
+            <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>Instância {nomeInstancia}</p>
             {carregando ? (
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Verificando status...</p>
             ) : conectado ? (
