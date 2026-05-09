@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient } from '@supabase/supabase-js'
 
 export async function POST(request: NextRequest) {
   try {
-    const { tenant_id, slug, nome } = await request.json()
+    const { tenant_id, instancias } = await request.json()
+    // instancias: Array<{ apelido: string }>
 
-    if (!tenant_id || !slug || !nome) {
-      return NextResponse.json({ error: 'tenant_id, slug e nome são obrigatórios' }, { status: 400 })
+    if (!tenant_id || !Array.isArray(instancias) || instancias.length === 0) {
+      return NextResponse.json({ error: 'tenant_id e instancias são obrigatórios' }, { status: 400 })
+    }
+
+    if (instancias.length > 5) {
+      return NextResponse.json({ error: 'Máximo de 5 instâncias por cliente' }, { status: 400 })
     }
 
     const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL
@@ -17,86 +22,90 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Variáveis de ambiente da Evolution API não configuradas' }, { status: 500 })
     }
 
-    // Nome da instância baseado no slug + conexao1
-    const instance_name = `${slug}_conexao1`
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    )
 
-    // 1. Criar instância na Evolution API
-    const createResponse = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': EVOLUTION_API_KEY,
-      },
-      body: JSON.stringify({
-        instanceName: instance_name,
-        qrcode: true,
-        integration: 'WHATSAPP-BAILEYS',
-      }),
-    })
-
-    if (!createResponse.ok) {
-      const errorData = await createResponse.json().catch(() => ({}))
-      console.error('Erro ao criar instância Evolution:', errorData)
-      return NextResponse.json(
-        { error: 'Falha ao criar instância na Evolution API', details: errorData },
-        { status: 502 }
-      )
-    }
-
-    const instanceData = await createResponse.json()
-    const instance_token = instanceData?.hash?.apikey || instanceData?.instance?.token || null
-
-    // 2. Configurar webhook na instância criada
-    const webhookResponse = await fetch(`${EVOLUTION_API_URL}/webhook/set/${instance_name}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': EVOLUTION_API_KEY,
-      },
-      body: JSON.stringify({
-        webhook: {
-          enabled: true,
-          url: `${APP_URL}/api/webhook/evolution`,
-          webhookByEvents: false,
-          webhookBase64: false,
-          events: [
-            'MESSAGES_UPSERT',
-            'MESSAGES_UPDATE',
-            'CONNECTION_UPDATE',
-            'QRCODE_UPDATED',
-          ],
-        },
-      }),
-    })
-
-    if (!webhookResponse.ok) {
-      console.warn('Instância criada mas webhook falhou — será necessário configurar manualmente')
-    }
-
-    // 3. Salvar instance_name e instance_token no Supabase
-    const supabase = createClient()
-    const { error: updateError } = await supabase
+    // Busca slug do tenant
+    const { data: tenant } = await supabase
       .from('tenants')
-      .update({
-        instance_name,
-        instance_token,
-      })
+      .select('slug')
       .eq('id', tenant_id)
+      .single()
 
-    if (updateError) {
-      console.error('Erro ao salvar instância no Supabase:', updateError)
-      return NextResponse.json(
-        { error: 'Instância criada na Evolution mas falhou ao salvar no banco', details: updateError },
-        { status: 500 }
-      )
+    if (!tenant?.slug) {
+      return NextResponse.json({ error: 'Tenant não encontrado' }, { status: 404 })
     }
 
-    return NextResponse.json({
-      success: true,
-      instance_name,
-      instance_token,
-      message: 'Instância criada e configurada com sucesso',
-    })
+    // Busca quantas instâncias já existem para numerar corretamente
+    const { data: existentes } = await supabase
+      .from('tenant_instances')
+      .select('id')
+      .eq('tenant_id', tenant_id)
+
+    const offsetNumero = existentes?.length ?? 0
+    const resultados: { instance_name: string; apelido: string }[] = []
+    const erros: { instance_name: string; erro: unknown }[] = []
+
+    for (let i = 0; i < instancias.length; i++) {
+      const numero = offsetNumero + i + 1
+      const instance_name = `${tenant.slug}_conexao${numero}`
+      const apelido = instancias[i].apelido || `Conexão ${numero}`
+
+      try {
+        // 1. Criar instância na Evolution API
+        const createResponse = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_API_KEY },
+          body: JSON.stringify({
+            instanceName: instance_name,
+            qrcode: true,
+            integration: 'WHATSAPP-BAILEYS',
+          }),
+        })
+
+        if (!createResponse.ok) {
+          const err = await createResponse.json().catch(() => ({}))
+          erros.push({ instance_name, erro: err })
+          continue
+        }
+
+        const instanceData = await createResponse.json()
+        const instance_token = instanceData?.hash?.apikey || instanceData?.instance?.token || null
+
+        // 2. Configurar webhook
+        await fetch(`${EVOLUTION_API_URL}/webhook/set/${instance_name}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_API_KEY },
+          body: JSON.stringify({
+            webhook: {
+              enabled: true,
+              url: `${APP_URL}/api/webhook/evolution`,
+              webhookByEvents: false,
+              webhookBase64: false,
+              events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+            },
+          }),
+        }).catch(() => console.warn(`Webhook falhou para ${instance_name}`))
+
+        // 3. Salvar em tenant_instances
+        const { error: insertError } = await supabase
+          .from('tenant_instances')
+          .insert({ tenant_id, instance_name, instance_token, apelido })
+
+        if (insertError) {
+          erros.push({ instance_name, erro: insertError.message })
+        } else {
+          resultados.push({ instance_name, apelido })
+        }
+      } catch (err) {
+        erros.push({ instance_name, erro: String(err) })
+      }
+    }
+
+    return NextResponse.json({ success: resultados.length > 0, criadas: resultados, erros })
   } catch (error) {
     console.error('Erro no onboarding Evolution:', error)
     return NextResponse.json({ error: 'Erro interno no servidor' }, { status: 500 })
