@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
   try {
-    const { email, senha, tenant_id, role, nome } = await request.json()
+    const { email, senha, tenant_id, role, nome, slug } = await request.json()
 
     if (!email || !senha || !tenant_id || !role) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes.' }, { status: 400 })
@@ -40,6 +40,27 @@ export async function POST(request: Request) {
       // Rollback auth user
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
       return NextResponse.json({ error: userErr.message }, { status: 400 })
+    }
+
+    // 3. Onboarding Evolution API — criar instância automaticamente
+    if (slug) {
+      try {
+        const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.hubteksolutions.tech'
+        const onboardingRes = await fetch(`${APP_URL}/api/admin/criar-instancia-evolution`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenant_id, slug, nome: nome ?? email }),
+        })
+
+        if (!onboardingRes.ok) {
+          // Não bloqueia o cadastro — apenas loga o erro
+          const err = await onboardingRes.json().catch(() => ({}))
+          console.error('Onboarding Evolution falhou (usuário criado com sucesso):', err)
+        }
+      } catch (onboardingErr) {
+        // Não bloqueia o cadastro
+        console.error('Erro ao chamar onboarding Evolution:', onboardingErr)
+      }
     }
 
     return NextResponse.json({ success: true, user_id: authData.user.id })
