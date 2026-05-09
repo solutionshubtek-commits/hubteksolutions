@@ -9,7 +9,6 @@ const supabase = createClient(
 
 const resend = new Resend(process.env.RESEND_API_KEY!)
 
-const ADMIN_EMAIL = 'robsonoliveira.tra@gmail.com'
 const ADMIN_USER_ID = process.env.ADMIN_HUBTEK_USER_ID!
 
 export async function GET(request: Request) {
