@@ -315,16 +315,12 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   }, [aba])
 
   async function carregarInstancias() {
-    setCarregandoInst(true)
-    const supabase = createClient()
-    const { data } = await supabase
-      .from('tenant_instances')
-      .select('id, instance_name, apelido, status')
-      .eq('tenant_id', tenant.id)
-      .order('criado_em', { ascending: true })
-    setInstancias((data ?? []) as TenantInstance[])
-    setCarregandoInst(false)
-  }
+  setCarregandoInst(true)
+  const res = await fetch(`/api/whatsapp/status?tenant_id=${tenant.id}`)
+  const data = await res.json()
+  setInstancias((data.instancias ?? []) as TenantInstance[])
+  setCarregandoInst(false)
+}
 
   async function handleAdicionarInstancias() {
     if (novasInstancias.length === 0) return
