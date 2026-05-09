@@ -146,6 +146,7 @@ export function Header({ nomeUsuario }: HeaderProps) {
             : `Seu acesso expira em ${bannerExpiracao.dias} dias. Renove para não perder o serviço.`
           }
           <a href="https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+renovar+meu+acesso+HubTek"
+  target="_blank" rel="noopener noreferrer"
             className="underline font-semibold ml-1">
             Falar com suporte
           </a>
