@@ -1,7 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url)
+    const instanceName = searchParams.get('instance') || 'hubtek'
+
     const res = await fetch(
       `${process.env.EVOLUTION_API_URL}/instance/fetchInstances`,
       {
@@ -10,7 +13,10 @@ export async function GET() {
       }
     )
     const data = await res.json()
-    const instancia = Array.isArray(data) ? data.find((i: { name: string }) => i.name === 'hubtek') : null
+    const instancia = Array.isArray(data)
+      ? data.find((i: { name: string }) => i.name === instanceName)
+      : null
+
     return NextResponse.json({
       status: instancia?.connectionStatus || 'desconectado',
       numero: instancia?.ownerJid?.replace('@s.whatsapp.net', '') || '',
