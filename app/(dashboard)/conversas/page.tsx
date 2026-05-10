@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { MessageCircle, Search } from 'lucide-react'
+import { MessageCircle, Search, Smartphone } from 'lucide-react'
 
 interface Conversa {
   id: string
@@ -9,12 +9,19 @@ interface Conversa {
   contato_telefone: string
   status: string
   ultima_mensagem_em: string
+  instance_name: string | null
+}
+
+interface Instancia {
+  instance_name: string
+  apelido: string
 }
 
 export default function ConversasPage() {
-  const [conversas, setConversas] = useState<Conversa[]>([])
-  const [carregando, setCarregando] = useState(true)
-  const [busca, setBusca] = useState('')
+  const [conversas, setConversas]       = useState<Conversa[]>([])
+  const [instancias, setInstancias]     = useState<Record<string, string>>({})
+  const [carregando, setCarregando]     = useState(true)
+  const [busca, setBusca]               = useState('')
   const [filtroStatus, setFiltroStatus] = useState('todos')
 
   useEffect(() => {
@@ -24,10 +31,24 @@ export default function ConversasPage() {
       if (!user) return
       const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
       if (!userData?.tenant_id) return
+
+      // Busca instâncias do tenant para montar mapa instance_name → apelido
+      const { data: instData } = await supabase
+        .from('tenant_instances')
+        .select('instance_name, apelido')
+        .eq('tenant_id', userData.tenant_id)
+
+      if (instData) {
+        const mapa: Record<string, string> = {}
+        instData.forEach((i: Instancia) => { mapa[i.instance_name] = i.apelido })
+        setInstancias(mapa)
+      }
+
       const { data } = await supabase.from('conversations')
-        .select('id, contato_nome, contato_telefone, status, ultima_mensagem_em')
+        .select('id, contato_nome, contato_telefone, status, ultima_mensagem_em, instance_name')
         .eq('tenant_id', userData.tenant_id)
         .order('ultima_mensagem_em', { ascending: false })
+
       setConversas(data || [])
       setCarregando(false)
     }
@@ -42,9 +63,9 @@ export default function ConversasPage() {
 
   function statusBadge(status: string) {
     const map: Record<string, { label: string; color: string }> = {
-      ativa:      { label: 'Ativa',      color: '#10B981' },
-      pausada:    { label: 'Pausada',    color: '#F59E0B' },
-      encerrada:  { label: 'Encerrada', color: '#71717A' },
+      ativa:     { label: 'Ativa',      color: '#10B981' },
+      pausada:   { label: 'Pausada',    color: '#F59E0B' },
+      encerrada: { label: 'Encerrada', color: '#71717A' },
     }
     const s = map[status] || { label: status, color: '#71717A' }
     return (
@@ -78,22 +99,14 @@ export default function ConversasPage() {
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             className="w-full rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none"
-            style={{
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border)',
-              color: 'var(--text-primary)',
-            }}
+            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
           />
         </div>
         <select
           value={filtroStatus}
           onChange={(e) => setFiltroStatus(e.target.value)}
           className="rounded-lg px-3 py-2.5 text-sm focus:outline-none"
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border)',
-            color: 'var(--text-primary)',
-          }}
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
         >
           <option value="todos">Todos</option>
           <option value="ativa">Ativas</option>
@@ -118,34 +131,48 @@ export default function ConversasPage() {
           <table className="w-full">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Contato', 'Telefone', 'Status', 'Última Mensagem'].map(h => (
+                {['Contato', 'Número / Instância', 'Telefone', 'Status', 'Última Mensagem'].map(h => (
                   <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
                     style={{ color: 'var(--text-muted)' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {conversasFiltradas.map((c, i) => (
-                <tr key={c.id}
-                  className="transition-colors"
-                  style={{ borderBottom: i === conversasFiltradas.length - 1 ? 'none' : '1px solid var(--border)' }}
-                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
-                >
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold"
-                        style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981' }}>
-                        {iniciais(c.contato_nome)}
+              {conversasFiltradas.map((c, i) => {
+                const apelido = c.instance_name ? instancias[c.instance_name] : null
+                return (
+                  <tr key={c.id}
+                    className="transition-colors"
+                    style={{ borderBottom: i === conversasFiltradas.length - 1 ? 'none' : '1px solid var(--border)' }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                  >
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold"
+                          style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981' }}>
+                          {iniciais(c.contato_nome)}
+                        </div>
+                        <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{c.contato_nome || 'Sem nome'}</span>
                       </div>
-                      <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{c.contato_nome || 'Sem nome'}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{c.contato_telefone}</td>
-                  <td className="px-6 py-4">{statusBadge(c.status)}</td>
-                  <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{formatarData(c.ultima_mensagem_em)}</td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-6 py-4">
+                      {apelido ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+                          style={{ background: 'rgba(99,102,241,0.1)', color: '#818CF8', border: '1px solid rgba(99,102,241,0.3)' }}>
+                          <Smartphone size={10} />
+                          {apelido}
+                        </span>
+                      ) : (
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{c.contato_telefone}</td>
+                    <td className="px-6 py-4">{statusBadge(c.status)}</td>
+                    <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{formatarData(c.ultima_mensagem_em)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
