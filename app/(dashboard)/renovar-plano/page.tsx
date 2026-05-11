@@ -190,7 +190,7 @@ export default function RenovarPlanoPage() {
               ['Período', periodoEscolhido.label],
               ['Duração', `${periodoEscolhido.meses} meses`],
               periodoEscolhido.desconto > 0 ? ['Desconto', `-${Math.round(periodoEscolhido.desconto * 100)}%`] : null,
-            ] as ([string, string] | null)[]).filter(Boolean).map(([label, value]) => (
+            ] as ([string, string] | null)[]).filter((x): x is [string, string] => x !== null).map(([label, value]) => (
               <div key={label} className="flex justify-between items-center">
                 <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</span>
                 <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{value}</span>
