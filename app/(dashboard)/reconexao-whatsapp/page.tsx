@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Smartphone, CheckCircle, XCircle, RefreshCw, Wifi, LogOut } from 'lucide-react'
+import { Smartphone, CheckCircle, XCircle, RefreshCw, Wifi, LogOut, ShieldAlert, MessageCircle } from 'lucide-react'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
@@ -76,7 +76,6 @@ export default function ReconexaoWhatsAppPage() {
         body: JSON.stringify({ instance_name: instanceName }),
       })
       if (res.ok && tenantId) {
-        // Limpa QR anterior e recarrega status
         setQrCodes(prev => ({ ...prev, [instanceName]: null }))
         await fetchInstancias(tenantId)
       }
@@ -116,6 +115,7 @@ export default function ReconexaoWhatsAppPage() {
         <div className="space-y-4 max-w-lg">
           {instancias.map(inst => {
             const conectado = inst.status === 'open' || inst.status === 'conectado'
+            const banido = inst.status === 'banido'
             const qr = qrCodes[inst.instance_name]
             const gerando = gerandoQR[inst.instance_name] ?? false
             const estaDesconectando = desconectando[inst.instance_name] ?? false
@@ -123,13 +123,19 @@ export default function ReconexaoWhatsAppPage() {
 
             return (
               <div key={inst.id} className="rounded-xl p-6"
-                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                style={{
+                  background: banido ? '#EF444408' : 'var(--bg-surface)',
+                  border: banido ? '1px solid #EF444430' : '1px solid var(--border)',
+                }}>
 
                 {/* Header da instância */}
                 <div className="flex items-center gap-4 mb-4">
                   <div className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
-                    style={{ background: 'rgba(16,185,129,0.1)' }}>
-                    <Smartphone size={24} color="#10B981" />
+                    style={{ background: banido ? '#EF444415' : 'rgba(16,185,129,0.1)' }}>
+                    {banido
+                      ? <ShieldAlert size={24} color="#EF4444" />
+                      : <Smartphone size={24} color="#10B981" />
+                    }
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{inst.apelido}</p>
@@ -145,6 +151,10 @@ export default function ReconexaoWhatsAppPage() {
                       <div className="flex items-center gap-1.5 text-[#10B981] text-sm">
                         <CheckCircle size={16} /> Conectado
                       </div>
+                    ) : banido ? (
+                      <div className="flex items-center gap-1.5 text-red-400 text-sm font-semibold">
+                        <ShieldAlert size={16} /> Banido
+                      </div>
                     ) : (
                       <div className="flex items-center gap-1.5 text-red-400 text-sm">
                         <XCircle size={16} /> Desconectado
@@ -153,48 +163,86 @@ export default function ReconexaoWhatsAppPage() {
                   </div>
                 </div>
 
-                {/* Instância conectada: botão desconectar */}
-                {conectado && (
-                  <div className="space-y-2">
-                    {!pedindoConfirm ? (
-                      <button
-                        onClick={() => setConfirmDesconectar(inst.instance_name)}
-                        className="w-full flex items-center justify-center gap-2 text-sm font-medium py-2.5 rounded-lg transition-colors"
-                        style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                      >
-                        <LogOut size={14} /> Desconectar número
-                      </button>
-                    ) : (
-                      <div className="rounded-lg p-4 space-y-3"
-                        style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
-                        <p className="text-sm font-medium text-red-400">Tem certeza que deseja desconectar?</p>
-                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          O número será desvinculado e o agente ficará inativo até uma nova conexão.
+                {/* Banner de banimento */}
+                {banido && (
+                  <div className="rounded-lg p-4 mb-3 space-y-3"
+                    style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                    <div className="flex items-start gap-2">
+                      <ShieldAlert size={15} className="text-red-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-red-400">Número banido pelo WhatsApp</p>
+                        <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                          Este número foi bloqueado pelo WhatsApp e não pode mais enviar ou receber mensagens.
+                          Desconecte e conecte um novo número para retomar o atendimento.
                         </p>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setConfirmDesconectar(null)}
-                            className="flex-1 text-sm font-medium py-2 rounded-lg transition-colors"
-                            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            onClick={() => desconectar(inst.instance_name)}
-                            disabled={estaDesconectando}
-                            className="flex-1 flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
-                          >
-                            <LogOut size={13} className={estaDesconectando ? 'animate-spin' : ''} />
-                            {estaDesconectando ? 'Desconectando...' : 'Confirmar'}
-                          </button>
-                        </div>
                       </div>
-                    )}
+                    </div>
+                    <div className="flex gap-2">
+                      {!pedindoConfirm && (
+                        <button
+                          onClick={() => setConfirmDesconectar(inst.instance_name)}
+                          className="flex-1 flex items-center justify-center gap-1.5 text-sm font-medium py-2 rounded-lg transition-colors"
+                          style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}
+                        >
+                          <LogOut size={13} /> Desconectar número
+                        </button>
+                      )}
+                      <a
+                        href="https://wa.me/5551980104924"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 flex items-center justify-center gap-1.5 text-sm font-medium py-2 rounded-lg transition-colors"
+                        style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}
+                      >
+                        <MessageCircle size={13} /> Falar com suporte
+                      </a>
+                    </div>
                   </div>
                 )}
 
-                {/* Instância desconectada: gerar QR */}
-                {!conectado && (
+                {/* Confirmação de desconexão (conectado ou banido) */}
+                {(conectado || banido) && pedindoConfirm && (
+                  <div className="rounded-lg p-4 space-y-3 mb-3"
+                    style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                    <p className="text-sm font-medium text-red-400">Tem certeza que deseja desconectar?</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      O número será desvinculado e o agente ficará inativo até uma nova conexão.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setConfirmDesconectar(null)}
+                        className="flex-1 text-sm font-medium py-2 rounded-lg transition-colors"
+                        style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={() => desconectar(inst.instance_name)}
+                        disabled={estaDesconectando}
+                        className="flex-1 flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
+                      >
+                        <LogOut size={13} className={estaDesconectando ? 'animate-spin' : ''} />
+                        {estaDesconectando ? 'Desconectando...' : 'Confirmar'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Instância conectada (não banida): botão desconectar */}
+                {conectado && !pedindoConfirm && (
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => setConfirmDesconectar(inst.instance_name)}
+                      className="w-full flex items-center justify-center gap-2 text-sm font-medium py-2.5 rounded-lg transition-colors"
+                      style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                    >
+                      <LogOut size={14} /> Desconectar número
+                    </button>
+                  </div>
+                )}
+
+                {/* Instância desconectada (não banida): gerar QR */}
+                {!conectado && !banido && (
                   <div className="space-y-3">
                     <button
                       onClick={() => gerarQRCode(inst.instance_name)}
