@@ -4,6 +4,10 @@ import { createClient } from '@supabase/supabase-js'
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
+const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
+const LIMITE_IMAGEM = 5 * 1024 * 1024   // 5MB
+const LIMITE_DOCUMENTO = 50 * 1024 * 1024 // 50MB
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
@@ -12,6 +16,14 @@ export async function POST(request: NextRequest) {
 
     if (!file || !tenantId) {
       return NextResponse.json({ error: 'Arquivo e tenant_id são obrigatórios' }, { status: 400 })
+    }
+
+    const isImagem = TIPOS_IMAGEM.includes(file.type)
+    const limiteBytes = isImagem ? LIMITE_IMAGEM : LIMITE_DOCUMENTO
+
+    if (file.size > limiteBytes) {
+      const limite = isImagem ? '5MB' : '50MB'
+      return NextResponse.json({ error: `Arquivo muito grande. Limite: ${limite}` }, { status: 400 })
     }
 
     const supabase = createClient(
@@ -37,9 +49,11 @@ export async function POST(request: NextRequest) {
     // 2. Extrai texto conforme o tipo
     let conteudo = ''
 
-    if (file.type === 'text/plain') {
+    if (isImagem) {
+      // Imagens não têm extração de texto — armazenadas para uso via visão no RAG
+      conteudo = ''
+    } else if (file.type === 'text/plain') {
       conteudo = buffer.toString('utf-8')
-
     } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,9 +63,7 @@ export async function POST(request: NextRequest) {
         conteudo = parsed.text ?? ''
       } catch (err) {
         console.error('Erro ao extrair PDF:', err)
-        // Continua sem texto — arquivo ainda é salvo
       }
-
     } else if (
       file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
       file.name.endsWith('.docx')
@@ -64,7 +76,7 @@ export async function POST(request: NextRequest) {
         console.error('Erro ao extrair DOCX:', err)
       }
     }
-    // XLSX: extração de texto não é suportada nesta versão — salva sem conteúdo
+    // XLSX: sem extração de texto — salva sem conteúdo
 
     // 3. Salva registro no banco
     const { data: novoArquivo, error: dbError } = await supabase
