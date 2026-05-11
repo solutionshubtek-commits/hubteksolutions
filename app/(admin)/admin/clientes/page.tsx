@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Plus, Search, AlertTriangle, CheckCircle2, AlertCircle,
   X, Save, Eye, EyeOff, Lock, Unlock, Key,
-  ChevronRight, RefreshCw, Trash2, Smartphone,
+  ChevronRight, RefreshCw, Trash2, Smartphone, LogOut,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -145,26 +145,22 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
           <button onClick={onClose} style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
         </div>
         <div className="p-6 space-y-4">
-          {/* Nome */}
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Nome da empresa *</label>
             <input type="text" value={form.nome} onChange={(e) => handleNome(e.target.value)}
               placeholder="Ex: Pizzaria Vesúvio" className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
           </div>
-          {/* Slug */}
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Slug (identificador único) *</label>
             <input type="text" value={form.slug}
               onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
               placeholder="pizzaria-vesuvio" className="w-full rounded-lg px-4 py-2.5 text-sm font-mono focus:outline-none" style={inputStyle} />
           </div>
-          {/* Email */}
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>E-mail do admin *</label>
             <input type="email" value={form.email_admin} onChange={(e) => setForm({ ...form, email_admin: e.target.value })}
               placeholder="cliente@empresa.com" className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none" style={inputStyle} />
           </div>
-          {/* Senha */}
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Senha inicial *</label>
             <div className="relative">
@@ -177,13 +173,11 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
               </button>
             </div>
           </div>
-          {/* Expiração */}
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Data de expiração *</label>
             <input type="date" value={form.expira_em} onChange={(e) => setForm({ ...form, expira_em: e.target.value })}
               className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none [color-scheme:dark]" style={inputStyle} />
           </div>
-          {/* Plano */}
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Plano contratado *</label>
             <div className="grid grid-cols-2 gap-2">
@@ -201,7 +195,6 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
               ))}
             </div>
           </div>
-          {/* Instâncias WhatsApp */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
@@ -221,18 +214,11 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
                     style={{ background: 'rgba(16,185,129,0.1)' }}>
                     <Smartphone size={14} color="#10B981" />
                   </div>
-                  <input
-                    type="text"
-                    value={inst.apelido}
-                    onChange={(e) => updateApelido(idx, e.target.value)}
-                    placeholder={`Ex: Vendas, Suporte...`}
-                    className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                    style={inputStyle}
-                  />
+                  <input type="text" value={inst.apelido} onChange={(e) => updateApelido(idx, e.target.value)}
+                    placeholder="Ex: Vendas, Suporte..." className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none" style={inputStyle} />
                   {form.instancias.length > 1 && (
                     <button type="button" onClick={() => removeInstancia(idx)}
-                      className="p-1.5 rounded-lg transition-colors hover:bg-red-500/10"
-                      style={{ color: 'var(--text-muted)' }}>
+                      className="p-1.5 rounded-lg transition-colors hover:bg-red-500/10" style={{ color: 'var(--text-muted)' }}>
                       <Trash2 size={14} />
                     </button>
                   )}
@@ -243,7 +229,6 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
               Cada instância = 1 número de WhatsApp conectado. Máximo 5 por cliente.
             </p>
           </div>
-          {/* Self managed */}
           <div className="flex items-center justify-between rounded-lg px-4 py-3"
             style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
             <div>
@@ -307,6 +292,9 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   const [adicionandoInst, setAdicionandoInst] = useState(false)
   const [erroInst, setErroInst] = useState('')
   const [sucessoInst, setSucessoInst] = useState('')
+  // Desconectar instância
+  const [desconectandoInst, setDesconectandoInst] = useState<Record<string, boolean>>({})
+  const [confirmDesconectarInst, setConfirmDesconectarInst] = useState<string | null>(null)
 
   useEffect(() => {
     if (aba === 'extrato') carregarExtrato()
@@ -315,12 +303,24 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   }, [aba])
 
   async function carregarInstancias() {
-  setCarregandoInst(true)
-  const res = await fetch(`/api/whatsapp/status?tenant_id=${tenant.id}`)
-  const data = await res.json()
-  setInstancias((data.instancias ?? []) as TenantInstance[])
-  setCarregandoInst(false)
-}
+    setCarregandoInst(true)
+    const res = await fetch(`/api/whatsapp/status?tenant_id=${tenant.id}`)
+    const data = await res.json()
+    setInstancias((data.instancias ?? []) as TenantInstance[])
+    setCarregandoInst(false)
+  }
+
+  async function handleDesconectarInstAdmin(instanceName: string) {
+    setDesconectandoInst(prev => ({ ...prev, [instanceName]: true }))
+    setConfirmDesconectarInst(null)
+    const res = await fetch('/api/whatsapp/desconectar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instance_name: instanceName }),
+    })
+    setDesconectandoInst(prev => ({ ...prev, [instanceName]: false }))
+    if (res.ok) await carregarInstancias()
+  }
 
   async function handleAdicionarInstancias() {
     if (novasInstancias.length === 0) return
@@ -521,20 +521,64 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                 <div className="space-y-2">
                   {instancias.map(inst => {
                     const sc = statusInstancia(inst.status)
+                    const conectado = inst.status === 'open' || inst.status === 'conectado'
+                    const estaDesconectando = desconectandoInst[inst.instance_name] ?? false
+                    const pedindoConfirm = confirmDesconectarInst === inst.instance_name
+
                     return (
-                      <div key={inst.id} className="flex items-center gap-3 rounded-xl p-3"
+                      <div key={inst.id} className="rounded-xl p-3 space-y-2"
                         style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                          style={{ background: 'rgba(16,185,129,0.1)' }}>
-                          <Smartphone size={16} color="#10B981" />
+
+                        {/* Info da instância */}
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                            style={{ background: 'rgba(16,185,129,0.1)' }}>
+                            <Smartphone size={16} color="#10B981" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{inst.apelido}</p>
+                            <p className="text-xs font-mono truncate" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</p>
+                          </div>
+                          <span className="text-xs font-medium flex-shrink-0" style={{ color: sc.cor }}>
+                            {sc.label}
+                          </span>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{inst.apelido}</p>
-                          <p className="text-xs font-mono truncate" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</p>
-                        </div>
-                        <span className="text-xs font-medium flex-shrink-0" style={{ color: sc.cor }}>
-                          {sc.label}
-                        </span>
+
+                        {/* Botão desconectar — só para instâncias conectadas */}
+                        {conectado && !pedindoConfirm && (
+                          <button
+                            onClick={() => setConfirmDesconectarInst(inst.instance_name)}
+                            className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg transition-colors"
+                            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                          >
+                            <LogOut size={12} /> Desconectar número
+                          </button>
+                        )}
+
+                        {/* Confirmação de desconexão */}
+                        {conectado && pedindoConfirm && (
+                          <div className="rounded-lg p-3 space-y-2"
+                            style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                            <p className="text-xs font-medium text-red-400">Confirmar desconexão de {inst.apelido}?</p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setConfirmDesconectarInst(null)}
+                                className="flex-1 text-xs font-medium py-1.5 rounded-lg transition-colors"
+                                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                onClick={() => handleDesconectarInstAdmin(inst.instance_name)}
+                                disabled={estaDesconectando}
+                                className="flex-1 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold py-1.5 rounded-lg transition-colors"
+                              >
+                                <LogOut size={11} className={estaDesconectando ? 'animate-spin' : ''} />
+                                {estaDesconectando ? 'Desconectando...' : 'Confirmar'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )
                   })}
