@@ -17,6 +17,7 @@ import {
   Loader2,
   TrendingUp,
 } from 'lucide-react'
+import { exportPDF } from '@/lib/exportPDF'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -119,17 +120,14 @@ export default function RelatoriosPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // Meses disponíveis
   const mesesDisponiveis = Array.from(new Set(ciclos.map(c => c.mes_ref))).sort((a, b) => b.localeCompare(a))
 
-  // KPIs dos ciclos filtrados
   const totalConversas = ciclos.reduce((s, c) => s + c.conversas, 0)
   const totalTokens = ciclos.reduce((s, c) => s + Number(c.tokens), 0)
   const totalCustoBRL = ciclos.reduce((s, c) => s + Number(c.custo_brl), 0)
   const totalCobrado = ciclos.reduce((s, c) => s + Number(c.valor_cobrado), 0)
   const totalMargem = totalCobrado - totalCustoBRL
 
-  // Agrupamento por tenant para visão consolidada
   const porTenant: Record<string, { nome: string; plano: string; ciclos: CicloFechado[] }> = {}
   ciclos.forEach(c => {
     if (!porTenant[c.tenant_id]) {
@@ -202,6 +200,46 @@ export default function RelatoriosPage() {
     URL.revokeObjectURL(url)
   }
 
+  // ── Export PDF ──
+  function exportarPDF() {
+    const nomeRelatorio = selectedTenant !== 'todos'
+      ? tenants.find(t => t.id === selectedTenant)?.nome ?? 'Cliente'
+      : 'Consolidado'
+
+    exportPDF({
+      titulo: 'Relatório de Ciclos Fechados',
+      subtitulo: `Filtro: ${nomeRelatorio}${selectedMes !== 'todos' ? ` · ${mesRefLabel(selectedMes)}` : ''}`,
+      colunas: [
+        { label: 'Cliente',   key: 'cliente',   align: 'left'  },
+        { label: 'Mês',       key: 'mes',        align: 'left'  },
+        { label: 'Conversas', key: 'conversas',  align: 'right' },
+        { label: 'Tokens',    key: 'tokens',     align: 'right' },
+        { label: 'Custo API', key: 'custoApi',   align: 'right' },
+        { label: 'Cobrado',   key: 'cobrado',    align: 'right' },
+        { label: 'Margem',    key: 'margem',     align: 'right' },
+      ],
+      linhas: ciclos.map(c => ({
+        cliente:   c.tenant_nome,
+        mes:       mesRefLabel(c.mes_ref),
+        conversas: c.conversas,
+        tokens:    fmtTokens(Number(c.tokens)),
+        custoApi:  fmtBRL(Number(c.custo_brl)),
+        cobrado:   fmtBRL(Number(c.valor_cobrado)),
+        margem:    fmtBRL(Number(c.valor_cobrado) - Number(c.custo_brl)),
+      })),
+      totais: {
+        cliente:   'TOTAL',
+        mes:       '',
+        conversas: totalConversas,
+        tokens:    fmtTokens(totalTokens),
+        custoApi:  fmtBRL(totalCustoBRL),
+        cobrado:   fmtBRL(totalCobrado),
+        margem:    fmtBRL(totalMargem),
+      },
+      nomeArquivo: `relatorio_${nomeRelatorio.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}`,
+    })
+  }
+
   // ── Enviar email ──
   async function enviarEmail() {
     if (!emailDestino || !emailModal) return
@@ -244,11 +282,9 @@ export default function RelatoriosPage() {
     }
   }
 
-  // ── Render ──
   return (
     <div className="p-6 space-y-6" style={{ color: 'var(--text-primary)' }}>
 
-      {/* Toast */}
       {toast && (
         <div className="fixed top-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl text-sm font-medium"
           style={{ background: toast.type === 'success' ? '#10B981' : '#EF4444', color: '#fff', minWidth: '280px' }}>
@@ -257,7 +293,6 @@ export default function RelatoriosPage() {
         </div>
       )}
 
-      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Relatórios</h1>
@@ -292,6 +327,12 @@ export default function RelatoriosPage() {
             <FileText size={14} /> TXT
           </button>
 
+          <button onClick={exportarPDF}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+            <FileText size={14} /> PDF
+          </button>
+
           <button
             onClick={() => { setEmailModal({ tipo: selectedTenant !== 'todos' ? 'individual' : 'consolidado' }); setEmailDestino('') }}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold"
@@ -301,7 +342,6 @@ export default function RelatoriosPage() {
         </div>
       </div>
 
-      {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiCard icon={<FileText size={18} />} label="Ciclos fechados" value={String(ciclos.length)} accent="#6366F1" />
         <KpiCard icon={<MessageSquare size={18} />} label="Total conversas" value={totalConversas.toLocaleString('pt-BR')} accent="#818CF8" />
@@ -313,7 +353,6 @@ export default function RelatoriosPage() {
           sub={totalCobrado > 0 ? `${((totalMargem / totalCobrado) * 100).toFixed(0)}% do faturado` : undefined} />
       </div>
 
-      {/* Tabela de ciclos */}
       <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)' }}>
         <div className="px-5 py-4 flex items-center justify-between flex-wrap gap-2"
           style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
@@ -406,7 +445,6 @@ export default function RelatoriosPage() {
         )}
       </div>
 
-      {/* Visão por cliente (consolidado) */}
       {selectedTenant === 'todos' && Object.keys(porTenant).length > 0 && (
         <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)' }}>
           <div className="px-5 py-4" style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
@@ -452,7 +490,6 @@ export default function RelatoriosPage() {
         </div>
       )}
 
-      {/* Modal Email */}
       {emailModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
