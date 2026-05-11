@@ -191,7 +191,6 @@ export default function VisaoGeralPage() {
   const [pausando, setPausando] = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
   const [instanciasBanidas, setInstanciasBanidas] = useState<InstanciaBanida[]>([])
-  const [tenantId, setTenantId] = useState<string | null>(null)
   const [desconectando, setDesconectando] = useState<Record<string, boolean>>({})
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
   const exportRef = useRef<HTMLDivElement>(null)
@@ -213,7 +212,6 @@ export default function VisaoGeralPage() {
     const { data: userData } = await supabase.from('users').select('nome, tenant_id').eq('id', user.id).single()
     if (!userData?.tenant_id) return
     setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
-    setTenantId(userData.tenant_id)
     const agora = new Date()
     const tid = userData.tenant_id
     const hojeInicio = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
