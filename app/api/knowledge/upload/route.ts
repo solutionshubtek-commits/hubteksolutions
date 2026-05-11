@@ -42,7 +42,9 @@ export async function POST(request: NextRequest) {
 
     } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
       try {
-        const pdfParse = (await import('pdf-parse')).default
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pdfParseModule = await import('pdf-parse') as any
+        const pdfParse = pdfParseModule.default ?? pdfParseModule
         const parsed = await pdfParse(buffer)
         conteudo = parsed.text ?? ''
       } catch (err) {
@@ -79,7 +81,6 @@ export async function POST(request: NextRequest) {
 
     if (dbError) {
       console.error('Erro ao salvar no banco:', dbError)
-      // Remove o arquivo do storage se falhou no banco
       await supabase.storage.from('knowledge-base').remove([path])
       return NextResponse.json({ error: 'Erro ao registrar arquivo' }, { status: 500 })
     }
