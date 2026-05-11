@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
 export async function POST(request: NextRequest) {
   try {
@@ -8,6 +9,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'instance_name obrigatório' }, { status: 400 })
     }
 
+    // 1. Desconecta na Evolution API
     const res = await fetch(
       `${process.env.EVOLUTION_API_URL}/instance/logout/${instance_name}`,
       {
@@ -20,6 +22,23 @@ export async function POST(request: NextRequest) {
       const err = await res.text()
       console.error('Erro Evolution logout:', err)
       return NextResponse.json({ error: 'Erro ao desconectar na Evolution API' }, { status: 500 })
+    }
+
+    // 2. Atualiza status no Supabase
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    )
+
+    const { error: dbError } = await supabase
+      .from('tenant_instances')
+      .update({ status: 'desconectado' })
+      .eq('instance_name', instance_name)
+
+    if (dbError) {
+      console.error('Erro ao atualizar status no Supabase:', dbError)
+      // Não retorna erro — a desconexão na Evolution já ocorreu
     }
 
     return NextResponse.json({ success: true })
