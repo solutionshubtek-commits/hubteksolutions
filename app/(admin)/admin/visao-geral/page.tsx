@@ -3,10 +3,11 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Users, MessageSquare, AlertTriangle, Wallet,
-  Plus, ArrowUp, ArrowDown, Download, Filter,
+  Plus, ArrowUp, ArrowDown, Download, Filter, FileText,
   Search, ChevronDown, RefreshCw, Settings, X,
   CheckCircle2, AlertCircle,
 } from 'lucide-react'
+import { exportPDF } from '@/lib/exportPDF'
 
 interface KpiData {
   clientesAtivos: number; clientesTotal: number; clientesBloqueados: number
@@ -226,6 +227,7 @@ export default function AdminVisaoGeralPage() {
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'expirando' | 'bloqueado'>('todos')
   const [carregando, setCarregando] = useState(true)
   const [modalCiclo, setModalCiclo] = useState<TenantRow | null>(null)
+  const [showExportModal, setShowExportModal] = useState(false)
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
@@ -272,6 +274,33 @@ export default function AdminVisaoGeralPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  function exportarPDF_Consolidado() {
+    exportPDF({
+      titulo: 'Visão Geral Consolidada',
+      subtitulo: `Gerado em ${new Date().toLocaleDateString('pt-BR')}`,
+      colunas: [
+        { label: 'Cliente',   key: 'nome',      align: 'left'  },
+        { label: 'Slug',      key: 'slug',      align: 'left'  },
+        { label: 'Status',    key: 'status',    align: 'left'  },
+        { label: 'Conversas', key: 'conversas', align: 'right' },
+        { label: 'Tokens',    key: 'tokens',    align: 'right' },
+        { label: 'Custo BRL', key: 'custoBRL',  align: 'right' },
+        { label: 'Expiração', key: 'expiracao', align: 'left'  },
+      ],
+      linhas: rows.map(r => ({
+        nome:       r.nome,
+        slug:       r.slug,
+        status:     r.status,
+        conversas:  r.conversasMes,
+        tokens:     fmtCompact(r.tokens),
+        custoBRL:   r.custoUsd > 0 ? fmtBRL(r.custoUsd) : '—',
+        expiracao:  r.expira_em ? new Date(r.expira_em).toLocaleDateString('pt-BR') : '—',
+      })),
+      nomeArquivo: `consolidado_${new Date().toISOString().slice(0, 10)}`,
+    })
+    setShowExportModal(false)
+  }
+
   const rowsFiltradas = rows.filter(r => {
     const matchBusca = r.nome.toLowerCase().includes(busca.toLowerCase()) || r.slug.toLowerCase().includes(busca.toLowerCase())
     if (!matchBusca) return false
@@ -312,13 +341,35 @@ export default function AdminVisaoGeralPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => exportarConsolidado(rows)}
-            className="flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
-            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
-            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'}>
-            <Download size={14} /> Exportar consolidado
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowExportModal(prev => !prev)}
+              className="flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'}>
+              <Download size={14} /> Exportar consolidado
+            </button>
+            {showExportModal && (
+              <div className="absolute right-0 top-11 w-40 rounded-xl shadow-xl z-50 overflow-hidden"
+                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                <button onClick={() => { exportarConsolidado(rows); setShowExportModal(false) }}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                  <Download size={13} /> CSV
+                </button>
+                <button onClick={exportarPDF_Consolidado}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                  <FileText size={13} /> PDF
+                </button>
+              </div>
+            )}
+          </div>
           <a href="/admin/clientes" className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors">
             <Plus size={14} /> Novo cliente
           </a>
