@@ -43,14 +43,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const supabase = createServiceClient()
     const tenant = await getTenantByInstanceName(supabase, event.instance)
-
     if (!tenant) {
       console.error(`[webhook/evolution] Nenhum tenant ativo para instância: ${event.instance}`)
       return response
     }
 
     const phone = extractPhone(data.key.remoteJid)
-
     processIncomingMessage({
       tenantId: tenant.id,
       instanceName: event.instance,
@@ -65,13 +63,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (event.event === 'connection.update' && isConnectionUpdateData(event.data)) {
-    const whatsapp_status = WHATSAPP_STATUS[event.data.state] ?? 'desconectado'
-    const supabase = createServiceClient()
+    const { state, statusReason } = event.data
+    const isBanned = state === 'close' && statusReason === 401
+    const whatsapp_status = isBanned ? 'banido' : (WHATSAPP_STATUS[state] ?? 'desconectado')
 
-    // Atualiza status na tabela tenant_instances
+    const supabase = createServiceClient()
     await supabase
       .from('tenant_instances')
-      .update({ status: whatsapp_status })
+      .update({ status: whatsapp_status, status_reason: statusReason ?? null })
       .eq('instance_name', event.instance)
   }
 
