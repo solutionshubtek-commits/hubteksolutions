@@ -2,9 +2,13 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import Image from 'next/image'
-import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight, RefreshCw } from 'lucide-react'
 
 const WHATSAPP_SUPORTE = 'https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+de+suporte+HubTek'
+
+const ROLES_PLANO = ['admin_tenant', 'self_managed']
 
 const items = [
   { href: '/visao-geral',        label: 'Visão Geral',        icon: LayoutDashboard },
@@ -16,6 +20,19 @@ const items = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const [role, setRole] = useState<string | null>(null)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase.from('users').select('role').eq('id', user.id).single()
+        .then(({ data }) => setRole(data?.role ?? null))
+    })
+  }, [])
+
+  const mostrarPlano = role !== null && ROLES_PLANO.includes(role)
+
   return (
     <aside className="fixed left-0 top-0 h-full w-60 flex flex-col z-40"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}>
@@ -23,13 +40,13 @@ export function Sidebar() {
       {/* Logo */}
       <div className="h-16 flex items-center px-5" style={{ borderBottom: '1px solid var(--border)' }}>
         <Image
-  src="/logo-horizontal.png"
-  alt="HUBTEK SOLUTIONS"
-  width={100}
-  height={20}
-  priority
-  style={{ filter: 'var(--logo-filter)' }}
-/>
+          src="/logo-horizontal.png"
+          alt="HUBTEK SOLUTIONS"
+          width={100}
+          height={20}
+          priority
+          style={{ filter: 'var(--logo-filter)' }}
+        />
       </div>
 
       {/* Label */}
@@ -48,10 +65,10 @@ export function Sidebar() {
               href={href}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 border-l-2"
               style={{
-                background:   active ? 'rgba(16,185,129,0.05)' : 'transparent',
-                color:        active ? 'var(--text-primary)'   : 'var(--text-secondary)',
-                borderColor:  active ? '#10B981'               : 'transparent',
-                fontWeight:   active ? 600                     : 400,
+                background:  active ? 'rgba(16,185,129,0.05)' : 'transparent',
+                color:       active ? 'var(--text-primary)'   : 'var(--text-secondary)',
+                borderColor: active ? '#10B981'               : 'transparent',
+                fontWeight:  active ? 600                     : 400,
               }}
               onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)' }}}
               onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)' }}}
@@ -61,6 +78,29 @@ export function Sidebar() {
             </Link>
           )
         })}
+
+        {/* Renovar Plano — visível apenas para admin_tenant e self_managed */}
+        {mostrarPlano && (() => {
+          const href = '/renovar-plano'
+          const active = pathname === href
+          return (
+            <Link
+              href={href}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 border-l-2"
+              style={{
+                background:  active ? 'rgba(16,185,129,0.05)' : 'transparent',
+                color:       active ? 'var(--text-primary)'   : 'var(--text-secondary)',
+                borderColor: active ? '#10B981'               : 'transparent',
+                fontWeight:  active ? 600                     : 400,
+              }}
+              onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)' }}}
+              onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)' }}}
+            >
+              <RefreshCw size={16} />
+              <span>Renovar Plano</span>
+            </Link>
+          )
+        })()}
       </nav>
 
       {/* Suporte */}
