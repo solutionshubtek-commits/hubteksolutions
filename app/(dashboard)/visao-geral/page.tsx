@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   MessageSquare, Users, Clock, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
-  Filter, Download, FileText,
+  Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 
@@ -27,6 +27,12 @@ interface ConversaRecente {
   status: string
   agente_pausado: boolean
   ultima_mensagem_em: string
+}
+
+interface InstanciaBanida {
+  id: string
+  instance_name: string
+  apelido: string
 }
 
 interface DiaDado {
@@ -184,6 +190,10 @@ export default function VisaoGeralPage() {
   const [nomeUsuario, setNomeUsuario] = useState('')
   const [pausando, setPausando] = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
+  const [instanciasBanidas, setInstanciasBanidas] = useState<InstanciaBanida[]>([])
+  const [tenantId, setTenantId] = useState<string | null>(null)
+  const [desconectando, setDesconectando] = useState<Record<string, boolean>>({})
+  const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
   const exportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -203,8 +213,9 @@ export default function VisaoGeralPage() {
     const { data: userData } = await supabase.from('users').select('nome, tenant_id').eq('id', user.id).single()
     if (!userData?.tenant_id) return
     setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
+    setTenantId(userData.tenant_id)
     const agora = new Date()
-    const tenantId = userData.tenant_id
+    const tid = userData.tenant_id
     const hojeInicio = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
     const ontemInicio = new Date(hojeInicio); ontemInicio.setDate(ontemInicio.getDate() - 1)
     const semanaInicio = new Date(agora); semanaInicio.setDate(semanaInicio.getDate() - 7)
@@ -212,17 +223,18 @@ export default function VisaoGeralPage() {
     const mesInicio = new Date(agora.getFullYear(), agora.getMonth(), 1)
     const mesAntInicio = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
     const mesAntFim = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
-    const [hojeRes, ontemRes, semRes, semAntRes, mesRes, mesAntRes, pausadasRes, pausadasAntRes, convRes] =
+    const [hojeRes, ontemRes, semRes, semAntRes, mesRes, mesAntRes, pausadasRes, pausadasAntRes, convRes, bandasRes] =
       await Promise.all([
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('criado_em', hojeInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('criado_em', ontemInicio.toISOString()).lt('criado_em', hojeInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('criado_em', semanaInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('criado_em', semanaAntInicio.toISOString()).lt('criado_em', semanaInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('criado_em', mesInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('criado_em', mesAntInicio.toISOString()).lte('criado_em', mesAntFim.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('agente_pausado', true),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('agente_pausado', true).lt('pausado_em', hojeInicio.toISOString()),
-        supabase.from('conversations').select('id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em').eq('tenant_id', tenantId).eq('status', 'ativa').order('ultima_mensagem_em', { ascending: false }).limit(20),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', hojeInicio.toISOString()),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', ontemInicio.toISOString()).lt('criado_em', hojeInicio.toISOString()),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', semanaInicio.toISOString()),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', semanaAntInicio.toISOString()).lt('criado_em', semanaInicio.toISOString()),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', mesInicio.toISOString()),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', mesAntInicio.toISOString()).lte('criado_em', mesAntFim.toISOString()),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('agente_pausado', true),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('agente_pausado', true).lt('pausado_em', hojeInicio.toISOString()),
+        supabase.from('conversations').select('id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em').eq('tenant_id', tid).eq('status', 'ativa').order('ultima_mensagem_em', { ascending: false }).limit(20),
+        supabase.from('tenant_instances').select('id, instance_name, apelido').eq('tenant_id', tid).eq('status', 'banido'),
       ])
     setMetrics({
       conversasHoje: hojeRes.count ?? 0,
@@ -234,6 +246,7 @@ export default function VisaoGeralPage() {
       pausadas: pausadasRes.count ?? 0,
       pausadasAnterior: pausadasAntRes.count ?? 0,
     })
+    setInstanciasBanidas((bandasRes.data ?? []) as InstanciaBanida[])
     const convComMsg: ConversaRecente[] = await Promise.all(
       (convRes.data ?? []).map(async (c) => {
         const { data: msg } = await supabase
@@ -291,6 +304,23 @@ export default function VisaoGeralPage() {
     setPausando(null)
   }
 
+  async function handleDesconectar(instanceName: string) {
+    setDesconectando(prev => ({ ...prev, [instanceName]: true }))
+    setConfirmDesconectar(null)
+    try {
+      const res = await fetch('/api/whatsapp/desconectar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance_name: instanceName }),
+      })
+      if (res.ok) {
+        setInstanciasBanidas(prev => prev.filter(i => i.instance_name !== instanceName))
+      }
+    } finally {
+      setDesconectando(prev => ({ ...prev, [instanceName]: false }))
+    }
+  }
+
   if (carregando) {
     return (
       <div className="p-8">
@@ -327,6 +357,85 @@ export default function VisaoGeralPage() {
           ))}
         </div>
       </div>
+
+      {/* Banner de instâncias banidas */}
+      {instanciasBanidas.length > 0 && (
+        <div className="rounded-xl p-4 space-y-3"
+          style={{ background: '#EF444408', border: '1px solid #EF444430' }}>
+          <div className="flex items-center gap-2">
+            <ShieldAlert size={16} className="text-red-400 flex-shrink-0" />
+            <p className="text-sm font-semibold text-red-400">
+              {instanciasBanidas.length === 1
+                ? 'Número banido pelo WhatsApp'
+                : `${instanciasBanidas.length} números banidos pelo WhatsApp`}
+            </p>
+          </div>
+          <div className="space-y-2">
+            {instanciasBanidas.map(inst => {
+              const estaDesconectando = desconectando[inst.instance_name] ?? false
+              const pedindoConfirm = confirmDesconectar === inst.instance_name
+              return (
+                <div key={inst.id} className="rounded-lg p-3"
+                  style={{ background: '#EF444410', border: '1px solid #EF444425' }}>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <ShieldAlert size={13} className="text-red-400 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-sm font-medium text-red-400">{inst.apelido}</span>
+                        <span className="text-xs font-mono ml-2" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</span>
+                      </div>
+                    </div>
+                    {!pedindoConfirm ? (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => setConfirmDesconectar(inst.instance_name)}
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+                          style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}
+                        >
+                          <LogOut size={12} /> Desconectar
+                        </button>
+                        <a
+                          href="https://wa.me/5551980104924"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+                          style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}
+                        >
+                          <MessageCircle size={12} /> Suporte
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Confirmar desconexão?</span>
+                        <button
+                          onClick={() => setConfirmDesconectar(null)}
+                          className="text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors"
+                          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={() => handleDesconectar(inst.instance_name)}
+                          disabled={estaDesconectando}
+                          className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors"
+                        >
+                          <LogOut size={11} className={estaDesconectando ? 'animate-spin' : ''} />
+                          {estaDesconectando ? 'Desconectando...' : 'Confirmar'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {pedindoConfirm && (
+                    <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                      O número será desvinculado. Conecte um novo número para retomar o atendimento.
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard label="Novas conversas hoje"    valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
@@ -392,7 +501,6 @@ export default function VisaoGeralPage() {
               ))}
             </div>
 
-            {/* Botão exportar com dropdown */}
             <div className="relative" ref={exportRef}>
               <button
                 onClick={() => setShowExportModal(prev => !prev)}
