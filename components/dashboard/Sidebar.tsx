@@ -8,7 +8,7 @@ import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRig
 
 const WHATSAPP_SUPORTE = 'https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+de+suporte+HubTek'
 
-const ROLES_PLANO = ['admin_tenant', 'self_managed']
+const ROLES_PLANO = ['admin_hubtek', 'admin_tenant', 'self_managed']
 
 const items = [
   { href: '/visao-geral',        label: 'Visão Geral',        icon: LayoutDashboard },
