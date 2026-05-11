@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, CSSProperties } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2, Image as ImageIcon } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +40,8 @@ const HORARIO_PADRAO: HorarioFuncionamento = {
   dom: { ativo: false, inicio: '08:00', fim: '12:00' },
 }
 
+const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number) {
@@ -49,6 +51,7 @@ function formatBytes(bytes: number) {
 }
 
 function iconeArquivo(tipo: string, nome: string) {
+  if (TIPOS_IMAGEM.includes(tipo) || /\.(jpg|jpeg|png|webp)$/i.test(nome)) return '🖼️'
   if (tipo === 'application/pdf' || nome.endsWith('.pdf')) return '📄'
   if (tipo.includes('word') || nome.endsWith('.docx')) return '📝'
   if (tipo.includes('sheet') || nome.endsWith('.xlsx')) return '📊'
@@ -245,9 +248,12 @@ export default function ConfiguracoesPage() {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
 
-    // Limite de 50MB
-    if (file.size > 50 * 1024 * 1024) {
-      setErro('Arquivo muito grande. Limite máximo: 50MB.')
+    const isImagem = TIPOS_IMAGEM.includes(file.type)
+    const limiteBytes = isImagem ? 5 * 1024 * 1024 : 50 * 1024 * 1024
+    const limiteLabel = isImagem ? '5MB' : '50MB'
+
+    if (file.size > limiteBytes) {
+      setErro(`Arquivo muito grande. Limite máximo para ${isImagem ? 'imagens' : 'documentos'}: ${limiteLabel}.`)
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
@@ -255,11 +261,12 @@ export default function ConfiguracoesPage() {
     setUploadando(true)
     setErro('')
 
-    // Mostra progresso de acordo com o tipo
-    const isPDF = file.type === 'application/pdf' || file.name.endsWith('.pdf')
-    const isDOCX = file.type.includes('word') || file.name.endsWith('.docx')
-    if (isPDF || isDOCX) {
-      setUploadProgresso('Extraindo texto do arquivo...')
+    if (isImagem) {
+      setUploadProgresso('Enviando imagem...')
+    } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+      setUploadProgresso('Extraindo texto do PDF...')
+    } else if (file.type.includes('word') || file.name.endsWith('.docx')) {
+      setUploadProgresso('Extraindo texto do documento...')
     } else {
       setUploadProgresso('Enviando arquivo...')
     }
@@ -438,12 +445,16 @@ export default function ConfiguracoesPage() {
                   <Upload size={14} />
                   {uploadando ? 'Processando...' : 'Enviar arquivo'}
                 </button>
-                <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.xlsx"
-                  onChange={handleUpload} className="hidden" />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.txt,.xlsx,image/jpeg,image/png,image/webp"
+                  onChange={handleUpload}
+                  className="hidden"
+                />
               </div>
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                Formatos aceitos: PDF, DOCX, TXT, XLSX — máximo 50MB.
-                O texto de PDF e DOCX é extraído automaticamente para busca semântica.
+                Documentos: PDF, DOCX, TXT, XLSX (máx. 50MB) · Imagens: JPG, PNG, WEBP (máx. 5MB)
               </p>
 
               {/* Progresso do upload */}
@@ -462,26 +473,38 @@ export default function ConfiguracoesPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {arquivos.map((arquivo) => (
-                    <div key={arquivo.id}
-                      className="flex items-center justify-between rounded-lg px-4 py-3"
-                      style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-base flex-shrink-0">{iconeArquivo(arquivo.tipo, arquivo.nome_arquivo)}</span>
-                        <div className="min-w-0">
-                          <p className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{arquivo.nome_arquivo}</p>
-                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{formatBytes(arquivo.tamanho_bytes)}</p>
+                  {arquivos.map((arquivo) => {
+                    const isImg = TIPOS_IMAGEM.includes(arquivo.tipo) || /\.(jpg|jpeg|png|webp)$/i.test(arquivo.nome_arquivo)
+                    return (
+                      <div key={arquivo.id}
+                        className="flex items-center justify-between rounded-lg px-4 py-3"
+                        style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+                        <div className="flex items-center gap-3 min-w-0">
+                          {isImg ? (
+                            <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
+                              <ImageIcon size={16} style={{ color: '#3B82F6' }} />
+                            </div>
+                          ) : (
+                            <span className="text-base flex-shrink-0">{iconeArquivo(arquivo.tipo, arquivo.nome_arquivo)}</span>
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{arquivo.nome_arquivo}</p>
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                              {formatBytes(arquivo.tamanho_bytes)}
+                              {isImg && <span className="ml-1.5 text-[#3B82F6]">· imagem</span>}
+                            </p>
+                          </div>
                         </div>
+                        <button
+                          onClick={() => handleExcluir(arquivo.id, arquivo.nome_arquivo)}
+                          disabled={excluindo === arquivo.id}
+                          className="hover:text-red-400 disabled:opacity-40 transition-colors ml-3 flex-shrink-0"
+                          style={{ color: 'var(--text-muted)' }}>
+                          <Trash2 size={15} />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleExcluir(arquivo.id, arquivo.nome_arquivo)}
-                        disabled={excluindo === arquivo.id}
-                        className="hover:text-red-400 disabled:opacity-40 transition-colors ml-3 flex-shrink-0"
-                        style={{ color: 'var(--text-muted)' }}>
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
