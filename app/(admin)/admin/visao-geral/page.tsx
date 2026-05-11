@@ -9,6 +9,21 @@ import {
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 
+// ─── Planos ───────────────────────────────────────────────────────────────────
+
+const PLANOS = [
+  { value: 'essencial',  label: 'Essencial',  limite: 50,   valor: 397  },
+  { value: 'acelerador', label: 'Acelerador', limite: 100,  valor: 597  },
+  { value: 'dominancia', label: 'Dominância', limite: 500,  valor: 997  },
+  { value: 'elite',      label: 'Elite',      limite: 1000, valor: 1497 },
+]
+
+function planoLabel(plano: string) {
+  return PLANOS.find(p => p.value === plano)?.label ?? plano
+}
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
+
 interface KpiData {
   clientesAtivos: number; clientesTotal: number; clientesBloqueados: number
   conversasMes: number; conversasAnterior: number
@@ -16,7 +31,7 @@ interface KpiData {
 }
 interface TenantRow {
   id: string; nome: string; slug: string; status: string; agente_status: string
-  expira_em: string | null; conversasMes: number; tokens: number; custoUsd: number
+  expira_em: string | null; conversasMes: number; tokens: number; custoUsd: number; plano: string
 }
 interface ResumoCiclo {
   tenant_nome: string; mes_ref: string; conversas: number
@@ -46,12 +61,12 @@ function expiryStatus(expira_em: string | null) {
   return 'ok'
 }
 function exportarConsolidado(rows: TenantRow[]) {
-  const header = 'Cliente,Slug,Status,Conversas,Tokens,Custo BRL,Valor a cobrar (3x),Expiração\n'
+  const header = 'Cliente,Slug,Plano,Status,Conversas,Tokens,Custo BRL,Valor a cobrar (3x),Expiração\n'
   const csv = rows.map(r => {
     const custoBRL = (r.custoUsd * 5.8).toFixed(2)
     const cobrar = (r.custoUsd * 5.8 * 3).toFixed(2)
     const exp = r.expira_em ? new Date(r.expira_em).toLocaleDateString('pt-BR') : '—'
-    return `"${r.nome}","${r.slug}","${r.status}","${r.conversasMes}","${r.tokens}","${custoBRL}","${cobrar}","${exp}"`
+    return `"${r.nome}","${r.slug}","${planoLabel(r.plano)}","${r.status}","${r.conversasMes}","${r.tokens}","${custoBRL}","${cobrar}","${exp}"`
   }).join('\n')
   const blob = new Blob([header + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -238,7 +253,7 @@ export default function AdminVisaoGeralPage() {
     const em10Dias = new Date(agora.getTime() + 10 * 24 * 60 * 60 * 1000).toISOString()
 
     const [tenantsRes, convMesRes, convAntRes, custoMesRes, custoAntRes, expirandoRes] = await Promise.all([
-      supabase.from('tenants').select('id, nome, slug, status, expira_em, agente_ativo'),
+      supabase.from('tenants').select('id, nome, slug, status, expira_em, agente_ativo, plano'),
       supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('criado_em', inicioMes),
       supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('criado_em', inicioMesAnt).lte('criado_em', fimMesAnt),
       supabase.from('token_usage').select('custo_usd').gte('criado_em', inicioMes),
@@ -266,7 +281,12 @@ export default function AdminVisaoGeralPage() {
       ])
       const tokens = (tokRes.data ?? []).reduce((s, r) => s + (r.tokens_total ?? 0), 0)
       const custoUsd = (tokRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
-      return { id: t.id, nome: t.nome, slug: t.slug, status: t.status, agente_status: t.agente_ativo === false ? 'pausado' : 'ativo', expira_em: t.expira_em, conversasMes: convRes.count ?? 0, tokens, custoUsd }
+      return {
+        id: t.id, nome: t.nome, slug: t.slug, status: t.status,
+        agente_status: t.agente_ativo === false ? 'pausado' : 'ativo',
+        expira_em: t.expira_em, conversasMes: convRes.count ?? 0,
+        tokens, custoUsd, plano: t.plano ?? 'essencial',
+      }
     }))
     setRows(detalhe)
     setCarregando(false)
@@ -281,6 +301,7 @@ export default function AdminVisaoGeralPage() {
       colunas: [
         { label: 'Cliente',   key: 'nome',      align: 'left'  },
         { label: 'Slug',      key: 'slug',      align: 'left'  },
+        { label: 'Plano',     key: 'plano',     align: 'left'  },
         { label: 'Status',    key: 'status',    align: 'left'  },
         { label: 'Conversas', key: 'conversas', align: 'right' },
         { label: 'Tokens',    key: 'tokens',    align: 'right' },
@@ -290,6 +311,7 @@ export default function AdminVisaoGeralPage() {
       linhas: rows.map(r => ({
         nome:       r.nome,
         slug:       r.slug,
+        plano:      planoLabel(r.plano),
         status:     r.status,
         conversas:  r.conversasMes,
         tokens:     fmtCompact(r.tokens),
@@ -421,7 +443,7 @@ export default function AdminVisaoGeralPage() {
             <table className="w-full">
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  {['Cliente', 'Status do agente', 'Expiração do acesso', 'Conversas', 'Tokens', 'Custo estimado', 'Ações'].map(h => (
+                  {['Cliente', 'Plano', 'Status do agente', 'Expiração do acesso', 'Conversas', 'Tokens', 'Custo estimado', 'Ações'].map(h => (
                     <th key={h} className={`text-xs font-semibold px-6 py-3 uppercase tracking-wider ${['Conversas', 'Tokens', 'Custo estimado'].includes(h) ? 'text-right' : 'text-left'}`}
                       style={{ color: 'var(--text-muted)' }}>{h}</th>
                   ))}
@@ -446,6 +468,13 @@ export default function AdminVisaoGeralPage() {
                             <p className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{r.slug}</p>
                           </div>
                         </div>
+                      </td>
+                      {/* ── COLUNA PLANO (nova) ── */}
+                      <td className="px-6 py-4">
+                        <span className="text-xs px-2.5 py-1 rounded-full font-medium"
+                          style={{ background: '#10B98118', color: '#10B981' }}>
+                          {planoLabel(r.plano)}
+                        </span>
                       </td>
                       <td className="px-6 py-4"><AgentBadge status={r.agente_status} /></td>
                       <td className="px-6 py-4"><ExpiryTag expira_em={r.expira_em} /></td>
