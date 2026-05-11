@@ -13,10 +13,12 @@ import {
   Brain,
   MessageSquare,
   Download,
+  FileText,
   Settings,
   X,
   Users,
 } from 'lucide-react'
+import { exportPDF } from '@/lib/exportPDF'
 
 // ─── Planos ───────────────────────────────────────────────────────────────────
 
@@ -122,6 +124,7 @@ export default function CustosIAPage() {
   const [rawData, setRawData] = useState<AiUsageRow[]>([])
   const [conversasPorMes, setConversasPorMes] = useState<Record<string, number>>({})
   const [showCustosModal, setShowCustosModal] = useState(false)
+  const [showExportModal, setShowExportModal] = useState(false)
   const [custosFixos, setCustosFixos] = useState<CustosFixos>(CUSTOS_FIXOS_DEFAULT)
   const [numClientes, setNumClientes] = useState(1)
   const [exportMes, setExportMes] = useState<number>(new Date().getMonth() + 1)
@@ -212,7 +215,7 @@ export default function CustosIAPage() {
     return prev > 0 ? ((cur - prev) / prev) * 100 : null
   })()
 
-  // ── Export ──
+  // ── Export TXT ──
   function exportarFechamento() {
     const tenant = tenants.find(t => t.id === selectedTenant)
     const nomeCliente = tenant?.nome ?? 'Consolidado'
@@ -226,7 +229,6 @@ export default function CustosIAPage() {
     const margem = plano.valor - custoTotal
     const custoPorConv = conversas > 0 ? custoAPI / conversas : 0
     const mesNome = `${MESES_FULL[exportMes - 1]} ${selectedAno}`
-
     const pad = (s: string, n: number) => s.padEnd(n, ' ')
 
     const linhas = [
@@ -272,6 +274,40 @@ export default function CustosIAPage() {
     a.download = `fechamento_${nomeCliente.replace(/\s+/g, '_')}_${MESES_LABEL[exportMes - 1]}${selectedAno}.txt`
     a.click()
     URL.revokeObjectURL(url)
+    setShowExportModal(false)
+  }
+
+  // ── Export PDF ──
+  function exportarFechamentoPDF() {
+    const tenant = tenants.find(t => t.id === selectedTenant)
+    const nomeCliente = tenant?.nome ?? 'Consolidado'
+    const planoKey = tenant?.plano ?? 'essencial'
+    const plano = PLANOS[planoKey] ?? PLANOS.essencial
+    const mesRows = rawData.filter(r => r.ciclo_mes === exportMes)
+    const conversas = conversasPorMes[String(exportMes)] ?? 0
+    const custoAPI = mesRows.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
+    const custoTotal = custoAPI + fixoPorCliente
+    const margem = plano.valor - custoTotal
+    const mesNome = `${MESES_FULL[exportMes - 1]} ${selectedAno}`
+
+    exportPDF({
+      titulo: `Fechamento Mensal — ${mesNome}`,
+      subtitulo: `Cliente: ${nomeCliente} · Plano: ${plano.label}`,
+      colunas: [
+        { label: 'Descrição', key: 'descricao', align: 'left'  },
+        { label: 'Valor',     key: 'valor',     align: 'right' },
+      ],
+      linhas: [
+        { descricao: 'Conversas iniciadas',    valor: conversas },
+        { descricao: 'Custo estimado (API)',   valor: fmtBRL(custoAPI) },
+        { descricao: 'Custo fixo rateado',     valor: fmtBRL(fixoPorCliente) },
+        { descricao: 'Custo total operacional',valor: fmtBRL(custoTotal) },
+        { descricao: 'Valor do plano',         valor: fmtBRL(plano.valor) },
+        { descricao: 'Margem estimada',        valor: fmtBRL(margem) },
+      ],
+      nomeArquivo: `fechamento_${nomeCliente.replace(/\s+/g, '_')}_${MESES_LABEL[exportMes - 1]}${selectedAno}`,
+    })
+    setShowExportModal(false)
   }
 
   // ── Balizador do mês selecionado ──
@@ -375,11 +411,33 @@ export default function CustosIAPage() {
             <SelectField value={exportMes} onChange={v => setExportMes(Number(v))}>
               {MESES_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
             </SelectField>
-            <button onClick={exportarFechamento}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold"
-              style={{ background: '#10B981', color: '#fff' }}>
-              <Download size={14} /> Exportar fechamento
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowExportModal(prev => !prev)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: '#10B981', color: '#fff' }}>
+                <Download size={14} /> Exportar fechamento
+              </button>
+              {showExportModal && (
+                <div className="absolute right-0 top-11 w-40 rounded-xl shadow-xl z-50 overflow-hidden"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+                  <button onClick={exportarFechamento}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors"
+                    style={{ color: 'var(--text-secondary)' }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    <Download size={13} /> TXT
+                  </button>
+                  <button onClick={exportarFechamentoPDF}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-colors"
+                    style={{ color: 'var(--text-secondary)' }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    <FileText size={13} /> PDF
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
