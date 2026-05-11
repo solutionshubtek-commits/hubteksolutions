@@ -1,11 +1,12 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   MessageSquare, Users, Clock, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
-  Filter, Download,
+  Filter, Download, FileText,
 } from 'lucide-react'
+import { exportPDF } from '@/lib/exportPDF'
 
 interface Metrics {
   conversasHoje: number
@@ -71,17 +72,33 @@ function exportarCSV(conversas: ConversaRecente[]) {
   URL.revokeObjectURL(url)
 }
 
+function exportarConversasPDF(conversas: ConversaRecente[]) {
+  exportPDF({
+    titulo: 'Conversas Recentes',
+    subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
+    colunas: [
+      { label: 'Contato',       key: 'contato',  align: 'left'  },
+      { label: 'Telefone',      key: 'telefone', align: 'left'  },
+      { label: 'Última mensagem', key: 'msg',    align: 'left'  },
+      { label: 'Status',        key: 'status',   align: 'left'  },
+      { label: 'Hora',          key: 'hora',     align: 'left'  },
+    ],
+    linhas: conversas.map(c => ({
+      contato:  c.contato_nome || '—',
+      telefone: c.contato_telefone,
+      msg:      c.ultima_mensagem.slice(0, 40) + (c.ultima_mensagem.length > 40 ? '...' : ''),
+      status:   c.agente_pausado ? 'Pausado' : 'Ativo',
+      hora:     tempoRelativo(c.ultima_mensagem_em),
+    })),
+    nomeArquivo: `conversas_${new Date().toISOString().slice(0, 10)}`,
+  })
+}
+
 function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   label: string; valor: number; d: number | null; icon: React.ElementType; cor: string; alt?: boolean
 }) {
   return (
-    <div
-      className="rounded-xl p-5"
-      style={{
-        background: 'var(--bg-surface)',
-        border: `1px solid ${alt ? 'rgba(245,158,11,0.2)' : 'var(--border)'}`,
-      }}
-    >
+    <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: `1px solid ${alt ? 'rgba(245,158,11,0.2)' : 'var(--border)'}` }}>
       <div className="flex items-center justify-between mb-3">
         <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</p>
         <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${cor}18` }}>
@@ -137,16 +154,12 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
           const showLabel = dados.length <= 7 || i % Math.floor(dados.length / 6) === 0 || i === dados.length - 1
           return (
             <div key={i} className="flex flex-col items-center gap-0.5 flex-1 min-w-[4px] group relative">
-              <div
-                className="absolute bottom-full mb-1 rounded px-2 py-1 text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 left-1/2 -translate-x-1/2"
-                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-2)', color: 'var(--text-primary)' }}
-              >
+              <div className="absolute bottom-full mb-1 rounded px-2 py-1 text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 left-1/2 -translate-x-1/2"
+                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-2)', color: 'var(--text-primary)' }}>
                 {d.dia.slice(5)}: {d.total}
               </div>
-              <div
-                className="w-full rounded-sm hover:bg-[#34D399] transition-colors cursor-pointer"
-                style={{ height: `${Math.max(pct, 2)}%`, minHeight: 2, background: `rgba(16,185,129,${opacity})` }}
-              />
+              <div className="w-full rounded-sm hover:bg-[#34D399] transition-colors cursor-pointer"
+                style={{ height: `${Math.max(pct, 2)}%`, minHeight: 2, background: `rgba(16,185,129,${opacity})` }} />
               {showLabel && (
                 <span className="text-[9px] whitespace-nowrap" style={{ color: 'var(--text-label)' }}>
                   {d.dia.slice(8)}
@@ -170,6 +183,18 @@ export default function VisaoGeralPage() {
   const [carregando, setCarregando] = useState(true)
   const [nomeUsuario, setNomeUsuario] = useState('')
   const [pausando, setPausando] = useState<string | null>(null)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const exportRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setShowExportModal(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const fetchTudo = useCallback(async () => {
     const supabase = createClient()
@@ -284,7 +309,6 @@ export default function VisaoGeralPage() {
   return (
     <div className="p-8 space-y-6">
 
-      {/* Page head */}
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
@@ -295,22 +319,15 @@ export default function VisaoGeralPage() {
         </div>
         <div className="flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           {(['7', '30', '90'] as const).map(p => (
-            <button
-              key={p}
-              onClick={() => setPeriodo(p)}
+            <button key={p} onClick={() => setPeriodo(p)}
               className="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-              style={{
-                background: periodo === p ? '#10B981' : 'transparent',
-                color: periodo === p ? '#fff' : 'var(--text-muted)',
-              }}
-            >
+              style={{ background: periodo === p ? '#10B981' : 'transparent', color: periodo === p ? '#fff' : 'var(--text-muted)' }}>
               {p} dias
             </button>
           ))}
         </div>
       </div>
 
-      {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard label="Novas conversas hoje"    valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
         <KpiCard label="Conversas na semana"      valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
@@ -318,7 +335,6 @@ export default function VisaoGeralPage() {
         <KpiCard label="Pausadas (atend. humano)" valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
       </div>
 
-      {/* Gráfico + Atividade */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-xl p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           <div className="flex items-start justify-between mb-4">
@@ -326,10 +342,8 @@ export default function VisaoGeralPage() {
               <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Volume de conversas — últimos {periodo} dias</h2>
               <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Total agregado por dia, incluindo automatizadas e humanas.</p>
             </div>
-            <button
-              className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5 transition-colors"
-              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-            >
+            <button className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5 transition-colors"
+              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
               <Download size={12} />
             </button>
           </div>
@@ -359,7 +373,6 @@ export default function VisaoGeralPage() {
         </div>
       </div>
 
-      {/* Conversas recentes */}
       <div className="rounded-xl" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
         <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <div>
@@ -371,26 +384,42 @@ export default function VisaoGeralPage() {
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
               {([['todos', 'Todos'], ['ativo', 'Ativos'], ['pausado', 'Pausados']] as const).map(([val, label]) => (
-                <button
-                  key={val}
-                  onClick={() => setFiltroStatus(val)}
+                <button key={val} onClick={() => setFiltroStatus(val)}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors"
-                  style={{
-                    background: filtroStatus === val ? 'var(--bg-hover)' : 'transparent',
-                    color: filtroStatus === val ? 'var(--text-primary)' : 'var(--text-muted)',
-                  }}
-                >
+                  style={{ background: filtroStatus === val ? 'var(--bg-hover)' : 'transparent', color: filtroStatus === val ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   <Filter size={10} />{label}
                 </button>
               ))}
             </div>
-            <button
-              onClick={() => exportarCSV(conversasFiltradas)}
-              className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 transition-colors"
-              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-            >
-              <Download size={12} /> Exportar
-            </button>
+
+            {/* Botão exportar com dropdown */}
+            <div className="relative" ref={exportRef}>
+              <button
+                onClick={() => setShowExportModal(prev => !prev)}
+                className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 transition-colors"
+                style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                <Download size={12} /> Exportar
+              </button>
+              {showExportModal && (
+                <div className="absolute right-0 top-9 w-36 rounded-xl shadow-xl z-50 overflow-hidden"
+                  style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                  <button onClick={() => { exportarCSV(conversasFiltradas); setShowExportModal(false) }}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs transition-colors"
+                    style={{ color: 'var(--text-secondary)' }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    <Download size={12} /> CSV
+                  </button>
+                  <button onClick={() => { exportarConversasPDF(conversasFiltradas); setShowExportModal(false) }}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs transition-colors"
+                    style={{ color: 'var(--text-secondary)' }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    <FileText size={12} /> PDF
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -415,8 +444,7 @@ export default function VisaoGeralPage() {
                   <tr key={c.id} className="transition-colors last:border-0"
                     style={{ borderBottom: '1px solid var(--border)' }}
                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
-                  >
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
@@ -451,15 +479,12 @@ export default function VisaoGeralPage() {
                       <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
                     </td>
                     <td className="px-6 py-4">
-                      <button
-                        onClick={() => handlePausarRetomar(c)}
-                        disabled={pausando === c.id}
+                      <button onClick={() => handlePausarRetomar(c)} disabled={pausando === c.id}
                         className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
                           c.agente_pausado
                             ? 'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30'
                             : 'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'
-                        }`}
-                      >
+                        }`}>
                         {c.agente_pausado ? <><Play size={11} /> Retomar</> : <><Pause size={11} /> Pausar</>}
                       </button>
                     </td>
