@@ -48,15 +48,13 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/**
- * Deriva horario_inicio, horario_fim e dias_funcionamento para agent_config
- * a partir do JSONB horario_funcionamento salvo em tenants.
- *
- * Lógica:
- * - dias_funcionamento: array dos dias com ativo=true
- * - horario_inicio / horario_fim: pega o intervalo mais amplo entre os dias ativos
- *   (menor inicio e maior fim), pois agent_config só suporta um único range global.
- */
+function iconeArquivo(tipo: string, nome: string) {
+  if (tipo === 'application/pdf' || nome.endsWith('.pdf')) return '📄'
+  if (tipo.includes('word') || nome.endsWith('.docx')) return '📝'
+  if (tipo.includes('sheet') || nome.endsWith('.xlsx')) return '📊'
+  return '📃'
+}
+
 function derivarAgentConfig(horario: HorarioFuncionamento): {
   horario_inicio: string
   horario_fim: string
@@ -148,6 +146,7 @@ export default function ConfiguracoesPage() {
   const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
   const [uploadando, setUploadando] = useState(false)
+  const [uploadProgresso, setUploadProgresso] = useState('')
   const [excluindo, setExcluindo] = useState<string | null>(null)
   const [sucesso, setSucesso] = useState(false)
   const [erro, setErro] = useState('')
@@ -201,7 +200,6 @@ export default function ConfiguracoesPage() {
     setSalvando(true); setSucesso(false); setErro('')
     const supabase = createClient()
 
-    // 1. Salva em tenants (JSONB legado + prompt + mensagem ausência)
     const { error: tenantErr } = await supabase.from('tenants').update({
       prompt_agente: tenant.prompt_agente,
       mensagem_fora_horario: tenant.mensagem_fora_horario,
@@ -214,7 +212,6 @@ export default function ConfiguracoesPage() {
       return
     }
 
-    // 2. Deriva e salva em agent_config (tabela que o agente realmente lê)
     const agentDerived = derivarAgentConfig(horario)
 
     const { error: agentErr } = await supabase.from('agent_config').upsert({
@@ -224,7 +221,6 @@ export default function ConfiguracoesPage() {
       horario_inicio: agentDerived.horario_inicio,
       horario_fim: agentDerived.horario_fim,
       dias_funcionamento: agentDerived.dias_funcionamento,
-      // Mantém defaults para campos não editados aqui
       motor_ia_principal: 'openai',
       motor_ia_backup: 'anthropic',
       ativo: true,
@@ -244,42 +240,49 @@ export default function ConfiguracoesPage() {
     setTimeout(() => setSucesso(false), 3000)
   }
 
-  // ── Upload ──────────────────────────────────────────────────────────────────
+  // ── Upload via rota server-side ─────────────────────────────────────────────
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
-    setUploadando(true); setErro('')
-    const supabase = createClient()
 
-    const path = `${tenant.id}/${Date.now()}_${file.name}`
-    const { error: uploadError } = await supabase.storage.from('knowledge-base').upload(path, file)
-    if (uploadError) {
-      setErro('Erro no upload. Verifique o tipo/tamanho do arquivo.')
-      setUploadando(false)
+    // Limite de 50MB
+    if (file.size > 50 * 1024 * 1024) {
+      setErro('Arquivo muito grande. Limite máximo: 50MB.')
+      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
-    // Extrai texto apenas de .txt — PDF/DOCX precisam de processamento server-side
-    let conteudo = ''
-    if (file.type === 'text/plain') {
-      conteudo = await file.text()
+    setUploadando(true)
+    setErro('')
+
+    // Mostra progresso de acordo com o tipo
+    const isPDF = file.type === 'application/pdf' || file.name.endsWith('.pdf')
+    const isDOCX = file.type.includes('word') || file.name.endsWith('.docx')
+    if (isPDF || isDOCX) {
+      setUploadProgresso('Extraindo texto do arquivo...')
+    } else {
+      setUploadProgresso('Enviando arquivo...')
     }
 
-    const { data: novoArquivo, error: dbError } = await supabase.from('knowledge_base').insert({
-      tenant_id: tenant.id,
-      nome_arquivo: file.name,
-      tipo: file.type,
-      conteudo_texto: conteudo,
-      tamanho_bytes: file.size,
-    }).select('id, nome_arquivo, tipo, tamanho_bytes, criado_em').single()
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('tenant_id', tenant.id)
 
-    if (dbError) {
-      setErro('Erro ao registrar arquivo no banco.')
-    } else if (novoArquivo) {
-      setArquivos(prev => [novoArquivo, ...prev])
-    }
+    const res = await fetch('/api/knowledge-base/upload', {
+      method: 'POST',
+      body: formData,
+    })
 
+    const data = await res.json()
     setUploadando(false)
+    setUploadProgresso('')
+
+    if (!res.ok || !data.success) {
+      setErro(data.error ?? 'Erro ao enviar arquivo.')
+    } else {
+      setArquivos(prev => [data.arquivo, ...prev])
+    }
+
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -394,7 +397,6 @@ export default function ConfiguracoesPage() {
                 ))}
               </div>
 
-              {/* Preview do range derivado */}
               {(() => {
                 const derived = derivarAgentConfig(horario)
                 if (derived.dias_funcionamento.length === 0) return null
@@ -434,15 +436,24 @@ export default function ConfiguracoesPage() {
                   className="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
                   style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>
                   <Upload size={14} />
-                  {uploadando ? 'Enviando...' : 'Enviar arquivo'}
+                  {uploadando ? 'Processando...' : 'Enviar arquivo'}
                 </button>
                 <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.xlsx"
                   onChange={handleUpload} className="hidden" />
               </div>
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 Formatos aceitos: PDF, DOCX, TXT, XLSX — máximo 50MB.
-                Arquivos TXT têm conteúdo extraído automaticamente para busca semântica.
+                O texto de PDF e DOCX é extraído automaticamente para busca semântica.
               </p>
+
+              {/* Progresso do upload */}
+              {uploadando && uploadProgresso && (
+                <div className="mb-3 flex items-center gap-2 p-3 rounded-lg"
+                  style={{ background: '#10B98110', border: '1px solid #10B98130' }}>
+                  <div className="w-3 h-3 rounded-full border-2 border-[#10B981] border-t-transparent animate-spin flex-shrink-0" />
+                  <p className="text-xs text-[#10B981]">{uploadProgresso}</p>
+                </div>
+              )}
 
               {arquivos.length === 0 ? (
                 <div className="rounded-lg p-8 text-center" style={{ border: '1px dashed var(--border-2)' }}>
@@ -456,7 +467,7 @@ export default function ConfiguracoesPage() {
                       className="flex items-center justify-between rounded-lg px-4 py-3"
                       style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
                       <div className="flex items-center gap-3 min-w-0">
-                        <FileText size={16} className="text-[#10B981] flex-shrink-0" />
+                        <span className="text-base flex-shrink-0">{iconeArquivo(arquivo.tipo, arquivo.nome_arquivo)}</span>
                         <div className="min-w-0">
                           <p className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{arquivo.nome_arquivo}</p>
                           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{formatBytes(arquivo.tamanho_bytes)}</p>
