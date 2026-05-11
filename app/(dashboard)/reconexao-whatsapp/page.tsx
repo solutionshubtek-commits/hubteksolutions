@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Smartphone, CheckCircle, XCircle, RefreshCw, Wifi } from 'lucide-react'
+import { Smartphone, CheckCircle, XCircle, RefreshCw, Wifi, LogOut } from 'lucide-react'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
@@ -19,6 +19,8 @@ export default function ReconexaoWhatsAppPage() {
   const [tenantId, setTenantId] = useState<string | null>(null)
   const [qrCodes, setQrCodes] = useState<Record<string, string | null>>({})
   const [gerandoQR, setGerandoQR] = useState<Record<string, boolean>>({})
+  const [desconectando, setDesconectando] = useState<Record<string, boolean>>({})
+  const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
 
   useEffect(() => {
     async function carregar() {
@@ -64,6 +66,25 @@ export default function ReconexaoWhatsAppPage() {
     }
   }
 
+  async function desconectar(instanceName: string) {
+    setDesconectando(prev => ({ ...prev, [instanceName]: true }))
+    setConfirmDesconectar(null)
+    try {
+      const res = await fetch('/api/whatsapp/desconectar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance_name: instanceName }),
+      })
+      if (res.ok && tenantId) {
+        // Limpa QR anterior e recarrega status
+        setQrCodes(prev => ({ ...prev, [instanceName]: null }))
+        await fetchInstancias(tenantId)
+      }
+    } finally {
+      setDesconectando(prev => ({ ...prev, [instanceName]: false }))
+    }
+  }
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -97,10 +118,14 @@ export default function ReconexaoWhatsAppPage() {
             const conectado = inst.status === 'open' || inst.status === 'conectado'
             const qr = qrCodes[inst.instance_name]
             const gerando = gerandoQR[inst.instance_name] ?? false
+            const estaDesconectando = desconectando[inst.instance_name] ?? false
+            const pedindoConfirm = confirmDesconectar === inst.instance_name
 
             return (
               <div key={inst.id} className="rounded-xl p-6"
                 style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+
+                {/* Header da instância */}
                 <div className="flex items-center gap-4 mb-4">
                   <div className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
                     style={{ background: 'rgba(16,185,129,0.1)' }}>
@@ -128,6 +153,47 @@ export default function ReconexaoWhatsAppPage() {
                   </div>
                 </div>
 
+                {/* Instância conectada: botão desconectar */}
+                {conectado && (
+                  <div className="space-y-2">
+                    {!pedindoConfirm ? (
+                      <button
+                        onClick={() => setConfirmDesconectar(inst.instance_name)}
+                        className="w-full flex items-center justify-center gap-2 text-sm font-medium py-2.5 rounded-lg transition-colors"
+                        style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                      >
+                        <LogOut size={14} /> Desconectar número
+                      </button>
+                    ) : (
+                      <div className="rounded-lg p-4 space-y-3"
+                        style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                        <p className="text-sm font-medium text-red-400">Tem certeza que deseja desconectar?</p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          O número será desvinculado e o agente ficará inativo até uma nova conexão.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setConfirmDesconectar(null)}
+                            className="flex-1 text-sm font-medium py-2 rounded-lg transition-colors"
+                            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            onClick={() => desconectar(inst.instance_name)}
+                            disabled={estaDesconectando}
+                            className="flex-1 flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
+                          >
+                            <LogOut size={13} className={estaDesconectando ? 'animate-spin' : ''} />
+                            {estaDesconectando ? 'Desconectando...' : 'Confirmar'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Instância desconectada: gerar QR */}
                 {!conectado && (
                   <div className="space-y-3">
                     <button
@@ -146,6 +212,7 @@ export default function ReconexaoWhatsAppPage() {
                     )}
                   </div>
                 )}
+
               </div>
             )
           })}
