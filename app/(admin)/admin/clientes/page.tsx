@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Plus, Search, AlertTriangle, CheckCircle2, AlertCircle,
   X, Save, Eye, EyeOff, Lock, Unlock, Key,
-  ChevronRight, RefreshCw, Trash2, Smartphone, LogOut,
+  ChevronRight, RefreshCw, Trash2, Smartphone, LogOut, ShieldAlert, MessageCircle,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -415,9 +415,12 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   const plano = planoConfig(tenant.plano)
   const inputStyle = { background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
 
-  const statusInstancia = (s: string) => s === 'open' || s === 'conectado'
-    ? { label: 'Conectado', cor: '#10B981' }
-    : { label: 'Desconectado', cor: '#EF4444' }
+  // ─── Status de instância (inclui banido) ───────────────────────────────────
+  const statusInstancia = (s: string) => {
+    if (s === 'banido') return { label: 'Banido', cor: '#EF4444', bg: '#EF444415', border: '#EF444430' }
+    if (s === 'open' || s === 'conectado') return { label: 'Conectado', cor: '#10B981', bg: '#10B98115', border: '#10B98130' }
+    return { label: 'Desconectado', cor: '#71717A', bg: '#71717A15', border: '#71717A30' }
+  }
 
   return (
     <>
@@ -522,29 +525,67 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                   {instancias.map(inst => {
                     const sc = statusInstancia(inst.status)
                     const conectado = inst.status === 'open' || inst.status === 'conectado'
+                    const banido = inst.status === 'banido'
                     const estaDesconectando = desconectandoInst[inst.instance_name] ?? false
                     const pedindoConfirm = confirmDesconectarInst === inst.instance_name
 
                     return (
                       <div key={inst.id} className="rounded-xl p-3 space-y-2"
-                        style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+                        style={{
+                          background: banido ? '#EF444408' : 'var(--bg-surface-2)',
+                          border: banido ? '1px solid #EF444430' : '1px solid var(--border)',
+                        }}>
 
                         {/* Info da instância */}
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                            style={{ background: 'rgba(16,185,129,0.1)' }}>
-                            <Smartphone size={16} color="#10B981" />
+                            style={{ background: banido ? '#EF444415' : 'rgba(16,185,129,0.1)' }}>
+                            {banido
+                              ? <ShieldAlert size={16} color="#EF4444" />
+                              : <Smartphone size={16} color="#10B981" />
+                            }
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{inst.apelido}</p>
                             <p className="text-xs font-mono truncate" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</p>
                           </div>
-                          <span className="text-xs font-medium flex-shrink-0" style={{ color: sc.cor }}>
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                            style={{ color: sc.cor, background: sc.bg, border: `1px solid ${sc.border}` }}>
                             {sc.label}
                           </span>
                         </div>
 
-                        {/* Botão desconectar — só para instâncias conectadas */}
+                        {/* Banner de banimento */}
+                        {banido && (
+                          <div className="rounded-lg p-3 space-y-2" style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                            <div className="flex items-start gap-2">
+                              <ShieldAlert size={13} className="text-red-400 flex-shrink-0 mt-0.5" />
+                              <p className="text-xs text-red-400 font-medium leading-relaxed">
+                                Este número foi banido ou bloqueado pelo WhatsApp. Desconecte e conecte um novo número para retomar o atendimento.
+                              </p>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setConfirmDesconectarInst(inst.instance_name)}
+                                className="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg transition-colors"
+                                style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}
+                              >
+                                <LogOut size={12} /> Desconectar número
+                              </button>
+                              <a
+                                href="https://wa.me/5551980104924"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg transition-colors"
+                                style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}
+                              >
+                                <MessageCircle size={12} /> Falar com suporte
+                              </a>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Botão desconectar — só para instâncias conectadas (não banidas) */}
                         {conectado && !pedindoConfirm && (
                           <button
                             onClick={() => setConfirmDesconectarInst(inst.instance_name)}
@@ -556,7 +597,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                         )}
 
                         {/* Confirmação de desconexão */}
-                        {conectado && pedindoConfirm && (
+                        {(conectado || banido) && pedindoConfirm && (
                           <div className="rounded-lg p-3 space-y-2"
                             style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
                             <p className="text-xs font-medium text-red-400">Confirmar desconexão de {inst.apelido}?</p>
