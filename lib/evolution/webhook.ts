@@ -37,6 +37,7 @@ export interface EvolutionMessageUpsertData {
 export interface EvolutionConnectionUpdateData {
   instance: string
   state: 'open' | 'close' | 'connecting'
+  statusReason?: number
 }
 
 export interface EvolutionWebhookEvent {
