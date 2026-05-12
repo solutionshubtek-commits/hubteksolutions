@@ -73,7 +73,7 @@ export interface ProcessMessagePayload {
 export async function processIncomingMessage(payload: ProcessMessagePayload): Promise<void> {
   const supabase = createServiceClient()
 
-  // 1. Encontra ou cria conversa — agora salva instanceName para identificar o número
+  // 1. Encontra ou cria conversa
   const conversa = await findOrCreateConversation(
     supabase,
     payload.tenantId,
@@ -81,13 +81,16 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     payload.pushName,
     payload.instanceName
   )
+  console.log('[process-message] Conversa ID:', conversa.id)
 
   // 2. Agente pausado
   const pausado = await isAgentPaused(supabase, conversa.id)
+  console.log('[process-message] Agente pausado:', pausado)
   if (pausado) return
 
   // 3. Config do agente
   const config = await getAgentConfig(supabase, payload.tenantId)
+  console.log('[process-message] Config encontrada:', config ? 'sim' : 'NENHUMA', '| Ativo:', config?.ativo)
   if (!config || !config.ativo) return
 
   // 4. Fora do horário
@@ -96,6 +99,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     config.horario_fim,
     config.dias_funcionamento
   )
+  console.log('[process-message] Dentro do horário:', dentroDoHorario, '| Início:', config.horario_inicio, '| Fim:', config.horario_fim, '| Dias:', config.dias_funcionamento)
   if (!dentroDoHorario) {
     await sendTextMessage(payload.instanceName, payload.phone, config.mensagem_ausencia)
     return
@@ -116,6 +120,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     conteudo: payload.conteudo,
     metadata: { messageId: payload.messageId, pushName: payload.pushName },
   })
+  console.log('[process-message] Mensagem salva ID:', mensagemSalva.id)
 
   // 6. Processa mídia
   let conteudoProcessado = payload.conteudo ?? ''
@@ -143,6 +148,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     }
   }
 
+  console.log('[process-message] Conteúdo processado:', conteudoProcessado?.substring(0, 100))
   if (!conteudoProcessado.trim()) return
 
   // 7. Busca semântica
@@ -156,12 +162,14 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       match_count: 5,
     })
     knowledgeDocs = (docs ?? []) as Array<{ conteudo_texto: string; similarity: number }>
+    console.log('[process-message] Docs encontrados:', knowledgeDocs.length)
   } catch (err) {
     console.error('[process-message] Falha na busca semântica:', err)
   }
 
   // 8. Histórico
   const historico = await getRecentMessages(supabase, conversa.id, 10)
+  console.log('[process-message] Histórico:', historico.length, 'mensagens')
   const chatMessages: ChatMessage[] = [
     { role: 'system', content: buildSystemPrompt(config.prompt_principal ?? '', knowledgeDocs) },
     ...historico.slice(0, -1).map(m => ({
@@ -175,6 +183,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
   let motorUsado = config.motor_ia_principal
   const chatConfig = { temperature: Number(config.temperatura), maxTokens: config.max_tokens }
+  console.log('[process-message] Motor IA:', motorUsado)
 
   try {
     resultado = config.motor_ia_principal === 'openai'
@@ -193,6 +202,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     }
   }
 
+  console.log('[process-message] Resposta gerada:', resultado?.content?.substring(0, 100))
   if (!resultado?.content) return
 
   // 10. Salva resposta e envia
@@ -207,6 +217,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   await sendTextMessage(payload.instanceName, payload.phone, resultado.content)
   await updateConversationTimestamp(supabase, conversa.id)
+  console.log('[process-message] Mensagem enviada com sucesso')
 
   // 11. Registra uso de IA
   await logAiUsage(supabase, {
