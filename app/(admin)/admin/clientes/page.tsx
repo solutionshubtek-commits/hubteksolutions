@@ -7,8 +7,6 @@ import {
   ChevronRight, RefreshCw, Trash2, Smartphone, LogOut, ShieldAlert, MessageCircle,
 } from 'lucide-react'
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
-
 interface Tenant {
   id: string; nome: string; slug: string; status: string
   expira_em: string | null; criado_em: string; plano: string
@@ -24,8 +22,6 @@ interface NovoTenant {
   senha_admin: string; expira_em: string; self_managed: boolean; plano: string
   instancias: { apelido: string }[]
 }
-
-// ─── Planos ───────────────────────────────────────────────────────────────────
 
 const PLANOS = [
   { value: 'essencial',  label: 'Essencial',  limite: 50,   valor: 397  },
@@ -285,16 +281,16 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   const [salvandoStatus, setSalvandoStatus] = useState(false)
   const [extrato, setExtrato] = useState<ExtratoMes[]>([])
   const [carregandoExtrato, setCarregandoExtrato] = useState(false)
-  // Instâncias
   const [instancias, setInstancias] = useState<TenantInstance[]>([])
   const [carregandoInst, setCarregandoInst] = useState(false)
   const [novasInstancias, setNovasInstancias] = useState<{ apelido: string }[]>([])
   const [adicionandoInst, setAdicionandoInst] = useState(false)
   const [erroInst, setErroInst] = useState('')
   const [sucessoInst, setSucessoInst] = useState('')
-  // Desconectar instância
   const [desconectandoInst, setDesconectandoInst] = useState<Record<string, boolean>>({})
   const [confirmDesconectarInst, setConfirmDesconectarInst] = useState<string | null>(null)
+  const [excluindoInst, setExcluindoInst] = useState<Record<string, boolean>>({})
+  const [confirmExcluirInst, setConfirmExcluirInst] = useState<string | null>(null)
 
   useEffect(() => {
     if (aba === 'extrato') carregarExtrato()
@@ -320,6 +316,18 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
     })
     setDesconectandoInst(prev => ({ ...prev, [instanceName]: false }))
     if (res.ok) await carregarInstancias()
+  }
+
+  async function handleExcluirInstAdmin(instanceName: string) {
+    setExcluindoInst(prev => ({ ...prev, [instanceName]: true }))
+    setConfirmExcluirInst(null)
+    await fetch('/api/admin/deletar-instancia', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instance_name: instanceName, tenant_id: tenant.id }),
+    })
+    setExcluindoInst(prev => ({ ...prev, [instanceName]: false }))
+    await carregarInstancias()
   }
 
   async function handleAdicionarInstancias() {
@@ -415,7 +423,6 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   const plano = planoConfig(tenant.plano)
   const inputStyle = { background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
 
-  // ─── Status de instância (inclui banido) ───────────────────────────────────
   const statusInstancia = (s: string) => {
     if (s === 'banido') return { label: 'Banido', cor: '#EF4444', bg: '#EF444415', border: '#EF444430' }
     if (s === 'open' || s === 'conectado') return { label: 'Conectado', cor: '#10B981', bg: '#10B98115', border: '#10B98130' }
@@ -528,6 +535,8 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                     const banido = inst.status === 'banido'
                     const estaDesconectando = desconectandoInst[inst.instance_name] ?? false
                     const pedindoConfirm = confirmDesconectarInst === inst.instance_name
+                    const estaExcluindo = excluindoInst[inst.instance_name] ?? false
+                    const pedindoConfirmExcluir = confirmExcluirInst === inst.instance_name
 
                     return (
                       <div key={inst.id} className="rounded-xl p-3 space-y-2"
@@ -540,10 +549,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                             style={{ background: banido ? '#EF444415' : 'rgba(16,185,129,0.1)' }}>
-                            {banido
-                              ? <ShieldAlert size={16} color="#EF4444" />
-                              : <Smartphone size={16} color="#10B981" />
-                            }
+                            {banido ? <ShieldAlert size={16} color="#EF4444" /> : <Smartphone size={16} color="#10B981" />}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{inst.apelido}</p>
@@ -572,7 +578,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                               >
                                 <LogOut size={12} /> Desconectar número
                               </button>
-                              <a
+                              
                                 href="https://wa.me/5551980104924"
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -585,7 +591,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                           </div>
                         )}
 
-                        {/* Botão desconectar — só para instâncias conectadas (não banidas) */}
+                        {/* Botão desconectar — conectadas */}
                         {conectado && !pedindoConfirm && (
                           <button
                             onClick={() => setConfirmDesconectarInst(inst.instance_name)}
@@ -619,6 +625,41 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                               </button>
                             </div>
                           </div>
+                        )}
+
+                        {/* Botão excluir — só para desconectadas */}
+                        {!conectado && !banido && (
+                          pedindoConfirmExcluir ? (
+                            <div className="rounded-lg p-3 space-y-2"
+                              style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                              <p className="text-xs font-medium text-red-400">Excluir &quot;{inst.apelido}&quot; permanentemente?</p>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => setConfirmExcluirInst(null)}
+                                  className="flex-1 text-xs font-medium py-1.5 rounded-lg transition-colors"
+                                  style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                                >
+                                  Cancelar
+                                </button>
+                                <button
+                                  onClick={() => handleExcluirInstAdmin(inst.instance_name)}
+                                  disabled={estaExcluindo}
+                                  className="flex-1 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold py-1.5 rounded-lg transition-colors"
+                                >
+                                  <Trash2 size={11} className={estaExcluindo ? 'animate-spin' : ''} />
+                                  {estaExcluindo ? 'Excluindo...' : 'Confirmar'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmExcluirInst(inst.instance_name)}
+                              className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg transition-colors"
+                              style={{ background: 'var(--bg-surface)', border: '1px solid #EF444430', color: '#EF4444' }}
+                            >
+                              <Trash2 size={12} /> Excluir instância
+                            </button>
+                          )
                         )}
                       </div>
                     )
