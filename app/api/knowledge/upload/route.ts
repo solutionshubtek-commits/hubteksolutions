@@ -1,12 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import OpenAI from 'openai'
 
 export const runtime = 'nodejs'
-export const maxDuration = 30
+export const maxDuration = 60
 
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
-const LIMITE_IMAGEM = 5 * 1024 * 1024   // 5MB
+const LIMITE_IMAGEM = 5 * 1024 * 1024    // 5MB
 const LIMITE_DOCUMENTO = 50 * 1024 * 1024 // 50MB
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+
+async function generateEmbedding(text: string): Promise<number[]> {
+  const response = await openai.embeddings.create({
+    model: 'text-embedding-3-small',
+    input: text.slice(0, 8000),
+  })
+  return response.data[0].embedding
+}
+
+async function describeImage(base64: string, mimetype: string, filename: string): Promise<string> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    max_tokens: 500,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: `data:${mimetype};base64,${base64}`, detail: 'low' },
+          },
+          {
+            type: 'text',
+            text: `Descreva detalhadamente esta imagem para uso como base de conhecimento de um agente de atendimento. Nome do arquivo: ${filename}. Inclua: o que é mostrado, cores, textos visíveis, produtos, preços, promoções ou qualquer informação relevante para atendimento ao cliente.`,
+          },
+        ],
+      },
+    ],
+  })
+  return response.choices[0]?.message?.content ?? ''
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,7 +66,7 @@ export async function POST(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // 1. Faz upload para o Storage
+    // 1. Upload para o Storage
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
     const path = `${tenantId}/${Date.now()}_${file.name}`
@@ -46,12 +80,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Erro no upload do arquivo' }, { status: 500 })
     }
 
-    // 2. Extrai texto conforme o tipo
+    // 2. Extrai ou gera conteúdo texto
     let conteudo = ''
 
     if (isImagem) {
-      // Imagens não têm extração de texto — armazenadas para uso via visão no RAG
-      conteudo = ''
+      try {
+        const base64 = buffer.toString('base64')
+        conteudo = await describeImage(base64, file.type, file.name)
+      } catch (err) {
+        console.error('Erro ao descrever imagem:', err)
+        conteudo = ''
+      }
     } else if (file.type === 'text/plain') {
       conteudo = buffer.toString('utf-8')
     } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
@@ -76,9 +115,19 @@ export async function POST(request: NextRequest) {
         console.error('Erro ao extrair DOCX:', err)
       }
     }
-    // XLSX: sem extração de texto — salva sem conteúdo
+    // XLSX: sem extração de texto
 
-    // 3. Salva registro no banco
+    // 3. Gera embedding se há conteúdo
+    let embedding: number[] | null = null
+    if (conteudo.trim().length > 0) {
+      try {
+        embedding = await generateEmbedding(conteudo)
+      } catch (err) {
+        console.error('Erro ao gerar embedding:', err)
+      }
+    }
+
+    // 4. Salva no banco
     const { data: novoArquivo, error: dbError } = await supabase
       .from('knowledge_base')
       .insert({
@@ -86,6 +135,7 @@ export async function POST(request: NextRequest) {
         nome_arquivo: file.name,
         tipo: file.type,
         conteudo_texto: conteudo || null,
+        embedding: embedding ? JSON.stringify(embedding) : null,
         tamanho_bytes: file.size,
       })
       .select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
@@ -101,6 +151,7 @@ export async function POST(request: NextRequest) {
       success: true,
       arquivo: novoArquivo,
       texto_extraido: conteudo.length > 0,
+      embedding_gerado: embedding !== null,
     })
   } catch (err) {
     console.error('Erro no upload:', err)
