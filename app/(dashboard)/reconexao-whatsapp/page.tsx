@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Smartphone, CheckCircle, XCircle, RefreshCw, Wifi, LogOut, ShieldAlert, MessageCircle } from 'lucide-react'
+import { Smartphone, CheckCircle, XCircle, RefreshCw, Wifi, LogOut, ShieldAlert, MessageCircle, Trash2 } from 'lucide-react'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
@@ -21,6 +21,8 @@ export default function ReconexaoWhatsAppPage() {
   const [gerandoQR, setGerandoQR] = useState<Record<string, boolean>>({})
   const [desconectando, setDesconectando] = useState<Record<string, boolean>>({})
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
+  const [excluindo, setExcluindo] = useState<Record<string, boolean>>({})
+  const [confirmExcluir, setConfirmExcluir] = useState<string | null>(null)
 
   useEffect(() => {
     async function carregar() {
@@ -84,6 +86,22 @@ export default function ReconexaoWhatsAppPage() {
     }
   }
 
+  async function excluirInstancia(instanceName: string) {
+    if (!tenantId) return
+    setExcluindo(prev => ({ ...prev, [instanceName]: true }))
+    setConfirmExcluir(null)
+    try {
+      await fetch('/api/admin/deletar-instancia', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance_name: instanceName, tenant_id: tenantId }),
+      })
+      await fetchInstancias(tenantId)
+    } finally {
+      setExcluindo(prev => ({ ...prev, [instanceName]: false }))
+    }
+  }
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -120,6 +138,8 @@ export default function ReconexaoWhatsAppPage() {
             const gerando = gerandoQR[inst.instance_name] ?? false
             const estaDesconectando = desconectando[inst.instance_name] ?? false
             const pedindoConfirm = confirmDesconectar === inst.instance_name
+            const estaExcluindo = excluindo[inst.instance_name] ?? false
+            const pedindoConfirmExcluir = confirmExcluir === inst.instance_name
 
             return (
               <div key={inst.id} className="rounded-xl p-6"
@@ -187,7 +207,7 @@ export default function ReconexaoWhatsAppPage() {
                           <LogOut size={13} /> Desconectar número
                         </button>
                       )}
-                      <a
+                      
                         href="https://wa.me/5551980104924"
                         target="_blank"
                         rel="noopener noreferrer"
@@ -200,7 +220,7 @@ export default function ReconexaoWhatsAppPage() {
                   </div>
                 )}
 
-                {/* Confirmação de desconexão (conectado ou banido) */}
+                {/* Confirmação de desconexão */}
                 {(conectado || banido) && pedindoConfirm && (
                   <div className="rounded-lg p-4 space-y-3 mb-3"
                     style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
@@ -228,7 +248,7 @@ export default function ReconexaoWhatsAppPage() {
                   </div>
                 )}
 
-                {/* Instância conectada (não banida): botão desconectar */}
+                {/* Instância conectada: botão desconectar */}
                 {conectado && !pedindoConfirm && (
                   <div className="space-y-2">
                     <button
@@ -241,7 +261,7 @@ export default function ReconexaoWhatsAppPage() {
                   </div>
                 )}
 
-                {/* Instância desconectada (não banida): gerar QR */}
+                {/* Instância desconectada: gerar QR + excluir */}
                 {!conectado && !banido && (
                   <div className="space-y-3">
                     <button
@@ -252,11 +272,48 @@ export default function ReconexaoWhatsAppPage() {
                       <RefreshCw size={15} className={gerando ? 'animate-spin' : ''} />
                       {gerando ? 'Gerando QR Code...' : 'Gerar QR Code'}
                     </button>
+
                     {qr && (
                       <div className="flex flex-col items-center gap-3 p-4 bg-white rounded-xl">
                         <Image src={qr} alt="QR Code WhatsApp" width={192} height={192} unoptimized />
                         <p className="text-black text-xs text-center">Escaneie com o WhatsApp para conectar</p>
                       </div>
+                    )}
+
+                    {/* Excluir instância */}
+                    {pedindoConfirmExcluir ? (
+                      <div className="rounded-lg p-4 space-y-3"
+                        style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                        <p className="text-sm font-medium text-red-400">Excluir "{inst.apelido}" permanentemente?</p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          A instância será removida do sistema. Esta ação não pode ser desfeita.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setConfirmExcluir(null)}
+                            className="flex-1 text-sm font-medium py-2 rounded-lg transition-colors"
+                            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            onClick={() => excluirInstancia(inst.instance_name)}
+                            disabled={estaExcluindo}
+                            className="flex-1 flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
+                          >
+                            <Trash2 size={13} className={estaExcluindo ? 'animate-spin' : ''} />
+                            {estaExcluindo ? 'Excluindo...' : 'Confirmar exclusão'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmExcluir(inst.instance_name)}
+                        className="w-full flex items-center justify-center gap-2 text-sm font-medium py-2 rounded-lg transition-colors"
+                        style={{ background: 'var(--bg-surface-2)', border: '1px solid #EF444430', color: '#EF4444' }}
+                      >
+                        <Trash2 size={14} /> Excluir instância
+                      </button>
                     )}
                   </div>
                 )}
