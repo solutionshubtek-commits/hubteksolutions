@@ -1,13 +1,14 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { MessageCircle, Search, Smartphone } from 'lucide-react'
+import { MessageCircle, Search, Smartphone, Pause, Play } from 'lucide-react'
 
 interface Conversa {
   id: string
   contato_nome: string
   contato_telefone: string
   status: string
+  agente_pausado: boolean
   ultima_mensagem_em: string
   instance_name: string | null
 }
@@ -23,6 +24,7 @@ export default function ConversasPage() {
   const [carregando, setCarregando]     = useState(true)
   const [busca, setBusca]               = useState('')
   const [filtroStatus, setFiltroStatus] = useState('todos')
+  const [pausando, setPausando]         = useState<string | null>(null)
 
   useEffect(() => {
     async function fetchConversas() {
@@ -32,7 +34,6 @@ export default function ConversasPage() {
       const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
       if (!userData?.tenant_id) return
 
-      // Busca instâncias do tenant para montar mapa instance_name → apelido
       const { data: instData } = await supabase
         .from('tenant_instances')
         .select('instance_name, apelido')
@@ -45,7 +46,7 @@ export default function ConversasPage() {
       }
 
       const { data } = await supabase.from('conversations')
-        .select('id, contato_nome, contato_telefone, status, ultima_mensagem_em, instance_name')
+        .select('id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em, instance_name')
         .eq('tenant_id', userData.tenant_id)
         .order('ultima_mensagem_em', { ascending: false })
 
@@ -55,22 +56,41 @@ export default function ConversasPage() {
     fetchConversas()
   }, [])
 
+  async function handlePausarRetomar(conversa: Conversa) {
+    setPausando(conversa.id)
+    const supabase = createClient()
+    const novoPausado = !conversa.agente_pausado
+    await supabase.from('conversations').update({
+      agente_pausado: novoPausado,
+      pausado_em: novoPausado ? new Date().toISOString() : null,
+    }).eq('id', conversa.id)
+    setConversas(prev => prev.map(c => c.id === conversa.id ? { ...c, agente_pausado: novoPausado } : c))
+    setPausando(null)
+  }
+
   const conversasFiltradas = conversas.filter((c) => {
     const matchBusca = c.contato_nome?.toLowerCase().includes(busca.toLowerCase()) || c.contato_telefone?.includes(busca)
     const matchStatus = filtroStatus === 'todos' || c.status === filtroStatus
     return matchBusca && matchStatus
   })
 
-  function statusBadge(status: string) {
+  function statusBadge(c: Conversa) {
+    if (c.agente_pausado) {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B]" /> Pausado
+        </span>
+      )
+    }
     const map: Record<string, { label: string; color: string }> = {
-      ativa:     { label: 'Ativa',      color: '#10B981' },
-      pausada:   { label: 'Pausada',    color: '#F59E0B' },
+      ativa:     { label: 'Ativo',      color: '#10B981' },
       encerrada: { label: 'Encerrada', color: '#71717A' },
     }
-    const s = map[status] || { label: status, color: '#71717A' }
+    const s = map[c.status] || { label: c.status, color: '#71717A' }
     return (
-      <span className="text-xs font-medium px-2.5 py-1 rounded-full"
-        style={{ color: s.color, backgroundColor: s.color + '20' }}>
+      <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+        style={{ color: s.color, backgroundColor: s.color + '15', border: `1px solid ${s.color}30` }}>
+        <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
         {s.label}
       </span>
     )
@@ -110,7 +130,6 @@ export default function ConversasPage() {
         >
           <option value="todos">Todos</option>
           <option value="ativa">Ativas</option>
-          <option value="pausada">Pausadas</option>
           <option value="encerrada">Encerradas</option>
         </select>
       </div>
@@ -131,7 +150,7 @@ export default function ConversasPage() {
           <table className="w-full">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Contato', 'Número / Instância', 'Telefone', 'Status', 'Última Mensagem'].map(h => (
+                {['Contato', 'Número / Instância', 'Telefone', 'Status', 'Última Mensagem', 'Ações'].map(h => (
                   <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
                     style={{ color: 'var(--text-muted)' }}>{h}</th>
                 ))}
@@ -168,8 +187,22 @@ export default function ConversasPage() {
                       )}
                     </td>
                     <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{c.contato_telefone}</td>
-                    <td className="px-6 py-4">{statusBadge(c.status)}</td>
+                    <td className="px-6 py-4">{statusBadge(c)}</td>
                     <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{formatarData(c.ultima_mensagem_em)}</td>
+                    <td className="px-6 py-4">
+                      {c.status !== 'encerrada' && (
+                        <button
+                          onClick={() => handlePausarRetomar(c)}
+                          disabled={pausando === c.id}
+                          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
+                            c.agente_pausado
+                              ? 'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30'
+                              : 'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'
+                          }`}>
+                          {c.agente_pausado ? <><Play size={11} /> Retomar</> : <><Pause size={11} /> Pausar</>}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
