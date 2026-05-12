@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { History, CheckCircle, Upload, X, Settings, AlertTriangle, ChevronDown } from 'lucide-react'
+import { History, CheckCircle, Upload, X, AlertTriangle, ChevronDown } from 'lucide-react'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
@@ -67,6 +67,7 @@ export default function AdminTreinamentoPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadProgresso, setUploadProgresso] = useState('')
   const [erroUpload, setErroUpload] = useState('')
+  const [deletando, setDeletando] = useState<string | null>(null)
   const [prompt, setPrompt] = useState('')
   const [funcoes, setFuncoes] = useState<string[]>([])
   const [horaInicio, setHoraInicio] = useState('08:00')
@@ -178,8 +179,20 @@ export default function AdminTreinamentoPage() {
 
   const handleDeleteDoc = async (doc: KbDoc) => {
     if (!tenant) return
-    await supabase.from('knowledge_base').delete().eq('id', doc.id)
+    setDeletando(doc.id)
+    const { error } = await supabase.from('knowledge_base').delete().eq('id', doc.id)
+    if (error) {
+      console.error('Erro ao deletar:', error)
+      setDeletando(null)
+      return
+    }
+    const { data: lista } = await supabase.storage.from('knowledge-base').list(tenant.id)
+    const arquivo = lista?.find(f => f.name.includes(doc.nome_arquivo))
+    if (arquivo) {
+      await supabase.storage.from('knowledge-base').remove([`${tenant.id}/${arquivo.name}`])
+    }
     setDocs((prev) => prev.filter((d) => d.id !== doc.id))
+    setDeletando(null)
   }
 
   const toggleDia = (d: number) => setDias((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d])
@@ -198,7 +211,6 @@ export default function AdminTreinamentoPage() {
   return (
     <div className="p-8 w-full">
 
-      {/* Page head */}
       <div className="flex items-start justify-between mb-6">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>
@@ -223,7 +235,6 @@ export default function AdminTreinamentoPage() {
         </div>
       </div>
 
-      {/* Banner agente desconectado */}
       {!agentOn && (
         <div className="flex items-center gap-3 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl mb-4">
           <AlertTriangle size={16} className="text-red-400 shrink-0" />
@@ -234,7 +245,6 @@ export default function AdminTreinamentoPage() {
         </div>
       )}
 
-      {/* Status bar do cliente */}
       {tenant && (
         <div className="rounded-xl px-5 py-4 flex items-center justify-between mb-4"
           style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
@@ -269,10 +279,8 @@ export default function AdminTreinamentoPage() {
         </div>
       )}
 
-      {/* Grid principal */}
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
 
-        {/* Prompt */}
         <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           <div className="flex items-start justify-between mb-4">
             <div>
@@ -331,10 +339,8 @@ export default function AdminTreinamentoPage() {
           </div>
         </div>
 
-        {/* Coluna direita */}
         <div className="flex flex-col gap-4">
 
-          {/* Horário */}
           <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
             <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Horário de funcionamento</p>
             <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>O agente só responde dentro deste intervalo.</p>
@@ -362,7 +368,6 @@ export default function AdminTreinamentoPage() {
             </div>
           </div>
 
-          {/* Base de conhecimento */}
           <div className="rounded-xl p-5 flex-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
             <div className="flex items-start justify-between mb-4">
               <div>
@@ -381,7 +386,6 @@ export default function AdminTreinamentoPage() {
               </label>
             </div>
 
-            {/* Progresso */}
             {uploading && uploadProgresso && (
               <div className="flex items-center gap-2 p-3 rounded-lg mb-3"
                 style={{ background: '#10B98110', border: '1px solid #10B98130' }}>
@@ -390,7 +394,6 @@ export default function AdminTreinamentoPage() {
               </div>
             )}
 
-            {/* Erro upload */}
             {erroUpload && (
               <div className="flex items-center gap-2 p-3 rounded-lg mb-3"
                 style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
@@ -412,17 +415,16 @@ export default function AdminTreinamentoPage() {
                       {fmtBytes(doc.tamanho_bytes)} · {fmtDate(doc.criado_em)}
                     </p>
                   </div>
-                  <div className="flex gap-1 shrink-0">
-                    <button className="w-6 h-6 rounded-md flex items-center justify-center transition-colors"
-                      style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-                      <Settings size={11} />
-                    </button>
-                    <button onClick={() => handleDeleteDoc(doc)}
-                      className="w-6 h-6 rounded-md flex items-center justify-center hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                      style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-                      <X size={11} />
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => handleDeleteDoc(doc)}
+                    disabled={deletando === doc.id}
+                    className="w-6 h-6 rounded-md flex items-center justify-center hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                    style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                    {deletando === doc.id
+                      ? <div className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin" />
+                      : <X size={11} />
+                    }
+                  </button>
                 </div>
               ))}
             </div>
