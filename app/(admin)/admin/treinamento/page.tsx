@@ -121,14 +121,37 @@ export default function AdminTreinamentoPage() {
     setTenants((prev) => prev.map((t) => t.id === tenant.id ? { ...t, agente_ativo: next } : t))
   }
 
+  const DIAS_NUM_TO_STR: Record<number, string> = {
+    0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab'
+  }
+
   const handleSave = async () => {
     if (!tenant) return
     setSaving(true)
+
     await supabase.from('tenants').update({
       prompt_agente: prompt,
       horario_funcionamento: { inicio: horaInicio, fim: horaFim, dias, funcoes },
     }).eq('id', tenant.id)
-    setSaving(false); setSaved(true)
+
+    const diasStr = dias.map(d => DIAS_NUM_TO_STR[d]).filter(Boolean)
+
+    await supabase.from('agent_config').upsert({
+      tenant_id: tenant.id,
+      prompt_principal: prompt,
+      horario_inicio: horaInicio,
+      horario_fim: horaFim,
+      dias_funcionamento: diasStr,
+      motor_ia_principal: 'openai',
+      motor_ia_backup: 'anthropic',
+      ativo: true,
+      temperatura: 0.7,
+      max_tokens: 1000,
+      atualizado_em: new Date().toISOString(),
+    }, { onConflict: 'tenant_id' })
+
+    setSaving(false)
+    setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
