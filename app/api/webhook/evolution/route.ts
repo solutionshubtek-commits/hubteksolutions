@@ -68,19 +68,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const phone = extractPhone(data.key.remoteJid)
-    processIncomingMessage({
-      tenantId: tenant.id,
-      instanceName: event.instance,
-      phone,
-      pushName: data.pushName,
-      messageId: data.key.id,
-      messageKey: data.key,
-      messageType: data.messageType,
-      conteudo: extractTextContent(data),
-      caption: data.message.imageMessage?.caption,
-    }).catch(err => console.error('[webhook/evolution] Erro no processamento:', err))
-  }
-
+    try {
+      await processIncomingMessage({
+        tenantId: tenant.id,
+        instanceName: event.instance,
+        phone,
+        pushName: data.pushName,
+        messageId: data.key.id,
+        messageKey: data.key,
+        messageType: data.messageType,
+        conteudo: extractTextContent(data),
+        caption: data.message.imageMessage?.caption,
+      })
+    } catch (err) {
+      console.error('[webhook/evolution] Erro no processamento:', err)
+    }
   if (event.event === 'connection.update' && isConnectionUpdateData(event.data)) {
     const { state, statusReason } = event.data
     const isBanned = state === 'close' && statusReason === 401
