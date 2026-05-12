@@ -17,7 +17,13 @@ const WHATSAPP_STATUS: Record<string, string> = {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const headers = Object.fromEntries(request.headers.entries())
+  console.log('[webhook/evolution] Headers recebidos:', JSON.stringify(headers))
+  console.log('[webhook/evolution] Secret esperado:', process.env.EVOLUTION_WEBHOOK_SECRET)
+  
   const apikey = request.headers.get('apikey')
+  console.log('[webhook/evolution] Apikey recebida:', apikey)
+  
   if (apikey !== process.env.EVOLUTION_WEBHOOK_SECRET) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
