@@ -161,7 +161,7 @@ export default function AdminTreinamentoPage() {
       formData.append('file', file)
       formData.append('tenant_id', tenant.id)
 
-      const res = await fetch('/api/knowledge-base/upload', {
+      const res = await fetch('/api/knowledge/upload', {
         method: 'POST',
         body: formData,
       })
