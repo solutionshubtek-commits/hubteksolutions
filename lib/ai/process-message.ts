@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import {
   findOrCreateConversation,
   isAgentPaused,
+  isTenantAgentActive,
   getAgentConfig,
   getRecentMessages,
   saveMessage,
@@ -74,6 +75,10 @@ export interface ProcessMessagePayload {
 export async function processIncomingMessage(payload: ProcessMessagePayload): Promise<void> {
   const supabase = createServiceClient()
 
+  // 0. Verifica se agente global está ativo
+  const tenantAtivoGlobal = await isTenantAgentActive(supabase, payload.tenantId)
+  if (!tenantAtivoGlobal) return
+
   // 1. Encontra ou cria conversa
   const conversa = await findOrCreateConversation(
     supabase,
@@ -83,7 +88,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     payload.instanceName
   )
 
-  // 2. Agente pausado
+  // 2. Agente pausado por conversa
   const pausado = await isAgentPaused(supabase, conversa.id)
   if (pausado) return
 
