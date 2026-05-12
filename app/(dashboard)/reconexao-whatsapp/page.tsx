@@ -198,7 +198,7 @@ export default function ReconexaoWhatsAppPage() {
                       </div>
                     </div>
                     <div className="flex gap-2">
-                    {!pedindoConfirm && (
+                      {!pedindoConfirm && (
                         <button
                           onClick={() => setConfirmDesconectar(inst.instance_name)}
                           className="flex-1 flex items-center justify-center gap-1.5 text-sm font-medium py-2 rounded-lg transition-colors"
@@ -207,7 +207,7 @@ export default function ReconexaoWhatsAppPage() {
                           <LogOut size={13} /> Desconectar número
                         </button>
                       )}
-                      
+                      <a
                         href="https://wa.me/5551980104924"
                         target="_blank"
                         rel="noopener noreferrer"

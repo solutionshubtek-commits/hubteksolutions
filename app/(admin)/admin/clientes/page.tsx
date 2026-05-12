@@ -578,7 +578,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                               >
                                 <LogOut size={12} /> Desconectar número
                               </button>
-                              
+                              <a
                                 href="https://wa.me/5551980104924"
                                 target="_blank"
                                 rel="noopener noreferrer"
