@@ -15,7 +15,6 @@ export async function getTenantBySlug(
   return data as { id: string } | null
 }
 
-// Nova função: busca tenant pelo instance_name via tabela tenant_instances
 export async function getTenantByInstanceName(
   supabase: SupabaseClient,
   instanceName: string
@@ -77,6 +76,21 @@ export async function isAgentPaused(
     .single()
 
   return data?.agente_pausado === true
+}
+
+export async function isTenantAgentActive(
+  supabase: SupabaseClient,
+  tenantId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('tenants')
+    .select('agente_ativo, pausado_por_admin')
+    .eq('id', tenantId)
+    .single()
+
+  if (!data) return false
+  if (data.pausado_por_admin) return false
+  return data.agente_ativo ?? true
 }
 
 export async function getAgentConfig(
