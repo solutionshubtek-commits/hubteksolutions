@@ -17,13 +17,7 @@ const WHATSAPP_STATUS: Record<string, string> = {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const headers = Object.fromEntries(request.headers.entries())
-  console.log('[webhook/evolution] Headers recebidos:', JSON.stringify(headers))
-  console.log('[webhook/evolution] Secret esperado:', process.env.EVOLUTION_WEBHOOK_SECRET)
-  
   const apikey = request.headers.get('apikey')
-  console.log('[webhook/evolution] Apikey recebida:', apikey)
-  
   if (apikey !== process.env.EVOLUTION_WEBHOOK_SECRET) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
@@ -37,35 +31,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const event = parseWebhookEvent(body)
   if (!event) {
-    console.log('[webhook/evolution] Payload inválido. Body:', JSON.stringify(body))
     return NextResponse.json({ error: 'Payload inválido' }, { status: 400 })
   }
-
-  console.log('[webhook/evolution] Evento:', event.event, '| Instância:', event.instance)
 
   const response = NextResponse.json({ received: true })
 
   if (event.event === 'messages.upsert' && isMessageUpsertData(event.data)) {
     const data = event.data
-    console.log('[webhook/evolution] Mensagem - fromMe:', data.key.fromMe, '| remoteJid:', data.key.remoteJid)
-    
-    if (data.key.fromMe) {
-      console.log('[webhook/evolution] Ignorado: mensagem própria')
-      return response
-    }
-    if (data.key.remoteJid.includes('@g.us')) {
-      console.log('[webhook/evolution] Ignorado: grupo')
-      return response
-    }
+    if (data.key.fromMe) return response
+    if (data.key.remoteJid.includes('@g.us')) return response
 
     const supabase = createServiceClient()
     const tenant = await getTenantByInstanceName(supabase, event.instance)
-    console.log('[webhook/evolution] Tenant encontrado:', tenant?.id ?? 'NENHUM')
-    
-    if (!tenant) {
-      console.error(`[webhook/evolution] Nenhum tenant ativo para instância: ${event.instance}`)
-      return response
-    }
+    if (!tenant) return response
 
     const phone = extractPhone(data.key.remoteJid)
     try {
