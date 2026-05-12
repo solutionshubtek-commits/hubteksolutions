@@ -28,7 +28,20 @@ const FUNCOES = [
 ]
 const DOC_ICON: Record<string, string> = {
   pdf: '📄', docx: '📝', doc: '📝', txt: '📃', xlsx: '📊', xls: '📊',
+  'image/jpeg': '🖼️', 'image/png': '🖼️', 'image/webp': '🖼️',
 }
+
+const TIPOS_ACEITOS_UPLOAD = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+  'text/plain',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]
 
 function fmtBytes(b: number) {
   if (b >= 1_048_576) return (b / 1_048_576).toFixed(1) + ' MB'
@@ -52,6 +65,8 @@ export default function AdminTreinamentoPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgresso, setUploadProgresso] = useState('')
+  const [erroUpload, setErroUpload] = useState('')
   const [prompt, setPrompt] = useState('')
   const [funcoes, setFuncoes] = useState<string[]>([])
   const [horaInicio, setHoraInicio] = useState('08:00')
@@ -119,20 +134,45 @@ export default function AdminTreinamentoPage() {
   const handleUpload = async (files: FileList | null) => {
     if (!files || !tenant) return
     setUploading(true)
+    setErroUpload('')
+
     for (const file of Array.from(files)) {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-      if (!['pdf', 'docx', 'doc', 'txt', 'xlsx', 'xls'].includes(ext)) continue
-      if (file.size > 50 * 1024 * 1024) continue
-      const path = `${tenant.id}/${Date.now()}_${file.name}`
-      const { error: storageErr } = await supabase.storage.from('knowledge-base').upload(path, file)
-      if (storageErr) continue
-      const conteudo_texto = ext === 'txt' ? await file.text() : null
-      await supabase.from('knowledge_base').insert({
-        tenant_id: tenant.id, nome_arquivo: file.name, tipo: ext,
-        conteudo_texto, tamanho_bytes: file.size,
+      const isImagem = ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)
+      const limiteBytes = isImagem ? 5 * 1024 * 1024 : 50 * 1024 * 1024
+
+      if (!TIPOS_ACEITOS_UPLOAD.includes(file.type)) {
+        setErroUpload(`Formato não suportado: ${file.name}`)
+        continue
+      }
+      if (file.size > limiteBytes) {
+        setErroUpload(`Arquivo muito grande: ${file.name} (máx. ${isImagem ? '5MB' : '50MB'})`)
+        continue
+      }
+
+      if (isImagem) {
+        setUploadProgresso(`Analisando imagem: ${file.name}...`)
+      } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        setUploadProgresso(`Extraindo texto: ${file.name}...`)
+      } else {
+        setUploadProgresso(`Enviando: ${file.name}...`)
+      }
+
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('tenant_id', tenant.id)
+
+      const res = await fetch('/api/knowledge-base/upload', {
+        method: 'POST',
+        body: formData,
       })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        setErroUpload(data.error ?? `Erro ao enviar ${file.name}`)
+      }
     }
+
     setUploading(false)
+    setUploadProgresso('')
     loadDocs(tenant.id)
   }
 
@@ -334,10 +374,29 @@ export default function AdminTreinamentoPage() {
               <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#10B981] hover:bg-[#059669] text-white rounded-lg cursor-pointer transition-colors">
                 <Upload size={12} />
                 {uploading ? 'Enviando...' : 'Upload'}
-                <input type="file" multiple accept=".pdf,.docx,.doc,.txt,.xlsx,.xls" className="hidden"
+                <input type="file" multiple
+                  accept=".pdf,.docx,.doc,.txt,.xlsx,.xls,image/jpeg,image/png,image/webp"
+                  className="hidden"
                   onChange={(e) => handleUpload(e.target.files)} />
               </label>
             </div>
+
+            {/* Progresso */}
+            {uploading && uploadProgresso && (
+              <div className="flex items-center gap-2 p-3 rounded-lg mb-3"
+                style={{ background: '#10B98110', border: '1px solid #10B98130' }}>
+                <div className="w-3 h-3 rounded-full border-2 border-[#10B981] border-t-transparent animate-spin flex-shrink-0" />
+                <p className="text-xs text-[#10B981]">{uploadProgresso}</p>
+              </div>
+            )}
+
+            {/* Erro upload */}
+            {erroUpload && (
+              <div className="flex items-center gap-2 p-3 rounded-lg mb-3"
+                style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                <p className="text-xs text-red-400">{erroUpload}</p>
+              </div>
+            )}
 
             <div className="flex flex-col gap-2 mb-3">
               {docs.map((doc) => (
@@ -373,9 +432,13 @@ export default function AdminTreinamentoPage() {
               <Upload size={20} style={{ color: 'var(--text-muted)' }} />
               <div>
                 <p className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Arraste ou clique para upload</p>
-                <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-label)' }}>PDF · DOCX · TXT · XLSX · até 50 MB</p>
+                <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-label)' }}>
+                  PDF · DOCX · TXT · XLSX · JPG · PNG · WEBP
+                </p>
               </div>
-              <input type="file" multiple accept=".pdf,.docx,.doc,.txt,.xlsx,.xls" className="hidden"
+              <input type="file" multiple
+                accept=".pdf,.docx,.doc,.txt,.xlsx,.xls,image/jpeg,image/png,image/webp"
+                className="hidden"
                 onChange={(e) => handleUpload(e.target.files)} />
             </label>
           </div>
