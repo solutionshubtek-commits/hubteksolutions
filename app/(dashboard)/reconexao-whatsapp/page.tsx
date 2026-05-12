@@ -284,7 +284,7 @@ export default function ReconexaoWhatsAppPage() {
                     {pedindoConfirmExcluir ? (
                       <div className="rounded-lg p-4 space-y-3"
                         style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
-                        <p className="text-sm font-medium text-red-400">Excluir "{inst.apelido}" permanentemente?</p>
+                        <p className="text-sm font-medium text-red-400">Excluir &quot;{inst.apelido}&quot; permanentemente?</p>
                         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                           A instância será removida do sistema. Esta ação não pode ser desfeita.
                         </p>
