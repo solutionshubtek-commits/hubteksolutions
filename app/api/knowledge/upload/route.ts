@@ -42,6 +42,18 @@ async function describeImage(base64: string, mimetype: string, filename: string)
   return response.choices[0]?.message?.content ?? ''
 }
 
+async function extractPdfText(buffer: Buffer): Promise<string> {
+  try {
+    const { extractText } = await import('unpdf')
+    const uint8Array = new Uint8Array(buffer)
+    const { text } = await extractText(uint8Array, { mergePages: true })
+    return text ?? ''
+  } catch (err) {
+    console.error('Erro ao extrair PDF com unpdf:', err)
+    return ''
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
@@ -94,15 +106,7 @@ export async function POST(request: NextRequest) {
     } else if (file.type === 'text/plain') {
       conteudo = buffer.toString('utf-8')
     } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pdfParseModule = await import('pdf-parse') as any
-        const pdfParse = pdfParseModule.default ?? pdfParseModule
-        const parsed = await pdfParse(buffer)
-        conteudo = parsed.text ?? ''
-      } catch (err) {
-        console.error('Erro ao extrair PDF:', err)
-      }
+      conteudo = await extractPdfText(buffer)
     } else if (
       file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
       file.name.endsWith('.docx')
