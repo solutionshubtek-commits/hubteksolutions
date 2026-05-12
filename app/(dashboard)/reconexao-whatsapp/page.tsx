@@ -198,7 +198,7 @@ export default function ReconexaoWhatsAppPage() {
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      {!pedindoConfirm && (
+                    {!pedindoConfirm && (
                         <button
                           onClick={() => setConfirmDesconectar(inst.instance_name)}
                           className="flex-1 flex items-center justify-center gap-1.5 text-sm font-medium py-2 rounded-lg transition-colors"
