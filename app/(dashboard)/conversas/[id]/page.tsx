@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, Pause, Play, Send, Bot, Headphones, Paperclip, X, Image } from 'lucide-react'
+import { ArrowLeft, Pause, Play, Send, Bot, Headphones, Paperclip, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface Mensagem {
@@ -196,7 +196,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     setEnviando(true)
 
     try {
-      // Envia texto primeiro se tiver
       if (temTexto && !temArquivo) {
         const msg = texto.trim()
         setTexto('')
@@ -214,7 +213,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         if (!res.ok) setTexto(msg)
       }
 
-      // Envia arquivo se tiver (com caption se tiver texto junto)
       if (temArquivo) {
         setUploadando(true)
         const caption = temTexto ? texto.trim() : ''
@@ -360,6 +358,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                     {msg.arquivo_url ? (
                       msg.tipo === 'imagem' ? (
                         <div className="flex flex-col gap-1">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={msg.arquivo_url} alt="imagem" className="rounded-lg max-w-[200px] max-h-[200px] object-cover" />
                           {msg.conteudo && msg.conteudo !== 'undefined' && (
                             <span className="text-xs">{msg.conteudo}</span>
@@ -405,12 +404,12 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           </div>
         ) : (
           <div className="space-y-2">
-            {/* Preview arquivo */}
             {arquivo && (
               <div className="rounded-lg overflow-hidden"
                 style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
                 {arquivoPreview ? (
                   <div className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={arquivoPreview} alt="preview" className="max-h-32 w-full object-contain" />
                     <button onClick={limparArquivo}
                       className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
