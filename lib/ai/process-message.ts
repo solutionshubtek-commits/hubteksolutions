@@ -75,10 +75,6 @@ export interface ProcessMessagePayload {
 export async function processIncomingMessage(payload: ProcessMessagePayload): Promise<void> {
   const supabase = createServiceClient()
 
-  // 0. Verifica se agente global está ativo
-  const tenantAtivoGlobal = await isTenantAgentActive(supabase, payload.tenantId)
-  if (!tenantAtivoGlobal) return
-
   // 1. Encontra conversa ativa ou cria nova (nova mensagem após 24h = nova conversa)
   const conversa = await reativarOuCriarConversa(
     supabase,
@@ -88,7 +84,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     payload.instanceName
   )
 
-  // 2. Persiste mensagem do cliente SEMPRE (independente de pause ou horário)
+  // 2. Persiste mensagem do cliente SEMPRE (independente de pause, horário ou agente global)
   let tipoDb = 'texto'
   if (payload.messageType === 'audioMessage') tipoDb = 'audio'
   else if (payload.messageType === 'imageMessage') tipoDb = 'imagem'
@@ -106,15 +102,19 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   await updateConversationTimestamp(supabase, conversa.id)
 
-  // 3. Agente pausado — salva mensagem mas não responde
+  // 3. Verifica se agente global está ativo — salva mensagem mas não responde se inativo
+  const tenantAtivoGlobal = await isTenantAgentActive(supabase, payload.tenantId)
+  if (!tenantAtivoGlobal) return
+
+  // 4. Agente pausado por conversa — salva mensagem mas não responde
   const pausado = await isAgentPaused(supabase, conversa.id)
   if (pausado) return
 
-  // 4. Config do agente
+  // 5. Config do agente
   const config = await getAgentConfig(supabase, payload.tenantId)
   if (!config || !config.ativo) return
 
-  // 5. Fora do horário
+  // 6. Fora do horário
   const dentroDoHorario = isWithinOperatingHours(
     config.horario_inicio,
     config.horario_fim,
@@ -125,7 +125,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     return
   }
 
-  // 6. Processa mídia
+  // 7. Processa mídia
   let conteudoProcessado = payload.conteudo ?? ''
 
   if (payload.messageType === 'audioMessage') {
@@ -153,7 +153,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!conteudoProcessado.trim()) return
 
-  // 7. Busca semântica
+  // 8. Busca semântica
   let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number }> = []
   try {
     const embedding = await generateEmbedding(conteudoProcessado)
@@ -168,7 +168,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     console.error('[process-message] Falha na busca semântica:', err)
   }
 
-  // 8. Histórico
+  // 9. Histórico
   const historico = await getRecentMessages(supabase, conversa.id, 10)
   const chatMessages: ChatMessage[] = [
     { role: 'system', content: buildSystemPrompt(config.prompt_principal ?? '', knowledgeDocs) },
@@ -179,7 +179,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     { role: 'user', content: conteudoProcessado },
   ]
 
-  // 9. Geração de resposta com failover
+  // 10. Geração de resposta com failover
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
   let motorUsado = config.motor_ia_principal
   const chatConfig = { temperature: Number(config.temperatura), maxTokens: config.max_tokens }
@@ -203,7 +203,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!resultado?.content) return
 
-  // 10. Salva resposta e envia
+  // 11. Salva resposta e envia
   await saveMessage(supabase, {
     conversationId: conversa.id,
     tenantId: payload.tenantId,
@@ -216,7 +216,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   await sendTextMessage(payload.instanceName, payload.phone, resultado.content)
   await updateConversationTimestamp(supabase, conversa.id)
 
-  // 11. Registra uso de IA
+  // 12. Registra uso de IA
   await logAiUsage(supabase, {
     tenantId: payload.tenantId,
     conversationId: conversa.id,
