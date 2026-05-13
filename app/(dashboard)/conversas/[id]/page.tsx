@@ -275,7 +275,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
         {mensagens.map((msg, i) => {
           const isCliente = msg.origem === 'cliente' && !msg.from_me
-          const isClienteWeb = msg.origem === 'cliente' && !!msg.from_me
+          const isClienteWeb = msg.origem === 'operador' && !!msg.from_me
           const isAgente = msg.origem === 'agente'
           const isOperador = msg.origem === 'operador'
           const showDate = i === 0 || new Date(msg.criado_em).toDateString() !== new Date(mensagens[i - 1].criado_em).toDateString()
