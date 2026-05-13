@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, Pause, Play, Send, Bot, Headphones } from 'lucide-react'
+import { ArrowLeft, Pause, Play, Send, Bot, Headphones, Paperclip, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface Mensagem {
@@ -9,6 +9,7 @@ interface Mensagem {
   origem: string
   tipo: string
   conteudo: string
+  arquivo_url: string | null
   criado_em: string
 }
 
@@ -30,17 +31,19 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const [pausando, setPausando] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [texto, setTexto] = useState('')
+  const [arquivo, setArquivo] = useState<File | null>(null)
+  const [uploadando, setUploadando] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    bottomRef.current?.scrollIntoView({ behavior })
   }, [])
 
   useEffect(() => {
     async function carregar() {
       const supabase = createClient()
-
       const { data: conv } = await supabase
         .from('conversations')
         .select('id, contato_nome, contato_telefone, status, agente_pausado, instance_name, tenant_id')
@@ -52,22 +55,23 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
       const { data: msgs } = await supabase
         .from('messages')
-        .select('id, origem, tipo, conteudo, criado_em')
+        .select('id, origem, tipo, conteudo, arquivo_url, criado_em')
         .eq('conversation_id', params.id)
         .order('criado_em', { ascending: true })
 
       setMensagens(msgs || [])
       setCarregando(false)
-      setTimeout(scrollToBottom, 100)
+      setTimeout(() => scrollToBottom('auto'), 100)
     }
     carregar()
   }, [params.id, router, scrollToBottom])
 
-  // Realtime — novas mensagens
+  // Realtime
   useEffect(() => {
     const supabase = createClient()
-    const channel = supabase
-      .channel(`messages:${params.id}`)
+
+    const msgChannel = supabase
+      .channel(`conv-messages-${params.id}`)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
@@ -79,11 +83,26 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           if (prev.find(m => m.id === nova.id)) return prev
           return [...prev, nova]
         })
-        setTimeout(scrollToBottom, 50)
+        setTimeout(() => scrollToBottom('smooth'), 50)
       })
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
+    const convChannel = supabase
+      .channel(`conv-status-${params.id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'conversations',
+        filter: `id=eq.${params.id}`,
+      }, (payload) => {
+        setConversa(prev => prev ? { ...prev, ...payload.new } : prev)
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(msgChannel)
+      supabase.removeChannel(convChannel)
+    }
   }, [params.id, scrollToBottom])
 
   async function handlePausarRetomar() {
@@ -97,10 +116,41 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     }).eq('id', conversa.id)
     setConversa(prev => prev ? { ...prev, agente_pausado: novoPausado } : prev)
     setPausando(false)
+    if (novoPausado) setTimeout(() => inputRef.current?.focus(), 100)
+  }
+
+  async function handleEnviarArquivo(file: File) {
+    if (!conversa) return
+    setUploadando(true)
+
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('conversation_id', conversa.id)
+    formData.append('tenant_id', conversa.tenant_id)
+    formData.append('instance_name', conversa.instance_name ?? '')
+    formData.append('telefone', conversa.contato_telefone)
+
+    const res = await fetch('/api/whatsapp/enviar-midia', {
+      method: 'POST',
+      body: formData,
+    })
+
+    setUploadando(false)
+    setArquivo(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+
+    if (!res.ok) console.error('Erro ao enviar arquivo')
   }
 
   async function handleEnviar() {
-    if (!texto.trim() || !conversa || enviando) return
+    if (enviando || uploadando) return
+
+    if (arquivo) {
+      await handleEnviarArquivo(arquivo)
+      return
+    }
+
+    if (!texto.trim() || !conversa) return
     const msg = texto.trim()
     setTexto('')
     setEnviando(true)
@@ -118,7 +168,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     })
 
     setEnviando(false)
-    if (!res.ok) setTexto(msg) // devolve o texto se falhar
+    if (!res.ok) setTexto(msg)
     inputRef.current?.focus()
   }
 
@@ -127,6 +177,11 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       e.preventDefault()
       handleEnviar()
     }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) setArquivo(file)
   }
 
   function formatarHora(iso: string) {
@@ -169,8 +224,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           </p>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{conversa.contato_telefone}</p>
         </div>
-
-        {/* Status agente */}
         <div className="flex items-center gap-2">
           {conversa.agente_pausado ? (
             <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
@@ -215,19 +268,23 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                 </div>
               )}
               <div className={`flex ${isCliente ? 'justify-start' : 'justify-end'}`}>
-                <div className={`max-w-[75%] ${isCliente ? '' : 'items-end'} flex flex-col gap-0.5`}>
-                  {/* Label origem */}
+                <div className={`max-w-[75%] flex flex-col gap-0.5 ${isCliente ? '' : 'items-end'}`}>
                   {isOperador && (
                     <span className="text-[10px] px-1" style={{ color: '#818CF8' }}>Você (operador)</span>
                   )}
-                  <div className="px-3 py-2 rounded-2xl text-sm leading-relaxed"
+                  <div className="px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
                     style={isCliente
                       ? { background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderBottomLeftRadius: 4 }
                       : isOperador
                       ? { background: '#6366F118', color: 'var(--text-primary)', border: '1px solid #6366F130', borderBottomRightRadius: 4 }
                       : { background: '#10B98118', color: 'var(--text-primary)', border: '1px solid #10B98130', borderBottomRightRadius: 4 }
                     }>
-                    {msg.conteudo}
+                    {msg.arquivo_url ? (
+                      <a href={msg.arquivo_url} target="_blank" rel="noopener noreferrer"
+                        className="underline text-blue-400 text-xs">
+                        📎 {msg.conteudo || 'Arquivo anexado'}
+                      </a>
+                    ) : msg.conteudo}
                   </div>
                   <span className="text-[10px] px-1" style={{ color: 'var(--text-muted)' }}>
                     {formatarHora(msg.criado_em)}
@@ -247,21 +304,50 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
         {conversa.status === 'encerrada' ? (
           <p className="text-center text-sm py-2" style={{ color: 'var(--text-muted)' }}>Conversa encerrada</p>
+        ) : !conversa.agente_pausado ? (
+          <div className="flex items-center justify-center gap-2 py-1">
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Pause o agente para responder manualmente
+            </p>
+            <button onClick={handlePausarRetomar} disabled={pausando}
+              className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors"
+              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
+              <Pause size={10} /> Pausar
+            </button>
+          </div>
         ) : (
-          <div className="flex items-end gap-2">
-            {!conversa.agente_pausado && (
-              <p className="text-xs mb-2 flex-1 text-center" style={{ color: 'var(--text-muted)' }}>
-                Pause o agente para responder manualmente
-              </p>
+          <div className="space-y-2">
+            {/* Preview arquivo */}
+            {arquivo && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+                style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+                <Paperclip size={13} style={{ color: '#818CF8' }} />
+                <span className="text-xs flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>{arquivo.name}</span>
+                <button onClick={() => { setArquivo(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+                  style={{ color: 'var(--text-muted)' }}>
+                  <X size={13} />
+                </button>
+              </div>
             )}
-            {conversa.agente_pausado && (
-              <>
+            <div className="flex items-end gap-2">
+              {/* Botão anexar */}
+              <button onClick={() => fileInputRef.current?.click()}
+                className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
+                style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                <Paperclip size={15} />
+              </button>
+              <input ref={fileInputRef} type="file"
+                accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx"
+                onChange={handleFileChange} className="hidden" />
+
+              {/* Campo texto */}
+              {!arquivo && (
                 <textarea
                   ref={inputRef}
                   value={texto}
                   onChange={(e) => setTexto(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Digite uma mensagem..."
+                  placeholder="Digite uma mensagem... (Enter para enviar)"
                   rows={1}
                   className="flex-1 rounded-2xl px-4 py-2.5 text-sm focus:outline-none resize-none"
                   style={{
@@ -272,18 +358,21 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                     overflowY: 'auto',
                   }}
                 />
-                <button
-                  onClick={handleEnviar}
-                  disabled={!texto.trim() || enviando}
-                  className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
-                  style={{ background: '#10B981', color: '#fff' }}>
-                  {enviando
-                    ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    : <Send size={16} />
-                  }
-                </button>
-              </>
-            )}
+              )}
+              {arquivo && <div className="flex-1" />}
+
+              {/* Botão enviar */}
+              <button
+                onClick={handleEnviar}
+                disabled={(!texto.trim() && !arquivo) || enviando || uploadando}
+                className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
+                style={{ background: '#10B981', color: '#fff' }}>
+                {enviando || uploadando
+                  ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : <Send size={15} />
+                }
+              </button>
+            </div>
           </div>
         )}
       </div>
