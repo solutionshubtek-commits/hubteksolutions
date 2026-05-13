@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/verificar-expiracao",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/encerrar-conversas",
+      "schedule": "0 * * * *"
     }
   ]
 }
