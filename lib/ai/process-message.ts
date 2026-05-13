@@ -88,26 +88,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     payload.instanceName
   )
 
-  // 2. Agente pausado por conversa
-  const pausado = await isAgentPaused(supabase, conversa.id)
-  if (pausado) return
-
-  // 3. Config do agente
-  const config = await getAgentConfig(supabase, payload.tenantId)
-  if (!config || !config.ativo) return
-
-  // 4. Fora do horário
-  const dentroDoHorario = isWithinOperatingHours(
-    config.horario_inicio,
-    config.horario_fim,
-    config.dias_funcionamento
-  )
-  if (!dentroDoHorario) {
-    await sendTextMessage(payload.instanceName, payload.phone, config.mensagem_ausencia)
-    return
-  }
-
-  // 5. Persiste mensagem do cliente
+  // 2. Persiste mensagem do cliente SEMPRE (independente de pause ou horário)
   let tipoDb = 'texto'
   if (payload.messageType === 'audioMessage') tipoDb = 'audio'
   else if (payload.messageType === 'imageMessage') tipoDb = 'imagem'
@@ -122,6 +103,27 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     conteudo: payload.conteudo,
     metadata: { messageId: payload.messageId, pushName: payload.pushName },
   })
+
+  await updateConversationTimestamp(supabase, conversa.id)
+
+  // 3. Agente pausado — salva mensagem mas não responde
+  const pausado = await isAgentPaused(supabase, conversa.id)
+  if (pausado) return
+
+  // 4. Config do agente
+  const config = await getAgentConfig(supabase, payload.tenantId)
+  if (!config || !config.ativo) return
+
+  // 5. Fora do horário
+  const dentroDoHorario = isWithinOperatingHours(
+    config.horario_inicio,
+    config.horario_fim,
+    config.dias_funcionamento
+  )
+  if (!dentroDoHorario) {
+    await sendTextMessage(payload.instanceName, payload.phone, config.mensagem_ausencia)
+    return
+  }
 
   // 6. Processa mídia
   let conteudoProcessado = payload.conteudo ?? ''
