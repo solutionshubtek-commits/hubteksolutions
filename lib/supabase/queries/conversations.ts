@@ -211,7 +211,7 @@ export async function reativarOuCriarConversa(
     .eq('tenant_id', tenantId)
     .eq('contato_telefone', phone)
     .eq('instance_name', instanceName ?? '')
-    .neq('status', 'encerrada')
+    .not('status', 'in', '("encerrada","encerrado")')
     .order('criado_em', { ascending: false })
     .limit(1)
     .maybeSingle()
