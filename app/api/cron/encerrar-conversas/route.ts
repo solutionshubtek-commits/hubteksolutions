@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const { data: conversas, error } = await supabase
     .from('conversations')
     .select('id, ultima_mensagem_em')
-    .eq('status', 'ativa')
+    .in('status', ['ativa', 'ativo'])
     .lt('ultima_mensagem_em', limite)
 
   if (error) {
