@@ -73,7 +73,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       await supabase.from('messages').insert({
         conversation_id: conv.id,
-        origem: 'cliente',
+        origem: 'operador',
         conteudo,
         from_me: true,
         criado_em: new Date().toISOString(),
