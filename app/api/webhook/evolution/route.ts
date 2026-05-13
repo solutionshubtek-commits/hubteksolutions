@@ -36,28 +36,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (event.event === 'messages.upsert' && isMessageUpsertData(event.data)) {
     const data = event.data
 
-    console.log('[webhook] messages.upsert recebido', {
-      fromMe: data.key.fromMe,
-      remoteJid: data.key.remoteJid,
-      messageType: data.messageType,
-      conteudo: extractTextContent(data)?.slice(0, 50),
-    })
-
     if (data.key.fromMe) {
-      console.log('[webhook] fromMe=true — salvando sem processar')
-
       const supabase = createServiceClient()
       const tenant = await getTenantByInstanceName(supabase, event.instance)
       if (!tenant) return response
 
       const phone = extractPhone(data.key.remoteJid)
       const conteudo = extractTextContent(data)
-
-      console.log('[webhook] fromMe debug', { phone, remoteJid: data.key.remoteJid, conteudo: conteudo?.slice(0, 30) })
-
       if (!conteudo) return response
 
-      const { data: conv, error: convError } = await supabase
+      const { data: conv } = await supabase
         .from('conversations')
         .select('id, contato_telefone, status')
         .eq('tenant_id', tenant.id)
@@ -66,8 +54,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .order('criado_em', { ascending: false })
         .limit(1)
         .single()
-
-      console.log('[webhook] fromMe conv encontrada', { conv, convError })
 
       if (!conv) return response
 
@@ -82,20 +68,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return response
     }
 
-    if (data.key.remoteJid.includes('@g.us')) {
-      console.log('[webhook] Descartado: grupo')
-      return response
-    }
+    if (data.key.remoteJid.includes('@g.us')) return response
 
     const supabase = createServiceClient()
     const tenant = await getTenantByInstanceName(supabase, event.instance)
-    if (!tenant) {
-      console.log('[webhook] Descartado: tenant não encontrado para instance', event.instance)
-      return response
-    }
+    if (!tenant) return response
 
     const phone = extractPhone(data.key.remoteJid)
-    console.log('[webhook] Processando mensagem do cliente', { phone, tenantId: tenant.id })
 
     try {
       await processIncomingMessage({
@@ -109,7 +88,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         conteudo: extractTextContent(data),
         caption: data.message.imageMessage?.caption,
       })
-      console.log('[webhook] Mensagem processada com sucesso', { phone })
     } catch (err) {
       console.error('[webhook/evolution] Erro no processamento:', err)
     }
