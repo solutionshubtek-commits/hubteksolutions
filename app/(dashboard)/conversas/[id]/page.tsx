@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, Pause, Play, Send, Bot, User, Headphones } from 'lucide-react'
+import { ArrowLeft, Pause, Play, Send, Bot, Headphones } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface Mensagem {
