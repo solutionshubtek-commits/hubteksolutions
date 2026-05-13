@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, Pause, Play, Send, Bot, Headphones, Paperclip, X } from 'lucide-react'
+import { ArrowLeft, Pause, Play, Send, Bot, Headphones, Paperclip, X, Image } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface Mensagem {
@@ -33,6 +33,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const [enviando, setEnviando] = useState(false)
   const [texto, setTexto] = useState('')
   const [arquivo, setArquivo] = useState<File | null>(null)
+  const [arquivoPreview, setArquivoPreview] = useState<string | null>(null)
   const [uploadando, setUploadando] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -89,9 +90,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           setTimeout(() => scrollToBottom('smooth'), 50)
         })
         .subscribe((status) => {
-          if (status === 'CHANNEL_ERROR') {
-            setTimeout(subscribe, 3000)
-          }
+          if (status === 'CHANNEL_ERROR') setTimeout(subscribe, 3000)
         })
 
       convChannel = supabase
@@ -147,51 +146,101 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     if (novoPausado) setTimeout(() => inputRef.current?.focus(), 100)
   }
 
-  async function handleEnviarArquivo(file: File) {
-    if (!conversa) return
-    setUploadando(true)
+  function selecionarArquivo(file: File) {
+    setArquivo(file)
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = (e) => setArquivoPreview(e.target?.result as string)
+      reader.readAsDataURL(file)
+    } else {
+      setArquivoPreview(null)
+    }
+    setTimeout(() => inputRef.current?.focus(), 100)
+  }
 
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('conversation_id', conversa.id)
-    formData.append('tenant_id', conversa.tenant_id)
-    formData.append('instance_name', conversa.instance_name ?? '')
-    formData.append('telefone', conversa.contato_telefone)
-
-    const res = await fetch('/api/whatsapp/enviar-midia', {
-      method: 'POST',
-      body: formData,
-    })
-
-    setUploadando(false)
+  function limparArquivo() {
     setArquivo(null)
+    setArquivoPreview(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
-    if (!res.ok) console.error('Erro ao enviar arquivo')
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) selecionarArquivo(file)
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (file) {
+          const named = new File([file], `imagem_${Date.now()}.png`, { type: file.type })
+          selecionarArquivo(named)
+        }
+        break
+      }
+    }
   }
 
   async function handleEnviar() {
-    if (enviando || uploadando) return
-    if (arquivo) { await handleEnviarArquivo(arquivo); return }
-    if (!texto.trim() || !conversa) return
-    const msg = texto.trim()
-    setTexto('')
+    if (enviando || uploadando || !conversa) return
+
+    const temTexto = texto.trim().length > 0
+    const temArquivo = !!arquivo
+
+    if (!temTexto && !temArquivo) return
+
     setEnviando(true)
 
-    const res = await fetch('/api/whatsapp/enviar-mensagem', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        conversation_id: conversa.id,
-        tenant_id: conversa.tenant_id,
-        instance_name: conversa.instance_name,
-        telefone: conversa.contato_telefone,
-        mensagem: msg,
-      }),
-    })
+    try {
+      // Envia texto primeiro se tiver
+      if (temTexto && !temArquivo) {
+        const msg = texto.trim()
+        setTexto('')
+        const res = await fetch('/api/whatsapp/enviar-mensagem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: conversa.id,
+            tenant_id: conversa.tenant_id,
+            instance_name: conversa.instance_name,
+            telefone: conversa.contato_telefone,
+            mensagem: msg,
+          }),
+        })
+        if (!res.ok) setTexto(msg)
+      }
 
-    setEnviando(false)
-    if (!res.ok) setTexto(msg)
-    inputRef.current?.focus()
+      // Envia arquivo se tiver (com caption se tiver texto junto)
+      if (temArquivo) {
+        setUploadando(true)
+        const caption = temTexto ? texto.trim() : ''
+        setTexto('')
+
+        const formData = new FormData()
+        formData.append('file', arquivo!)
+        formData.append('conversation_id', conversa.id)
+        formData.append('tenant_id', conversa.tenant_id)
+        formData.append('instance_name', conversa.instance_name ?? '')
+        formData.append('telefone', conversa.contato_telefone)
+        if (caption) formData.append('caption', caption)
+
+        const res = await fetch('/api/whatsapp/enviar-midia', {
+          method: 'POST',
+          body: formData,
+        })
+
+        setUploadando(false)
+        limparArquivo()
+        if (!res.ok) console.error('Erro ao enviar arquivo')
+      }
+    } finally {
+      setEnviando(false)
+      inputRef.current?.focus()
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -199,11 +248,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       e.preventDefault()
       handleEnviar()
     }
-  }
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (file) setArquivo(file)
   }
 
   function formatarHora(iso: string) {
@@ -314,10 +358,19 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                       : { background: '#10B98118', color: 'var(--text-primary)', border: '1px solid #10B98130', borderBottomRightRadius: 4 }
                     }>
                     {msg.arquivo_url ? (
-                      <a href={msg.arquivo_url} target="_blank" rel="noopener noreferrer"
-                        className="underline text-blue-400 text-xs">
-                        📎 {msg.conteudo || 'Arquivo anexado'}
-                      </a>
+                      msg.tipo === 'imagem' ? (
+                        <div className="flex flex-col gap-1">
+                          <img src={msg.arquivo_url} alt="imagem" className="rounded-lg max-w-[200px] max-h-[200px] object-cover" />
+                          {msg.conteudo && msg.conteudo !== 'undefined' && (
+                            <span className="text-xs">{msg.conteudo}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <a href={msg.arquivo_url} target="_blank" rel="noopener noreferrer"
+                          className="underline text-blue-400 text-xs">
+                          📎 {msg.conteudo || 'Arquivo anexado'}
+                        </a>
+                      )
                     ) : msg.conteudo}
                   </div>
                   <span className="text-[10px] px-1" style={{ color: 'var(--text-muted)' }}>
@@ -352,17 +405,31 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           </div>
         ) : (
           <div className="space-y-2">
+            {/* Preview arquivo */}
             {arquivo && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+              <div className="rounded-lg overflow-hidden"
                 style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
-                <Paperclip size={13} style={{ color: '#818CF8' }} />
-                <span className="text-xs flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>{arquivo.name}</span>
-                <button onClick={() => { setArquivo(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
-                  style={{ color: 'var(--text-muted)' }}>
-                  <X size={13} />
-                </button>
+                {arquivoPreview ? (
+                  <div className="relative">
+                    <img src={arquivoPreview} alt="preview" className="max-h-32 w-full object-contain" />
+                    <button onClick={limparArquivo}
+                      className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
+                      style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}>
+                      <X size={11} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-3 py-2">
+                    <Paperclip size={13} style={{ color: '#818CF8' }} />
+                    <span className="text-xs flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>{arquivo.name}</span>
+                    <button onClick={limparArquivo} style={{ color: 'var(--text-muted)' }}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
+
             <div className="flex items-end gap-2">
               <button onClick={() => fileInputRef.current?.click()}
                 className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
@@ -372,25 +439,25 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
               <input ref={fileInputRef} type="file"
                 accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx"
                 onChange={handleFileChange} className="hidden" />
-              {!arquivo && (
-                <textarea
-                  ref={inputRef}
-                  value={texto}
-                  onChange={(e) => setTexto(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Digite uma mensagem... (Enter para enviar)"
-                  rows={1}
-                  className="flex-1 rounded-2xl px-4 py-2.5 text-sm focus:outline-none resize-none"
-                  style={{
-                    background: 'var(--bg-surface-2)',
-                    border: '1px solid var(--border)',
-                    color: 'var(--text-primary)',
-                    maxHeight: 120,
-                    overflowY: 'auto',
-                  }}
-                />
-              )}
-              {arquivo && <div className="flex-1" />}
+
+              <textarea
+                ref={inputRef}
+                value={texto}
+                onChange={(e) => setTexto(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                placeholder={arquivo ? 'Adicione uma legenda (opcional)...' : 'Digite uma mensagem... (Enter para enviar)'}
+                rows={1}
+                className="flex-1 rounded-2xl px-4 py-2.5 text-sm focus:outline-none resize-none"
+                style={{
+                  background: 'var(--bg-surface-2)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-primary)',
+                  maxHeight: 120,
+                  overflowY: 'auto',
+                }}
+              />
+
               <button
                 onClick={handleEnviar}
                 disabled={(!texto.trim() && !arquivo) || enviando || uploadando}
