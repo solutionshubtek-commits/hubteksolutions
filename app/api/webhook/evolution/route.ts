@@ -44,40 +44,45 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     })
 
     if (data.key.fromMe) {
-  console.log('[webhook] fromMe=true — salvando sem processar')
+      console.log('[webhook] fromMe=true — salvando sem processar')
 
-  const supabase = createServiceClient()
-  const tenant = await getTenantByInstanceName(supabase, event.instance)
-  if (!tenant) return response
+      const supabase = createServiceClient()
+      const tenant = await getTenantByInstanceName(supabase, event.instance)
+      if (!tenant) return response
 
-  const phone = extractPhone(data.key.remoteJid)
-  const conteudo = extractTextContent(data)
-  if (!conteudo) return response
+      const phone = extractPhone(data.key.remoteJid)
+      const conteudo = extractTextContent(data)
 
-  // Busca ou cria conversa
-  const { data: conv } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('tenant_id', tenant.id)
-    .eq('phone', phone)
-    .in('status', ['ativo', 'ativa'])
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single()
+      console.log('[webhook] fromMe debug', { phone, remoteJid: data.key.remoteJid, conteudo: conteudo?.slice(0, 30) })
 
-  if (!conv) return response // sem conversa ativa, ignora
+      if (!conteudo) return response
 
-  await supabase.from('messages').insert({
-    conversation_id: conv.id,
-    origem: 'cliente',
-    conteudo,
-    message_id: data.key.id,
-    from_me: true, // <-- adicionar
-    created_at: new Date().toISOString(),
-  })
+      const { data: conv, error: convError } = await supabase
+        .from('conversations')
+        .select('id, phone, status')
+        .eq('tenant_id', tenant.id)
+        .eq('phone', phone)
+        .in('status', ['ativo', 'ativa'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
 
-  return response
-}
+      console.log('[webhook] fromMe conv encontrada', { conv, convError })
+
+      if (!conv) return response
+
+      await supabase.from('messages').insert({
+        conversation_id: conv.id,
+        origem: 'cliente',
+        conteudo,
+        message_id: data.key.id,
+        from_me: true,
+        created_at: new Date().toISOString(),
+      })
+
+      return response
+    }
+
     if (data.key.remoteJid.includes('@g.us')) {
       console.log('[webhook] Descartado: grupo')
       return response
