@@ -274,10 +274,10 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       {/* Mensagens */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
         {mensagens.map((msg, i) => {
-          const isCliente = msg.origem === 'cliente' && !msg.from_me
-          const isClienteWeb = msg.origem === 'operador' && !!msg.from_me
+          const isCliente = msg.origem === 'cliente'
           const isAgente = msg.origem === 'agente'
-          const isOperador = msg.origem === 'operador'
+          const isOperadorWeb = msg.origem === 'operador' && !!msg.from_me
+          const isOperador = msg.origem === 'operador' && !msg.from_me
           const showDate = i === 0 || new Date(msg.criado_em).toDateString() !== new Date(mensagens[i - 1].criado_em).toDateString()
 
           return (
@@ -290,13 +290,13 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                   </span>
                 </div>
               )}
-              <div className={`flex ${isCliente || isClienteWeb ? 'justify-start' : 'justify-end'}`}>
-                <div className={`max-w-[75%] flex flex-col gap-0.5 ${isCliente || isClienteWeb ? '' : 'items-end'}`}>
+              <div className={`flex ${isCliente ? 'justify-start' : 'justify-end'}`}>
+                <div className={`max-w-[75%] flex flex-col gap-0.5 ${isCliente ? '' : 'items-end'}`}>
                   {isOperador && (
                     <span className="text-[10px] px-1" style={{ color: '#818CF8' }}>Você (operador)</span>
                   )}
-                  {isClienteWeb && (
-                    <span className="text-[10px] px-1 flex items-center gap-1" style={{ color: '#6B7280' }}>
+                  {isOperadorWeb && (
+                    <span className="text-[10px] px-1 flex items-center gap-1 justify-end" style={{ color: '#818CF8' }}>
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
                         <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.118 1.528 5.855L0 24l6.335-1.652A11.954 11.954 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.016-1.373l-.36-.214-3.732.979.995-3.638-.235-.374A9.818 9.818 0 1112 21.818z"/>
@@ -305,10 +305,10 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                     </span>
                   )}
                   <div className="px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
-                    style={isClienteWeb
-                      ? { background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px dashed var(--border)', borderBottomLeftRadius: 4, opacity: 0.85 }
-                      : isCliente
+                    style={isCliente
                       ? { background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderBottomLeftRadius: 4 }
+                      : isOperadorWeb
+                      ? { background: '#6366F110', color: 'var(--text-primary)', border: '1px dashed #6366F150', borderBottomRightRadius: 4, opacity: 0.9 }
                       : isOperador
                       ? { background: '#6366F118', color: 'var(--text-primary)', border: '1px solid #6366F130', borderBottomRightRadius: 4 }
                       : { background: '#10B98118', color: 'var(--text-primary)', border: '1px solid #10B98130', borderBottomRightRadius: 4 }
@@ -324,7 +324,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                     {formatarHora(msg.criado_em)}
                     {isAgente && ' · IA'}
                     {isOperador && ' · enviado'}
-                    {isClienteWeb && ' · web'}
+                    {isOperadorWeb && ' · web'}
                   </span>
                 </div>
               </div>
