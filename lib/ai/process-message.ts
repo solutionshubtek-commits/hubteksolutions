@@ -1,6 +1,6 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import {
-  findOrCreateConversation,
+  reativarOuCriarConversa,
   isAgentPaused,
   isTenantAgentActive,
   getAgentConfig,
@@ -79,8 +79,8 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   const tenantAtivoGlobal = await isTenantAgentActive(supabase, payload.tenantId)
   if (!tenantAtivoGlobal) return
 
-  // 1. Encontra ou cria conversa
-  const conversa = await findOrCreateConversation(
+  // 1. Encontra conversa ativa ou cria nova (nova mensagem após 24h = nova conversa)
+  const conversa = await reativarOuCriarConversa(
     supabase,
     payload.tenantId,
     payload.phone,
