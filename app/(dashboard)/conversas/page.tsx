@@ -59,7 +59,9 @@ export default function ConversasPage() {
 
   const conversasFiltradas = conversas.filter((c) => {
     const matchBusca = c.contato_nome?.toLowerCase().includes(busca.toLowerCase()) || c.contato_telefone?.includes(busca)
-    const matchStatus = filtroStatus === 'todos' || c.status === filtroStatus
+    const matchStatus = filtroStatus === 'todos' || 
+  (filtroStatus === 'ativa' && (c.status === 'ativa' || c.status === 'ativo')) ||
+  (filtroStatus === 'encerrada' && (c.status === 'encerrada' || c.status === 'encerrado'))
     return matchBusca && matchStatus
   })
 
@@ -157,7 +159,7 @@ export default function ConversasPage() {
                       )}
                       {c.agente_pausado ? (
                         <span className="text-[10px] font-medium" style={{ color: '#F59E0B' }}>● Pausado</span>
-                      ) : c.status === 'ativa' ? (
+                      ) : (c.status === 'ativa' || c.status === 'ativo') ? (
                         <span className="text-[10px] font-medium" style={{ color: '#10B981' }}>● Ativo</span>
                       ) : (
                         <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Encerrada</span>
