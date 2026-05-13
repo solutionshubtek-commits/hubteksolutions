@@ -59,11 +59,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const { data: conv, error: convError } = await supabase
         .from('conversations')
-        .select('id, phone, status')
+        .select('id, contato_telefone, status')
         .eq('tenant_id', tenant.id)
         .eq('contato_telefone', phone)
         .in('status', ['ativo', 'ativa'])
-        .order('created_at', { ascending: false })
+        .order('criado_em', { ascending: false })
         .limit(1)
         .single()
 
@@ -75,9 +75,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         conversation_id: conv.id,
         origem: 'cliente',
         conteudo,
-        message_id: data.key.id,
         from_me: true,
-        created_at: new Date().toISOString(),
+        criado_em: new Date().toISOString(),
       })
 
       return response
