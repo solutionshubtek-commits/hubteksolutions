@@ -9,6 +9,7 @@ export async function POST(request: NextRequest) {
     const tenant_id = formData.get('tenant_id') as string
     const instance_name = formData.get('instance_name') as string
     const telefone = formData.get('telefone') as string
+    const caption = formData.get('caption') as string | null
 
     if (!file || !conversation_id || !tenant_id || !instance_name || !telefone) {
       return NextResponse.json({ error: 'Campos obrigatórios faltando' }, { status: 400 })
@@ -16,7 +17,6 @@ export async function POST(request: NextRequest) {
 
     const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL
     const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY
-
     if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) {
       return NextResponse.json({ error: 'Variáveis de ambiente não configuradas' }, { status: 500 })
     }
@@ -27,20 +27,21 @@ export async function POST(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // 1. Upload para o Storage
+    // 1. Upload para bucket público
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
-    const path = `${tenant_id}/mensagens/${Date.now()}_${file.name}`
+    const path = `${tenant_id}/${Date.now()}_${file.name}`
 
     const { error: uploadError } = await supabase.storage
-      .from('knowledge-base')
+      .from('mensagens-midia')
       .upload(path, buffer, { contentType: file.type })
 
     if (uploadError) {
+      console.error('Erro upload:', uploadError)
       return NextResponse.json({ error: 'Erro no upload do arquivo' }, { status: 500 })
     }
 
-    const { data: urlData } = supabase.storage.from('knowledge-base').getPublicUrl(path)
+    const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
     const publicUrl = urlData.publicUrl
 
     // 2. Envia via Evolution API
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
           mediatype: mediaType,
           media: publicUrl,
           fileName: file.name,
+          caption: caption || undefined,
         }
 
     const evoRes = await fetch(`${EVOLUTION_API_URL}/message/${endpoint}/${instance_name}`, {
@@ -80,8 +82,9 @@ export async function POST(request: NextRequest) {
       tenant_id,
       origem: 'operador',
       tipo: isAudio ? 'audio' : isVideo ? 'video' : isImage ? 'imagem' : 'documento',
-      conteudo: file.name,
+      conteudo: caption || file.name,
       arquivo_url: publicUrl,
+      criado_em: new Date().toISOString(),
     })
 
     await supabase.from('conversations')
