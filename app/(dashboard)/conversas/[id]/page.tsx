@@ -11,6 +11,7 @@ interface Mensagem {
   conteudo: string
   arquivo_url: string | null
   criado_em: string
+  from_me: boolean | null  // <-- adicionar
 }
 
 interface Conversa {
