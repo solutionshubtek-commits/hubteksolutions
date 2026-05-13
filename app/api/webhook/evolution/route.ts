@@ -61,7 +61,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .from('conversations')
         .select('id, phone, status')
         .eq('tenant_id', tenant.id)
-        .eq('phone', phone)
+        .eq('contato_telefone', phone)
         .in('status', ['ativo', 'ativa'])
         .order('created_at', { ascending: false })
         .limit(1)
