@@ -66,42 +66,71 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     carregar()
   }, [params.id, router, scrollToBottom])
 
-  // Realtime
+  // Realtime com reconexão automática
   useEffect(() => {
     const supabase = createClient()
+    let msgChannel: ReturnType<typeof supabase.channel>
+    let convChannel: ReturnType<typeof supabase.channel>
 
-    const msgChannel = supabase
-      .channel(`conv-messages-${params.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `conversation_id=eq.${params.id}`,
-      }, (payload) => {
-        const nova = payload.new as Mensagem
-        setMensagens(prev => {
-          if (prev.find(m => m.id === nova.id)) return prev
-          return [...prev, nova]
+    function subscribe() {
+      msgChannel = supabase
+        .channel(`conv-messages-${params.id}-${Date.now()}`)
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${params.id}`,
+        }, (payload) => {
+          const nova = payload.new as Mensagem
+          setMensagens(prev => {
+            if (prev.find(m => m.id === nova.id)) return prev
+            return [...prev, nova]
+          })
+          setTimeout(() => scrollToBottom('smooth'), 50)
         })
-        setTimeout(() => scrollToBottom('smooth'), 50)
-      })
-      .subscribe()
+        .subscribe((status) => {
+          if (status === 'CHANNEL_ERROR') {
+            setTimeout(subscribe, 3000)
+          }
+        })
 
-    const convChannel = supabase
-      .channel(`conv-status-${params.id}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'conversations',
-        filter: `id=eq.${params.id}`,
-      }, (payload) => {
-        setConversa(prev => prev ? { ...prev, ...payload.new } : prev)
-      })
-      .subscribe()
+      convChannel = supabase
+        .channel(`conv-status-${params.id}-${Date.now()}`)
+        .on('postgres_changes', {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'conversations',
+          filter: `id=eq.${params.id}`,
+        }, (payload) => {
+          setConversa(prev => prev ? { ...prev, ...payload.new } : prev)
+        })
+        .subscribe()
+    }
+
+    subscribe()
+
+    // Polling de segurança a cada 10s — busca mensagens novas caso realtime falhe
+    const polling = setInterval(async () => {
+      const { data } = await supabase
+        .from('messages')
+        .select('id, origem, tipo, conteudo, arquivo_url, criado_em')
+        .eq('conversation_id', params.id)
+        .order('criado_em', { ascending: true })
+      if (data) {
+        setMensagens(prev => {
+          const idsExistentes = new Set(prev.map(m => m.id))
+          const novas = data.filter((m: Mensagem) => !idsExistentes.has(m.id))
+          if (novas.length === 0) return prev
+          setTimeout(() => scrollToBottom('smooth'), 50)
+          return [...prev, ...novas]
+        })
+      }
+    }, 10000)
 
     return () => {
       supabase.removeChannel(msgChannel)
       supabase.removeChannel(convChannel)
+      clearInterval(polling)
     }
   }, [params.id, scrollToBottom])
 
