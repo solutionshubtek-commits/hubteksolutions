@@ -125,7 +125,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           return [...prev, ...novas]
         })
       }
-    }, 10000)
+    }, 3000)
 
     return () => {
       supabase.removeChannel(msgChannel)
