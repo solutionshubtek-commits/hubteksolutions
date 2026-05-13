@@ -72,6 +72,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     origem: 'cliente',
     conteudo,
     message_id: data.key.id,
+    from_me: true, // <-- adicionar
     created_at: new Date().toISOString(),
   })
 
