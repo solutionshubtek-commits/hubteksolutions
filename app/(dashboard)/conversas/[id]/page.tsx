@@ -257,6 +257,65 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     return nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
   }
 
+  function renderConteudoMensagem(msg: Mensagem) {
+    if (!msg.arquivo_url) return <span>{msg.conteudo}</span>
+
+    const tipo = msg.tipo?.toLowerCase() ?? ''
+
+    if (tipo === 'imagem') {
+      return (
+        <div className="flex flex-col gap-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={msg.arquivo_url}
+            alt="imagem"
+            className="rounded-lg max-w-[200px] max-h-[200px] object-cover"
+          />
+          {msg.conteudo && msg.conteudo !== 'undefined' && (
+            <span className="text-xs">{msg.conteudo}</span>
+          )}
+        </div>
+      )
+    }
+
+    if (tipo === 'video') {
+      return (
+        <div className="flex flex-col gap-1">
+          <video
+            controls
+            src={msg.arquivo_url}
+            className="rounded-lg max-w-[240px] max-h-[160px]"
+          />
+          {msg.conteudo && msg.conteudo !== 'undefined' && (
+            <span className="text-xs">{msg.conteudo}</span>
+          )}
+        </div>
+      )
+    }
+
+    if (tipo === 'audio') {
+      return (
+        <div className="flex flex-col gap-1">
+          <audio controls src={msg.arquivo_url} className="max-w-[240px]" />
+          {msg.conteudo && msg.conteudo !== 'undefined' && (
+            <span className="text-xs">{msg.conteudo}</span>
+          )}
+        </div>
+      )
+    }
+
+    return (
+      <a
+        href={msg.arquivo_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline text-blue-400 text-xs"
+      >
+        📎 {msg.conteudo || 'Arquivo anexado'}
+      </a>
+    )
+  }
+
   if (carregando) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-64px)]">
@@ -355,22 +414,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                       ? { background: '#6366F118', color: 'var(--text-primary)', border: '1px solid #6366F130', borderBottomRightRadius: 4 }
                       : { background: '#10B98118', color: 'var(--text-primary)', border: '1px solid #10B98130', borderBottomRightRadius: 4 }
                     }>
-                    {msg.arquivo_url ? (
-                      msg.tipo === 'imagem' ? (
-                        <div className="flex flex-col gap-1">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={msg.arquivo_url} alt="imagem" className="rounded-lg max-w-[200px] max-h-[200px] object-cover" />
-                          {msg.conteudo && msg.conteudo !== 'undefined' && (
-                            <span className="text-xs">{msg.conteudo}</span>
-                          )}
-                        </div>
-                      ) : (
-                        <a href={msg.arquivo_url} target="_blank" rel="noopener noreferrer"
-                          className="underline text-blue-400 text-xs">
-                          📎 {msg.conteudo || 'Arquivo anexado'}
-                        </a>
-                      )
-                    ) : msg.conteudo}
+                    {renderConteudoMensagem(msg)}
                   </div>
                   <span className="text-[10px] px-1" style={{ color: 'var(--text-muted)' }}>
                     {formatarHora(msg.criado_em)}
