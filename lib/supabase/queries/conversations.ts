@@ -197,3 +197,40 @@ export async function logAiUsage(
     motor_utilizado: data.motor,
   })
 }
+export async function reativarOuCriarConversa(
+  supabase: SupabaseClient,
+  tenantId: string,
+  phone: string,
+  nome?: string,
+  instanceName?: string
+): Promise<Conversation> {
+  // Verifica se há conversa ativa (não encerrada)
+  const { data: ativa } = await supabase
+    .from('conversations')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('contato_telefone', phone)
+    .eq('instance_name', instanceName ?? '')
+    .neq('status', 'encerrada')
+    .order('criado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (ativa) return ativa as Conversation
+
+  // Cria nova conversa (mesmo que exista encerrada — nova interação = nova conversa)
+  const { data: created, error } = await supabase
+    .from('conversations')
+    .insert({
+      tenant_id: tenantId,
+      contato_telefone: phone,
+      contato_nome: nome ?? null,
+      instance_name: instanceName ?? null,
+      status: 'ativa',
+    })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Erro ao criar conversa: ${error.message}`)
+  return created as Conversation
+}
