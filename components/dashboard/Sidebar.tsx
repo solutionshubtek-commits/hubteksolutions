@@ -7,7 +7,6 @@ import { createClient } from '@/lib/supabase/client'
 import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight, RefreshCw } from 'lucide-react'
 
 const WHATSAPP_SUPORTE = 'https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+de+suporte+HubTek'
-
 const ROLES_PLANO = ['admin_hubtek', 'admin_tenant', 'self_managed']
 
 const items = [
@@ -18,16 +17,35 @@ const items = [
   { href: '/configuracoes',      label: 'Configurações',      icon: Settings },
 ]
 
+function getInitials(name: string) {
+  return name.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
+}
+
 export function Sidebar() {
   const pathname = usePathname()
   const [role, setRole] = useState<string | null>(null)
+  const [nomeEmpresa, setNomeEmpresa] = useState<string>('')
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
-      supabase.from('users').select('role').eq('id', user.id).single()
-        .then(({ data }) => setRole(data?.role ?? null))
+      supabase.from('users').select('role, tenant_id').eq('id', user.id).single()
+        .then(({ data: userData }) => {
+          setRole(userData?.role ?? null)
+          if (!userData?.tenant_id) return
+          supabase.from('tenants')
+            .select('nome, avatar_url')
+            .eq('id', userData.tenant_id)
+            .single()
+            .then(({ data: tenantData }) => {
+              if (tenantData) {
+                setNomeEmpresa(tenantData.nome ?? '')
+                setAvatarUrl((tenantData as { nome: string; avatar_url?: string | null }).avatar_url ?? null)
+              }
+            })
+        })
     })
   }, [])
 
@@ -37,7 +55,7 @@ export function Sidebar() {
     <aside className="fixed left-0 top-0 h-full w-60 flex flex-col z-40"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}>
 
-      {/* Logo */}
+      {/* Logo Hubtek */}
       <div className="h-16 flex items-center px-5" style={{ borderBottom: '1px solid var(--border)' }}>
         <Image
           src="/logo-horizontal.png"
@@ -48,6 +66,26 @@ export function Sidebar() {
           style={{ filter: 'var(--logo-filter)' }}
         />
       </div>
+
+      {/* Avatar + nome da empresa */}
+      {nomeEmpresa && (
+        <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+          {avatarUrl ? (
+            <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0"
+              style={{ border: '1px solid var(--border)' }}>
+              <img src={avatarUrl} alt={nomeEmpresa} className="w-full h-full object-cover" />
+            </div>
+          ) : (
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold shrink-0"
+              style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', color: '#10B981' }}>
+              {getInitials(nomeEmpresa)}
+            </div>
+          )}
+          <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+            {nomeEmpresa}
+          </span>
+        </div>
+      )}
 
       {/* Label */}
       <div className="px-3 pt-3 pb-1">
@@ -60,9 +98,7 @@ export function Sidebar() {
         {items.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(href + '/')
           return (
-            <Link
-              key={href}
-              href={href}
+            <Link key={href} href={href}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 border-l-2"
               style={{
                 background:  active ? 'rgba(16,185,129,0.05)' : 'transparent',
@@ -79,13 +115,11 @@ export function Sidebar() {
           )
         })}
 
-        {/* Renovar Plano — visível apenas para admin_tenant e self_managed */}
         {mostrarPlano && (() => {
           const href = '/renovar-plano'
           const active = pathname === href
           return (
-            <Link
-              href={href}
+            <Link href={href}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 border-l-2"
               style={{
                 background:  active ? 'rgba(16,185,129,0.05)' : 'transparent',
