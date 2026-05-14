@@ -218,17 +218,45 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         const caption = temTexto ? texto.trim() : ''
         setTexto('')
 
-        const formData = new FormData()
-        formData.append('file', arquivo!)
-        formData.append('conversation_id', conversa.id)
-        formData.append('tenant_id', conversa.tenant_id)
-        formData.append('instance_name', conversa.instance_name ?? '')
-        formData.append('telefone', conversa.contato_telefone)
-        if (caption) formData.append('caption', caption)
+        // Upload direto do browser para o Supabase (sem limite de payload da Vercel)
+        const supabase = createClient()
+        const ext = arquivo!.name.split('.').pop() ?? 'bin'
+        const safeName = `${Date.now()}.${ext}`
+        const path = `${conversa.tenant_id}/${safeName}`
 
-        const res = await fetch('/api/whatsapp/enviar-midia', {
+        const { error: uploadError } = await supabase.storage
+          .from('mensagens-midia')
+          .upload(path, arquivo!, { contentType: arquivo!.type })
+
+        if (uploadError) {
+          console.error('[page] Erro upload Supabase:', uploadError)
+          setUploadando(false)
+          setEnviando(false)
+          return
+        }
+
+        const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
+        const publicUrl = urlData.publicUrl
+
+        const isAudio = arquivo!.type.startsWith('audio/')
+        const isVideo = arquivo!.type.startsWith('video/')
+        const isImage = arquivo!.type.startsWith('image/')
+        const tipo = isAudio ? 'audio' : isVideo ? 'video' : isImage ? 'imagem' : 'documento'
+
+        // Chama rota leve passando só a URL (sem o arquivo)
+        const res = await fetch('/api/whatsapp/enviar-midia-url', {
           method: 'POST',
-          body: formData,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: conversa.id,
+            tenant_id: conversa.tenant_id,
+            instance_name: conversa.instance_name,
+            telefone: conversa.contato_telefone,
+            arquivo_url: publicUrl,
+            tipo,
+            nome: arquivo!.name,
+            caption: caption || undefined,
+          }),
         })
 
         setUploadando(false)
