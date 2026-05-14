@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, Pause, Play, Send, Bot, Headphones, Paperclip, X } from 'lucide-react'
+import { ArrowLeft, Pause, Play, Send, Bot, Headphones, Paperclip, X, Mic, Square } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface Mensagem {
@@ -35,6 +35,14 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const [arquivo, setArquivo] = useState<File | null>(null)
   const [arquivoPreview, setArquivoPreview] = useState<string | null>(null)
   const [uploadando, setUploadando] = useState(false)
+
+  // Gravação de áudio
+  const [gravando, setGravando] = useState(false)
+  const [tempoGravacao, setTempoGravacao] = useState(0)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
+
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -132,6 +140,13 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     }
   }, [params.id, scrollToBottom])
 
+  // Limpa timer ao desmontar
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [])
+
   async function handlePausarRetomar() {
     if (!conversa) return
     setPausando(true)
@@ -183,6 +198,67 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         break
       }
     }
+  }
+
+  async function iniciarGravacao() {
+    if (arquivo) return // não gravar se já tem arquivo selecionado
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
+      const recorder = new MediaRecorder(stream, { mimeType })
+      chunksRef.current = []
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data)
+      }
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunksRef.current, { type: mimeType })
+        const file = new File([blob], `audio_${Date.now()}.ogg`, { type: mimeType })
+        selecionarArquivo(file)
+        setGravando(false)
+        setTempoGravacao(0)
+        if (timerRef.current) clearInterval(timerRef.current)
+      }
+
+      recorder.start()
+      mediaRecorderRef.current = recorder
+      setGravando(true)
+      setTempoGravacao(0)
+
+      timerRef.current = setInterval(() => {
+        setTempoGravacao(prev => prev + 1)
+      }, 1000)
+    } catch {
+      alert('Não foi possível acessar o microfone.')
+    }
+  }
+
+  function pararGravacao() {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
+    }
+    if (timerRef.current) clearInterval(timerRef.current)
+  }
+
+  function cancelarGravacao() {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.ondataavailable = null
+      mediaRecorderRef.current.onstop = null
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current.stream?.getTracks().forEach(t => t.stop())
+    }
+    if (timerRef.current) clearInterval(timerRef.current)
+    chunksRef.current = []
+    setGravando(false)
+    setTempoGravacao(0)
+  }
+
+  function formatarTempoGravacao(segundos: number) {
+    const m = Math.floor(segundos / 60).toString().padStart(2, '0')
+    const s = (segundos % 60).toString().padStart(2, '0')
+    return `${m}:${s}`
   }
 
   async function handleEnviar() {
@@ -476,7 +552,9 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           </div>
         ) : (
           <div className="space-y-2">
-            {arquivo && (
+
+            {/* Preview de arquivo selecionado */}
+            {arquivo && !gravando && (
               <div className="rounded-lg overflow-hidden"
                 style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
                 {arquivoPreview ? (
@@ -501,44 +579,89 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
               </div>
             )}
 
+            {/* Indicador de gravação ativa */}
+            {gravando && (
+              <div className="flex items-center gap-3 px-3 py-2 rounded-lg"
+                style={{ background: '#EF444418', border: '1px solid #EF444430' }}>
+                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-xs font-medium" style={{ color: '#EF4444' }}>
+                  Gravando... {formatarTempoGravacao(tempoGravacao)}
+                </span>
+                <div className="flex-1" />
+                <button onClick={cancelarGravacao}
+                  className="text-xs px-2 py-0.5 rounded"
+                  style={{ color: 'var(--text-muted)' }}>
+                  Cancelar
+                </button>
+              </div>
+            )}
+
             <div className="flex items-end gap-2">
-              <button onClick={() => fileInputRef.current?.click()}
-                className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
-                style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                <Paperclip size={15} />
-              </button>
-              <input ref={fileInputRef} type="file"
-                accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx"
-                onChange={handleFileChange} className="hidden" />
+              {/* Botão de anexo — oculto durante gravação */}
+              {!gravando && (
+                <>
+                  <button onClick={() => fileInputRef.current?.click()}
+                    className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
+                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                    <Paperclip size={15} />
+                  </button>
+                  <input ref={fileInputRef} type="file"
+                    accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx"
+                    onChange={handleFileChange} className="hidden" />
+                </>
+              )}
 
-              <textarea
-                ref={inputRef}
-                value={texto}
-                onChange={(e) => setTexto(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder={arquivo ? 'Adicione uma legenda (opcional)...' : 'Digite uma mensagem... (Enter para enviar)'}
-                rows={1}
-                className="flex-1 rounded-2xl px-4 py-2.5 text-sm focus:outline-none resize-none"
-                style={{
-                  background: 'var(--bg-surface-2)',
-                  border: '1px solid var(--border)',
-                  color: 'var(--text-primary)',
-                  maxHeight: 120,
-                  overflowY: 'auto',
-                }}
-              />
+              {/* Textarea — oculto durante gravação */}
+              {!gravando && (
+                <textarea
+                  ref={inputRef}
+                  value={texto}
+                  onChange={(e) => setTexto(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  placeholder={arquivo ? 'Adicione uma legenda (opcional)...' : 'Digite uma mensagem... (Enter para enviar)'}
+                  rows={1}
+                  className="flex-1 rounded-2xl px-4 py-2.5 text-sm focus:outline-none resize-none"
+                  style={{
+                    background: 'var(--bg-surface-2)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-primary)',
+                    maxHeight: 120,
+                    overflowY: 'auto',
+                  }}
+                />
+              )}
 
-              <button
-                onClick={handleEnviar}
-                disabled={(!texto.trim() && !arquivo) || enviando || uploadando}
-                className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
-                style={{ background: '#10B981', color: '#fff' }}>
-                {enviando || uploadando
-                  ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <Send size={15} />
-                }
-              </button>
+              {/* Spacer quando gravando para empurrar botões para direita */}
+              {gravando && <div className="flex-1" />}
+
+              {/* Botão microfone / parar gravação — só aparece se não tem arquivo nem texto */}
+              {!arquivo && !texto.trim() && (
+                <button
+                  onClick={gravando ? pararGravacao : iniciarGravacao}
+                  disabled={enviando || uploadando}
+                  className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
+                  style={gravando
+                    ? { background: '#EF4444', color: '#fff' }
+                    : { color: 'var(--text-muted)', border: '1px solid var(--border)' }
+                  }>
+                  {gravando ? <Square size={14} /> : <Mic size={15} />}
+                </button>
+              )}
+
+              {/* Botão enviar — aparece quando tem texto ou arquivo (não durante gravação vazia) */}
+              {(texto.trim() || arquivo) && !gravando && (
+                <button
+                  onClick={handleEnviar}
+                  disabled={enviando || uploadando}
+                  className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
+                  style={{ background: '#10B981', color: '#fff' }}>
+                  {enviando || uploadando
+                    ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    : <Send size={15} />
+                  }
+                </button>
+              )}
             </div>
           </div>
         )}
