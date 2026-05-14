@@ -249,8 +249,10 @@ export default function CustosIAPage() {
     ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
     : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
   const balizCustoInstExtras = balizInstanciasExtras * CUSTO_INSTANCIA_EXTRA
-  const balizCustoTotal = balizCustoAPI + fixoPorCliente + balizCustoInstExtras
-  const balizMargem = balizPlano.valor - balizCustoTotal
+  // Custo operacional = API + fixo (inst. extras sao receita, nao custo)
+  const balizCustoTotal = balizCustoAPI + fixoPorCliente
+  // Margem = valor_plano + receita_inst_extras - custo_fixo - custo_API
+  const balizMargem = balizPlano.valor + balizCustoInstExtras - fixoPorCliente - balizCustoAPI
   const balizMargemPct = balizPlano.valor > 0 ? (balizMargem / balizPlano.valor) * 100 : 0
   const balizCustoPorConv = balizConversas > 0 ? balizCustoAPI / balizConversas : 0
 
@@ -404,14 +406,6 @@ export default function CustosIAPage() {
           sub={totalCusto > 0 ? `${((totalAnthropic / totalCusto) * 100).toFixed(0)}% do total` : undefined} />
       </div>
 
-      {/* Instâncias extras — aviso se houver */}
-      {custoInstanciasExtras > 0 && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm"
-          style={{ background: '#F59E0B10', border: '1px solid #F59E0B30', color: '#F59E0B' }}>
-          <span className="font-semibold">⚡ Instâncias extras:</span>
-          <span>{instanciasExtras}x instância adicional · {fmtBRL(CUSTO_INSTANCIA_EXTRA)}/instância = <strong>{fmtBRL(custoInstanciasExtras)}/mês</strong></span>
-        </div>
-      )}
 
       {/* Gráficos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -500,7 +494,7 @@ export default function CustosIAPage() {
             sub={balizInstanciasExtras > 0 ? `${balizInstanciasExtras}x R$${CUSTO_INSTANCIA_EXTRA}` : 'nenhuma'}
             cor={balizInstanciasExtras > 0 ? '#F59E0B' : 'var(--text-secondary)'}
           />
-          <BalizCard label="Custo operacional" value={fmtBRL(balizCustoTotal)} sub="API + fixo + extras" cor="#F59E0B" />
+          <BalizCard label="Custo operacional" value={fmtBRL(balizCustoTotal)} sub="API + fixo" cor="#F59E0B" />
           <BalizCard label="Valor do plano" value={fmtBRL(balizPlano.valor)} sub={balizPlano.label} cor="#10B981" />
           <BalizCard label="Margem estimada" value={fmtBRL(balizMargem)} sub={`${balizMargemPct.toFixed(0)}% do plano`} cor={balizMargem >= 0 ? '#10B981' : '#EF4444'} />
         </div>
