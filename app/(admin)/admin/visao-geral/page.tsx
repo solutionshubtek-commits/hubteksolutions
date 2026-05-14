@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -14,8 +14,8 @@ import { exportPDF } from '@/lib/exportPDF'
 const PLANOS = [
   { value: 'essencial',  label: 'Essencial',  limite: 50,   valor: 397  },
   { value: 'acelerador', label: 'Acelerador', limite: 100,  valor: 597  },
-  { value: 'dominancia', label: 'Dominância', limite: 500,  valor: 997  },
-  { value: 'elite',      label: 'Elite',      limite: 1000, valor: 1497 },
+  { value: 'dominancia', label: 'Dominância', limite: 500,  valor: 1997 },
+  { value: 'elite',      label: 'Elite',      limite: 1000, valor: 3500 },
 ]
 
 function planoLabel(plano: string) {

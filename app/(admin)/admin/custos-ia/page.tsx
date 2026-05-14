@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -25,8 +25,8 @@ import { exportPDF } from '@/lib/exportPDF'
 const PLANOS: Record<string, { label: string; limite: number; valor: number }> = {
   essencial:  { label: 'Essencial',  limite: 50,   valor: 397  },
   acelerador: { label: 'Acelerador', limite: 100,  valor: 597  },
-  dominancia: { label: 'Dominância', limite: 500,  valor: 997  },
-  elite:      { label: 'Elite',      limite: 1000, valor: 1497 },
+  dominancia: { label: 'Dominância', limite: 500,  valor: 1997 },
+  elite:      { label: 'Elite',      limite: 1000, valor: 3500 },
 }
 
 const CUSTO_INSTANCIA_EXTRA = 67.00

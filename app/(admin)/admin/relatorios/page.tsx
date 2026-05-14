@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -51,8 +51,8 @@ const MESES_LABEL = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out'
 const PLANOS: Record<string, { label: string; valor: number; limite: number }> = {
   essencial:  { label: 'Essencial',  valor: 397,  limite: 50   },
   acelerador: { label: 'Acelerador', valor: 597,  limite: 100  },
-  dominancia: { label: 'Dominância', valor: 997,  limite: 500  },
-  elite:      { label: 'Elite',      valor: 1497, limite: 1000 },
+  dominancia: { label: 'Dominância', valor: 1997,  limite: 500  },
+  elite:      { label: 'Elite',      valor: 3500, limite: 1000 },
 }
 
 const CUSTO_INSTANCIA_EXTRA = 67.00
