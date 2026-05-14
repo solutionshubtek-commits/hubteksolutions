@@ -1,7 +1,7 @@
 // app/api/upgrade-plano/route.ts
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { PLANOS_MAP, PLANOS_ORDER, proximoPlano } from '@/lib/planos'
+import { PLANOS_MAP, proximoPlano } from '@/lib/planos'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
