@@ -170,11 +170,6 @@ export default function RelatoriosPage() {
     return `${mesRefLabel(mesesDisponiveis[mesesDisponiveis.length - 1])} a ${mesRefLabel(mesesDisponiveis[0])}`
   }
 
-  function getValorClientePorCiclo(c: CicloFechado) {
-    const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
-    return Number(c.valor_cobrado) + (instExtras * CUSTO_INSTANCIA_EXTRA)
-  }
-
   // ── Export CSV (visão cliente — sem custos internos) ──
   function exportCSV() {
     const linhas = [
