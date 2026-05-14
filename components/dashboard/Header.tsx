@@ -8,6 +8,7 @@ interface HeaderProps { nomeUsuario: string | null }
 
 interface Notification {
   id: string
+  tipo: string
   titulo: string
   mensagem: string
   lida: boolean
