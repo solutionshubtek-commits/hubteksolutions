@@ -21,22 +21,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (apikey !== process.env.EVOLUTION_WEBHOOK_SECRET) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
+
   let body: unknown
   try {
     body = await request.json()
   } catch {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
+
   const event = parseWebhookEvent(body)
   if (!event) {
     return NextResponse.json({ error: 'Payload inválido' }, { status: 400 })
   }
+
   const response = NextResponse.json({ received: true })
 
   if (event.event === 'messages.upsert' && isMessageUpsertData(event.data)) {
     const data = event.data
 
     if (data.key.fromMe) {
+      // Ignora mídias — já salvas pela rota enviar-midia
+      const isMidia = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'].includes(data.messageType)
+      if (isMidia) return response
+
       const supabase = createServiceClient()
       const tenant = await getTenantByInstanceName(supabase, event.instance)
       if (!tenant) return response
@@ -97,6 +104,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const { state, statusReason } = event.data
     const isBanned = state === 'close' && statusReason === 401
     const whatsapp_status = isBanned ? 'banido' : (WHATSAPP_STATUS[state] ?? 'desconectado')
+
     const supabase = createServiceClient()
     await supabase
       .from('tenant_instances')
