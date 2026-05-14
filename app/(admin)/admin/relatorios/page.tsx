@@ -55,6 +55,8 @@ const PLANOS: Record<string, { label: string; valor: number }> = {
   elite:      { label: 'Elite',      valor: 1497 },
 }
 
+const CUSTO_INSTANCIA_EXTRA = 67.00
+
 function fmtBRL(val: number) {
   return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 })
 }
@@ -81,6 +83,7 @@ export default function RelatoriosPage() {
   const [loading, setLoading] = useState(true)
   const [ciclos, setCiclos] = useState<CicloFechado[]>([])
   const [tenants, setTenants] = useState<TenantOption[]>([])
+  const [instanciasPorTenant, setInstanciasPorTenant] = useState<Record<string, number>>({})
   const [selectedTenant, setSelectedTenant] = useState<string>('todos')
   const [selectedMes, setSelectedMes] = useState<string>('todos')
   const [toast, setToast] = useState<{ msg: string; type: ToastType } | null>(null)
@@ -102,6 +105,16 @@ export default function RelatoriosPage() {
         .select('id, nome, plano')
         .order('nome')
       setTenants((tData ?? []) as TenantOption[])
+
+      // Instâncias por tenant
+      const { data: instData } = await supabase
+        .from('tenant_instances')
+        .select('tenant_id')
+      const instMap: Record<string, number> = {}
+      ;(instData ?? []).forEach((row: { tenant_id: string }) => {
+        instMap[row.tenant_id] = (instMap[row.tenant_id] ?? 0) + 1
+      })
+      setInstanciasPorTenant(instMap)
 
       let query = supabase
         .from('ciclos_fechados')
@@ -126,7 +139,14 @@ export default function RelatoriosPage() {
   const totalTokens = ciclos.reduce((s, c) => s + Number(c.tokens), 0)
   const totalCustoBRL = ciclos.reduce((s, c) => s + Number(c.custo_brl), 0)
   const totalCobrado = ciclos.reduce((s, c) => s + Number(c.valor_cobrado), 0)
-  const totalMargem = totalCobrado - totalCustoBRL
+
+  // Custo total de instâncias extras
+  const totalInstanciasExtras = selectedTenant !== 'todos'
+    ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
+    : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
+  const totalCustoInstExtras = totalInstanciasExtras * CUSTO_INSTANCIA_EXTRA
+
+  const totalMargem = totalCobrado - totalCustoBRL - totalCustoInstExtras
 
   const porTenant: Record<string, { nome: string; plano: string; ciclos: CicloFechado[] }> = {}
   ciclos.forEach(c => {
@@ -140,17 +160,24 @@ export default function RelatoriosPage() {
   // ── Export CSV ──
   function exportCSV() {
     const linhas = [
-      ['Cliente','Mês','Conversas','Tokens','Custo API (R$)','Valor Cobrado (R$)','Margem (R$)','Fechado em'],
-      ...ciclos.map(c => [
-        c.tenant_nome,
-        mesRefLabel(c.mes_ref),
-        c.conversas,
-        c.tokens,
-        Number(c.custo_brl).toFixed(2).replace('.', ','),
-        Number(c.valor_cobrado).toFixed(2).replace('.', ','),
-        (Number(c.valor_cobrado) - Number(c.custo_brl)).toFixed(2).replace('.', ','),
-        new Date(c.fechado_em).toLocaleDateString('pt-BR'),
-      ])
+      ['Cliente','Mês','Conversas','Tokens','Custo API (R$)','Inst. Extras','Custo Inst. Extras (R$)','Valor Cobrado (R$)','Margem (R$)','Fechado em'],
+      ...ciclos.map(c => {
+        const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+        const custoInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
+        const margem = Number(c.valor_cobrado) - Number(c.custo_brl) - custoInstExtras
+        return [
+          c.tenant_nome,
+          mesRefLabel(c.mes_ref),
+          c.conversas,
+          c.tokens,
+          Number(c.custo_brl).toFixed(2).replace('.', ','),
+          instExtras,
+          custoInstExtras.toFixed(2).replace('.', ','),
+          Number(c.valor_cobrado).toFixed(2).replace('.', ','),
+          margem.toFixed(2).replace('.', ','),
+          new Date(c.fechado_em).toLocaleDateString('pt-BR'),
+        ]
+      })
     ]
     const csv = linhas.map(l => l.join(';')).join('\n')
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
@@ -176,18 +203,23 @@ export default function RelatoriosPage() {
       `Gerado em: ${new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
       `Filtro: ${nomeRelatorio}${selectedMes !== 'todos' ? ` · ${mesRefLabel(selectedMes)}` : ''}`,
       ``,
-      `─────────────────────────────────────────────────────`,
-      `${'Cliente'.padEnd(20)} ${'Mês'.padEnd(15)} ${'Conv'.padStart(6)} ${'Tokens'.padStart(10)} ${'Custo API'.padStart(14)} ${'Cobrado'.padStart(12)}`,
-      `─────────────────────────────────────────────────────`,
-      ...ciclos.map(c =>
-        `${c.tenant_nome.substring(0, 20).padEnd(20)} ${mesRefShort(c.mes_ref).padEnd(15)} ${String(c.conversas).padStart(6)} ${fmtTokens(Number(c.tokens)).padStart(10)} ${fmtBRL(Number(c.custo_brl)).padStart(14)} ${fmtBRL(Number(c.valor_cobrado)).padStart(12)}`
-      ),
-      `─────────────────────────────────────────────────────`,
-      `${'TOTAL'.padEnd(20)} ${' '.padEnd(15)} ${String(totalConversas).padStart(6)} ${fmtTokens(totalTokens).padStart(10)} ${fmtBRL(totalCustoBRL).padStart(14)} ${fmtBRL(totalCobrado).padStart(12)}`,
+      `─────────────────────────────────────────────────────────────────`,
+      `${'Cliente'.padEnd(20)} ${'Mês'.padEnd(15)} ${'Conv'.padStart(6)} ${'Tokens'.padStart(10)} ${'Custo API'.padStart(14)} ${'Inst+'.padStart(8)} ${'Cobrado'.padStart(12)}`,
+      `─────────────────────────────────────────────────────────────────`,
+      ...ciclos.map(c => {
+        const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+        const custoInst = instExtras > 0 ? `+${fmtBRL(instExtras * CUSTO_INSTANCIA_EXTRA)}` : '—'
+        return `${c.tenant_nome.substring(0, 20).padEnd(20)} ${mesRefShort(c.mes_ref).padEnd(15)} ${String(c.conversas).padStart(6)} ${fmtTokens(Number(c.tokens)).padStart(10)} ${fmtBRL(Number(c.custo_brl)).padStart(14)} ${custoInst.padStart(8)} ${fmtBRL(Number(c.valor_cobrado)).padStart(12)}`
+      }),
+      `─────────────────────────────────────────────────────────────────`,
+      `${'TOTAL'.padEnd(20)} ${' '.padEnd(15)} ${String(totalConversas).padStart(6)} ${fmtTokens(totalTokens).padStart(10)} ${fmtBRL(totalCustoBRL).padStart(14)} ${(totalCustoInstExtras > 0 ? fmtBRL(totalCustoInstExtras) : '—').padStart(8)} ${fmtBRL(totalCobrado).padStart(12)}`,
       ``,
+      ...(totalCustoInstExtras > 0 ? [
+        `Custo instâncias extras: ${totalInstanciasExtras}x R$ ${CUSTO_INSTANCIA_EXTRA.toFixed(2)} = ${fmtBRL(totalCustoInstExtras)}`,
+      ] : []),
       `Margem total estimada: ${fmtBRL(totalMargem)}`,
       ``,
-      `─────────────────────────────────────────────────────`,
+      `─────────────────────────────────────────────────────────────────`,
       `Hubtek Solutions — app.hubteksolutions.tech`,
     ]
 
@@ -210,31 +242,39 @@ export default function RelatoriosPage() {
       titulo: 'Relatório de Ciclos Fechados',
       subtitulo: `Filtro: ${nomeRelatorio}${selectedMes !== 'todos' ? ` · ${mesRefLabel(selectedMes)}` : ''}`,
       colunas: [
-        { label: 'Cliente',   key: 'cliente',   align: 'left'  },
-        { label: 'Mês',       key: 'mes',        align: 'left'  },
-        { label: 'Conversas', key: 'conversas',  align: 'right' },
-        { label: 'Tokens',    key: 'tokens',     align: 'right' },
-        { label: 'Custo API', key: 'custoApi',   align: 'right' },
-        { label: 'Cobrado',   key: 'cobrado',    align: 'right' },
-        { label: 'Margem',    key: 'margem',     align: 'right' },
+        { label: 'Cliente',      key: 'cliente',    align: 'left'  },
+        { label: 'Mês',          key: 'mes',        align: 'left'  },
+        { label: 'Conversas',    key: 'conversas',  align: 'right' },
+        { label: 'Tokens',       key: 'tokens',     align: 'right' },
+        { label: 'Custo API',    key: 'custoApi',   align: 'right' },
+        { label: 'Inst. extras', key: 'instExtras', align: 'right' },
+        { label: 'Cobrado',      key: 'cobrado',    align: 'right' },
+        { label: 'Margem',       key: 'margem',     align: 'right' },
       ],
-      linhas: ciclos.map(c => ({
-        cliente:   c.tenant_nome,
-        mes:       mesRefLabel(c.mes_ref),
-        conversas: c.conversas,
-        tokens:    fmtTokens(Number(c.tokens)),
-        custoApi:  fmtBRL(Number(c.custo_brl)),
-        cobrado:   fmtBRL(Number(c.valor_cobrado)),
-        margem:    fmtBRL(Number(c.valor_cobrado) - Number(c.custo_brl)),
-      })),
+      linhas: ciclos.map(c => {
+        const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+        const custoInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
+        const margem = Number(c.valor_cobrado) - Number(c.custo_brl) - custoInstExtras
+        return {
+          cliente:    c.tenant_nome,
+          mes:        mesRefLabel(c.mes_ref),
+          conversas:  c.conversas,
+          tokens:     fmtTokens(Number(c.tokens)),
+          custoApi:   fmtBRL(Number(c.custo_brl)),
+          instExtras: instExtras > 0 ? `${instExtras}x ${fmtBRL(custoInstExtras)}` : '—',
+          cobrado:    fmtBRL(Number(c.valor_cobrado)),
+          margem:     fmtBRL(margem),
+        }
+      }),
       totais: {
-        cliente:   'TOTAL',
-        mes:       '',
-        conversas: totalConversas,
-        tokens:    fmtTokens(totalTokens),
-        custoApi:  fmtBRL(totalCustoBRL),
-        cobrado:   fmtBRL(totalCobrado),
-        margem:    fmtBRL(totalMargem),
+        cliente:    'TOTAL',
+        mes:        '',
+        conversas:  totalConversas,
+        tokens:     fmtTokens(totalTokens),
+        custoApi:   fmtBRL(totalCustoBRL),
+        instExtras: totalCustoInstExtras > 0 ? fmtBRL(totalCustoInstExtras) : '—',
+        cobrado:    fmtBRL(totalCobrado),
+        margem:     fmtBRL(totalMargem),
       },
       nomeArquivo: `relatorio_${nomeRelatorio.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}`,
     })
@@ -346,12 +386,22 @@ export default function RelatoriosPage() {
         <KpiCard icon={<FileText size={18} />} label="Ciclos fechados" value={String(ciclos.length)} accent="#6366F1" />
         <KpiCard icon={<MessageSquare size={18} />} label="Total conversas" value={totalConversas.toLocaleString('pt-BR')} accent="#818CF8" />
         <KpiCard icon={<BarChart3 size={18} />} label="Tokens consumidos" value={fmtTokens(totalTokens)} accent="#8B5CF6" />
-        <KpiCard icon={<DollarSign size={18} />} label="Custo API total" value={fmtBRL(totalCustoBRL)} accent="#10A37F" />
+        <KpiCard icon={<DollarSign size={18} />} label="Custo API total" value={fmtBRL(totalCustoBRL)} accent="#10A37F"
+          sub={totalCustoInstExtras > 0 ? `+ ${fmtBRL(totalCustoInstExtras)} inst. extras` : undefined} />
         <KpiCard icon={<TrendingUp size={18} />} label="Margem estimada"
           value={fmtBRL(totalMargem)}
           accent={totalMargem >= 0 ? '#10B981' : '#EF4444'}
           sub={totalCobrado > 0 ? `${((totalMargem / totalCobrado) * 100).toFixed(0)}% do faturado` : undefined} />
       </div>
+
+      {/* Aviso instâncias extras */}
+      {totalCustoInstExtras > 0 && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm"
+          style={{ background: '#F59E0B10', border: '1px solid #F59E0B30', color: '#F59E0B' }}>
+          <span className="font-semibold">⚡ Instâncias extras detectadas:</span>
+          <span>{totalInstanciasExtras}x instância adicional · {fmtBRL(CUSTO_INSTANCIA_EXTRA)}/instância = <strong>{fmtBRL(totalCustoInstExtras)}/mês</strong> (já descontado da margem)</span>
+        </div>
+      )}
 
       <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)' }}>
         <div className="px-5 py-4 flex items-center justify-between flex-wrap gap-2"
@@ -385,6 +435,7 @@ export default function RelatoriosPage() {
                   <th className="text-right px-4 py-3 font-medium">Conversas</th>
                   <th className="text-right px-4 py-3 font-medium">Tokens</th>
                   <th className="text-right px-4 py-3 font-medium">Custo API</th>
+                  <th className="text-right px-4 py-3 font-medium">Inst. extras</th>
                   <th className="text-right px-4 py-3 font-medium">Cobrado</th>
                   <th className="text-right px-4 py-3 font-medium">Margem</th>
                   <th className="text-center px-5 py-3 font-medium">Ações</th>
@@ -393,7 +444,9 @@ export default function RelatoriosPage() {
               <tbody>
                 {ciclos.map((c, i) => {
                   const plano = PLANOS[tenants.find(t => t.id === c.tenant_id)?.plano ?? 'essencial'] ?? PLANOS.essencial
-                  const margem = Number(c.valor_cobrado) - Number(c.custo_brl)
+                  const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+                  const custoInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
+                  const margem = Number(c.valor_cobrado) - Number(c.custo_brl) - custoInstExtras
                   const isEnviando = enviando === c.id
                   return (
                     <tr key={c.id} style={{ background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-secondary)', borderTop: '1px solid var(--border)' }}>
@@ -407,6 +460,15 @@ export default function RelatoriosPage() {
                       <td className="px-4 py-3 text-right" style={{ color: '#818CF8' }}>{c.conversas}</td>
                       <td className="px-4 py-3 text-right" style={{ color: 'var(--text-secondary)' }}>{fmtTokens(Number(c.tokens))}</td>
                       <td className="px-4 py-3 text-right" style={{ color: '#10A37F' }}>{fmtBRL(Number(c.custo_brl))}</td>
+                      <td className="px-4 py-3 text-right">
+                        {instExtras > 0 ? (
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: '#F59E0B18', color: '#F59E0B' }}>
+                            {instExtras}x {fmtBRL(custoInstExtras)}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right font-semibold" style={{ color: '#10B981' }}>{fmtBRL(Number(c.valor_cobrado))}</td>
                       <td className="px-4 py-3 text-right font-semibold" style={{ color: margem >= 0 ? '#10B981' : '#EF4444' }}>
                         {fmtBRL(margem)}
@@ -435,6 +497,9 @@ export default function RelatoriosPage() {
                   <td className="px-4 py-3 text-right font-bold" style={{ color: '#818CF8' }}>{totalConversas}</td>
                   <td className="px-4 py-3 text-right font-semibold" style={{ color: 'var(--text-secondary)' }}>{fmtTokens(totalTokens)}</td>
                   <td className="px-4 py-3 text-right font-bold" style={{ color: '#10A37F' }}>{fmtBRL(totalCustoBRL)}</td>
+                  <td className="px-4 py-3 text-right font-bold" style={{ color: '#F59E0B' }}>
+                    {totalCustoInstExtras > 0 ? fmtBRL(totalCustoInstExtras) : '—'}
+                  </td>
                   <td className="px-4 py-3 text-right font-bold" style={{ color: '#10B981' }}>{fmtBRL(totalCobrado)}</td>
                   <td className="px-4 py-3 text-right font-bold" style={{ color: totalMargem >= 0 ? '#10B981' : '#EF4444' }}>{fmtBRL(totalMargem)}</td>
                   <td />
@@ -459,6 +524,7 @@ export default function RelatoriosPage() {
                   <th className="text-right px-4 py-3 font-medium">Ciclos</th>
                   <th className="text-right px-4 py-3 font-medium">Conversas</th>
                   <th className="text-right px-4 py-3 font-medium">Custo API</th>
+                  <th className="text-right px-4 py-3 font-medium">Inst. extras</th>
                   <th className="text-right px-4 py-3 font-medium">Total cobrado</th>
                   <th className="text-right px-5 py-3 font-medium">Margem total</th>
                 </tr>
@@ -469,7 +535,9 @@ export default function RelatoriosPage() {
                   const conv = t.ciclos.reduce((s, c) => s + c.conversas, 0)
                   const custo = t.ciclos.reduce((s, c) => s + Number(c.custo_brl), 0)
                   const cobrado = t.ciclos.reduce((s, c) => s + Number(c.valor_cobrado), 0)
-                  const margem = cobrado - custo
+                  const instExtras = Math.max(0, (instanciasPorTenant[tid] ?? 0) - 1)
+                  const custoInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
+                  const margem = cobrado - custo - custoInstExtras
                   return (
                     <tr key={tid} style={{ background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-secondary)', borderTop: '1px solid var(--border)' }}>
                       <td className="px-5 py-3 font-medium" style={{ color: 'var(--text-primary)' }}>{t.nome}</td>
@@ -479,6 +547,13 @@ export default function RelatoriosPage() {
                       <td className="px-4 py-3 text-right" style={{ color: 'var(--text-secondary)' }}>{t.ciclos.length}</td>
                       <td className="px-4 py-3 text-right" style={{ color: '#818CF8' }}>{conv}</td>
                       <td className="px-4 py-3 text-right" style={{ color: '#10A37F' }}>{fmtBRL(custo)}</td>
+                      <td className="px-4 py-3 text-right">
+                        {instExtras > 0 ? (
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: '#F59E0B18', color: '#F59E0B' }}>
+                            {instExtras}x {fmtBRL(custoInstExtras)}
+                          </span>
+                        ) : <span style={{ color: 'var(--text-secondary)' }}>—</span>}
+                      </td>
                       <td className="px-4 py-3 text-right font-semibold" style={{ color: '#10B981' }}>{fmtBRL(cobrado)}</td>
                       <td className="px-5 py-3 text-right font-semibold" style={{ color: margem >= 0 ? '#10B981' : '#EF4444' }}>{fmtBRL(margem)}</td>
                     </tr>
