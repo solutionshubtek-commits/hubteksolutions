@@ -29,6 +29,8 @@ const PLANOS: Record<string, { label: string; limite: number; valor: number }> =
   elite:      { label: 'Elite',      limite: 1000, valor: 1497 },
 }
 
+const CUSTO_INSTANCIA_EXTRA = 67.00
+
 const CUSTOS_FIXOS_DEFAULT = {
   vercel: 98.27,
   supabase: 122.83,
@@ -123,6 +125,7 @@ export default function CustosIAPage() {
   const [selectedAno, setSelectedAno] = useState<number>(new Date().getFullYear())
   const [rawData, setRawData] = useState<AiUsageRow[]>([])
   const [conversasPorMes, setConversasPorMes] = useState<Record<string, number>>({})
+  const [instanciasPorTenant, setInstanciasPorTenant] = useState<Record<string, number>>({})
   const [showCustosModal, setShowCustosModal] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
   const [custosFixos, setCustosFixos] = useState<CustosFixos>(CUSTOS_FIXOS_DEFAULT)
@@ -138,6 +141,16 @@ export default function CustosIAPage() {
     try {
       const { data: tData } = await supabase.from('tenants').select('id, nome, plano').order('nome')
       setTenants((tData ?? []) as TenantOption[])
+
+      // Busca instâncias por tenant
+      const { data: instData } = await supabase
+        .from('tenant_instances')
+        .select('tenant_id')
+      const instMap: Record<string, number> = {}
+      ;(instData ?? []).forEach((row: { tenant_id: string }) => {
+        instMap[row.tenant_id] = (instMap[row.tenant_id] ?? 0) + 1
+      })
+      setInstanciasPorTenant(instMap)
 
       let usageQuery = supabase
         .from('ai_usage')
@@ -178,6 +191,16 @@ export default function CustosIAPage() {
   const totalFixoMensal = Object.values(custosFixos).reduce((s, v) => s + v, 0)
   const fixoPorCliente = numClientes > 0 ? totalFixoMensal / numClientes : totalFixoMensal
 
+  // Instâncias extras do tenant selecionado (ou soma de todos)
+  const instanciasExtras = (() => {
+    if (selectedTenant !== 'todos') {
+      const total = instanciasPorTenant[selectedTenant] ?? 0
+      return Math.max(0, total - 1)
+    }
+    return Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
+  })()
+  const custoInstanciasExtras = instanciasExtras * CUSTO_INSTANCIA_EXTRA
+
   const seriesMensal: MesData[] = Array.from({ length: 12 }, (_, i) => {
     const mes = i + 1
     const rows = rawData.filter(r => r.ciclo_mes === mes)
@@ -215,6 +238,22 @@ export default function CustosIAPage() {
     return prev > 0 ? ((cur - prev) / prev) * 100 : null
   })()
 
+  // ── Balizador do mês selecionado ──
+  const balizTenant = tenants.find(t => t.id === selectedTenant)
+  const balizPlanoKey = balizTenant?.plano ?? 'essencial'
+  const balizPlano = PLANOS[balizPlanoKey] ?? PLANOS.essencial
+  const balizRows = rawData.filter(r => r.ciclo_mes === exportMes)
+  const balizConversas = conversasPorMes[String(exportMes)] ?? 0
+  const balizCustoAPI = balizRows.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
+  const balizInstanciasExtras = selectedTenant !== 'todos'
+    ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
+    : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
+  const balizCustoInstExtras = balizInstanciasExtras * CUSTO_INSTANCIA_EXTRA
+  const balizCustoTotal = balizCustoAPI + fixoPorCliente + balizCustoInstExtras
+  const balizMargem = balizPlano.valor - balizCustoTotal
+  const balizMargemPct = balizPlano.valor > 0 ? (balizMargem / balizPlano.valor) * 100 : 0
+  const balizCustoPorConv = balizConversas > 0 ? balizCustoAPI / balizConversas : 0
+
   // ── Export TXT ──
   function exportarFechamento() {
     const tenant = tenants.find(t => t.id === selectedTenant)
@@ -225,7 +264,11 @@ export default function CustosIAPage() {
     const conversas = conversasPorMes[String(exportMes)] ?? 0
     const tokens = mesRows.reduce((s, r) => s + r.tokens_entrada + r.tokens_saida, 0)
     const custoAPI = mesRows.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
-    const custoTotal = custoAPI + fixoPorCliente
+    const instExtras = selectedTenant !== 'todos'
+      ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
+      : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
+    const custoInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
+    const custoTotal = custoAPI + fixoPorCliente + custoInstExtras
     const margem = plano.valor - custoTotal
     const custoPorConv = conversas > 0 ? custoAPI / conversas : 0
     const mesNome = `${MESES_FULL[exportMes - 1]} ${selectedAno}`
@@ -242,6 +285,7 @@ export default function CustosIAPage() {
       `${pad('Total de tokens:', 25)} ${tokens.toLocaleString('pt-BR')}`,
       `${pad('Custo estimado (API):', 25)} ${fmtBRL(custoAPI)}`,
       `${pad('Custo fixo rateado:', 25)} ${fmtBRL(fixoPorCliente)}`,
+      ...(instExtras > 0 ? [`${pad('Instâncias extras:', 25)} ${instExtras}x ${fmtBRL(CUSTO_INSTANCIA_EXTRA)} = ${fmtBRL(custoInstExtras)}`] : []),
       `${pad('Custo total operacional:', 25)} ${fmtBRL(custoTotal)}`,
       `─────────────────────────────────────`,
       `${pad('Valor do plano:', 25)} ${fmtBRL(plano.valor)}`,
@@ -262,6 +306,7 @@ export default function CustosIAPage() {
       `GitHub:     ${fmtBRL(custosFixos.github)}`,
       `Resend:     ${fmtBRL(custosFixos.resend)}`,
       `Total fixo: ${fmtBRL(totalFixoMensal)} ÷ ${numClientes} cliente(s) = ${fmtBRL(fixoPorCliente)}/cliente`,
+      ...(instExtras > 0 ? [`Instâncias extras: ${instExtras}x R$ ${CUSTO_INSTANCIA_EXTRA.toFixed(2)} = ${fmtBRL(custoInstExtras)}`] : []),
       ``,
       `─────────────────────────────────────`,
       `Hubtek Solutions — app.hubteksolutions.tech`,
@@ -286,9 +331,23 @@ export default function CustosIAPage() {
     const mesRows = rawData.filter(r => r.ciclo_mes === exportMes)
     const conversas = conversasPorMes[String(exportMes)] ?? 0
     const custoAPI = mesRows.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
-    const custoTotal = custoAPI + fixoPorCliente
+    const instExtras = selectedTenant !== 'todos'
+      ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
+      : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
+    const custoInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
+    const custoTotal = custoAPI + fixoPorCliente + custoInstExtras
     const margem = plano.valor - custoTotal
     const mesNome = `${MESES_FULL[exportMes - 1]} ${selectedAno}`
+
+    const linhasPDF = [
+      { descricao: 'Conversas iniciadas',     valor: conversas },
+      { descricao: 'Custo estimado (API)',     valor: fmtBRL(custoAPI) },
+      { descricao: 'Custo fixo rateado',       valor: fmtBRL(fixoPorCliente) },
+      ...(instExtras > 0 ? [{ descricao: `Instâncias extras (${instExtras}x R$${CUSTO_INSTANCIA_EXTRA})`, valor: fmtBRL(custoInstExtras) }] : []),
+      { descricao: 'Custo total operacional',  valor: fmtBRL(custoTotal) },
+      { descricao: 'Valor do plano',           valor: fmtBRL(plano.valor) },
+      { descricao: 'Margem estimada',          valor: fmtBRL(margem) },
+    ]
 
     exportPDF({
       titulo: `Fechamento Mensal — ${mesNome}`,
@@ -297,30 +356,11 @@ export default function CustosIAPage() {
         { label: 'Descrição', key: 'descricao', align: 'left'  },
         { label: 'Valor',     key: 'valor',     align: 'right' },
       ],
-      linhas: [
-        { descricao: 'Conversas iniciadas',    valor: conversas },
-        { descricao: 'Custo estimado (API)',   valor: fmtBRL(custoAPI) },
-        { descricao: 'Custo fixo rateado',     valor: fmtBRL(fixoPorCliente) },
-        { descricao: 'Custo total operacional',valor: fmtBRL(custoTotal) },
-        { descricao: 'Valor do plano',         valor: fmtBRL(plano.valor) },
-        { descricao: 'Margem estimada',        valor: fmtBRL(margem) },
-      ],
+      linhas: linhasPDF,
       nomeArquivo: `fechamento_${nomeCliente.replace(/\s+/g, '_')}_${MESES_LABEL[exportMes - 1]}${selectedAno}`,
     })
     setShowExportModal(false)
   }
-
-  // ── Balizador do mês selecionado ──
-  const balizTenant = tenants.find(t => t.id === selectedTenant)
-  const balizPlanoKey = balizTenant?.plano ?? 'essencial'
-  const balizPlano = PLANOS[balizPlanoKey] ?? PLANOS.essencial
-  const balizRows = rawData.filter(r => r.ciclo_mes === exportMes)
-  const balizConversas = conversasPorMes[String(exportMes)] ?? 0
-  const balizCustoAPI = balizRows.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
-  const balizCustoTotal = balizCustoAPI + fixoPorCliente
-  const balizMargem = balizPlano.valor - balizCustoTotal
-  const balizMargemPct = balizPlano.valor > 0 ? (balizMargem / balizPlano.valor) * 100 : 0
-  const balizCustoPorConv = balizConversas > 0 ? balizCustoAPI / balizConversas : 0
 
   return (
     <div className="p-6 space-y-6" style={{ color: 'var(--text-primary)' }}>
@@ -363,6 +403,15 @@ export default function CustosIAPage() {
         <KpiCard icon={<Brain size={18} />} label="Custo Anthropic" value={fmtBRL(totalAnthropic)} accent="#D97757"
           sub={totalCusto > 0 ? `${((totalAnthropic / totalCusto) * 100).toFixed(0)}% do total` : undefined} />
       </div>
+
+      {/* Instâncias extras — aviso se houver */}
+      {custoInstanciasExtras > 0 && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm"
+          style={{ background: '#F59E0B10', border: '1px solid #F59E0B30', color: '#F59E0B' }}>
+          <span className="font-semibold">⚡ Instâncias extras:</span>
+          <span>{instanciasExtras}x instância adicional · {fmtBRL(CUSTO_INSTANCIA_EXTRA)}/instância = <strong>{fmtBRL(custoInstanciasExtras)}/mês</strong></span>
+        </div>
+      )}
 
       {/* Gráficos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -441,11 +490,17 @@ export default function CustosIAPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
           <BalizCard label="Conversas" value={String(balizConversas)} sub={`/ ${balizPlano.limite} limite`} cor="#6366F1" />
           <BalizCard label="Custo API" value={fmtBRL(balizCustoAPI)} sub="tokens consumidos" cor="#10A37F" />
           <BalizCard label="Custo fixo rateado" value={fmtBRL(fixoPorCliente)} sub={`${numClientes} cliente(s)`} cor="#8B5CF6" />
-          <BalizCard label="Custo operacional" value={fmtBRL(balizCustoTotal)} sub="API + fixo" cor="#F59E0B" />
+          <BalizCard
+            label="Instâncias extras"
+            value={balizInstanciasExtras > 0 ? fmtBRL(balizCustoInstExtras) : '—'}
+            sub={balizInstanciasExtras > 0 ? `${balizInstanciasExtras}x R$${CUSTO_INSTANCIA_EXTRA}` : 'nenhuma'}
+            cor={balizInstanciasExtras > 0 ? '#F59E0B' : 'var(--text-secondary)'}
+          />
+          <BalizCard label="Custo operacional" value={fmtBRL(balizCustoTotal)} sub="API + fixo + extras" cor="#F59E0B" />
           <BalizCard label="Valor do plano" value={fmtBRL(balizPlano.valor)} sub={balizPlano.label} cor="#10B981" />
           <BalizCard label="Margem estimada" value={fmtBRL(balizMargem)} sub={`${balizMargemPct.toFixed(0)}% do plano`} cor={balizMargem >= 0 ? '#10B981' : '#EF4444'} />
         </div>
@@ -494,6 +549,7 @@ export default function CustosIAPage() {
                     <th className="text-right px-4 py-3 font-medium"><span className="flex items-center justify-end gap-1.5"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: '#10A37F' }} />OpenAI</span></th>
                     <th className="text-right px-4 py-3 font-medium"><span className="flex items-center justify-end gap-1.5"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: '#D97757' }} />Anthropic</span></th>
                     <th className="text-right px-4 py-3 font-medium">Tokens</th>
+                    <th className="text-right px-4 py-3 font-medium">Inst. extras</th>
                     <th className="text-right px-5 py-3 font-medium">Custo API</th>
                   </tr>
                 </thead>
@@ -501,6 +557,7 @@ export default function CustosIAPage() {
                   {clientes.map((c, i) => {
                     const pctOpenAI = c.total_tokens > 0 ? (c.openai_tokens / c.total_tokens) * 100 : 0
                     const plano = PLANOS[c.plano] ?? PLANOS.essencial
+                    const instExtras = Math.max(0, (instanciasPorTenant[c.tenantId] ?? 0) - 1)
                     return (
                       <tr key={c.tenantId} style={{ background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-secondary)', borderTop: '1px solid var(--border)' }}>
                         <td className="px-5 py-3 font-medium" style={{ color: 'var(--text-primary)' }}>{c.nome}</td>
@@ -525,6 +582,15 @@ export default function CustosIAPage() {
                             <span style={{ color: 'var(--text-secondary)' }}>{fmtTokens(c.total_tokens)}</span>
                           </div>
                         </td>
+                        <td className="px-4 py-3 text-right">
+                          {instExtras > 0 ? (
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: '#F59E0B18', color: '#F59E0B' }}>
+                              {instExtras}x {fmtBRL(instExtras * CUSTO_INSTANCIA_EXTRA)}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
                         <td className="px-5 py-3 text-right font-semibold" style={{ color: 'var(--text-primary)' }}>{fmtBRL(c.total_custo)}</td>
                       </tr>
                     )
@@ -537,6 +603,9 @@ export default function CustosIAPage() {
                     <td className="px-4 py-3 text-right font-semibold" style={{ color: '#10A37F' }}>{fmtBRL(totalOpenAI)}</td>
                     <td className="px-4 py-3 text-right font-semibold" style={{ color: '#D97757' }}>{fmtBRL(totalAnthropic)}</td>
                     <td className="px-4 py-3 text-right font-semibold" style={{ color: 'var(--text-secondary)' }}>{fmtTokens(totalTokens)}</td>
+                    <td className="px-4 py-3 text-right font-semibold" style={{ color: '#F59E0B' }}>
+                      {custoInstanciasExtras > 0 ? fmtBRL(custoInstanciasExtras) : '—'}
+                    </td>
                     <td className="px-5 py-3 text-right font-bold" style={{ color: 'var(--text-primary)' }}>{fmtBRL(totalCusto)}</td>
                   </tr>
                 </tfoot>
@@ -584,6 +653,10 @@ export default function CustosIAPage() {
                 onChange={e => setNumClientes(Math.max(1, Number(e.target.value)))}
                 className="w-full mt-1 px-3 py-1.5 rounded-lg text-sm focus:outline-none"
                 style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+            </div>
+            <div className="p-3 rounded-lg text-xs" style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
+              <p className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Instâncias extras (automático)</p>
+              <p>R$ {CUSTO_INSTANCIA_EXTRA.toFixed(2)} por instância adicional (a partir da 2ª) — calculado automaticamente pelo banco.</p>
             </div>
             <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
               <span className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>
