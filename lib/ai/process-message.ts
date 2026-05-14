@@ -364,7 +364,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       content: buildSystemPrompt(
         config.prompt_principal ?? '',
         knowledgeDocs,
-        !!(config as Record<string, unknown>).google_calendar_config,
+        !!((config as unknown) as Record<string, unknown>).google_calendar_config,
         config.horario_inicio,
         config.horario_fim
       )
@@ -377,8 +377,8 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   ]
 
   // 10. Verifica se tem Google Calendar configurado e função agendamentos ativa
-  const calendarConfig = (config as Record<string, unknown>).google_calendar_config as GoogleCalendarConfig | null
-  const funcoesAtivas = ((config as Record<string, unknown>).funcoes_ativas as string[]) ?? []
+  const calendarConfig = (((config as unknown) as Record<string, unknown>).google_calendar_config) as GoogleCalendarConfig | null
+const funcoesAtivas = (((config as unknown) as Record<string, unknown>).funcoes_ativas as string[]) ?? []
   const usarCalendar = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
     && funcoesAtivas.includes('agendamentos')
 
