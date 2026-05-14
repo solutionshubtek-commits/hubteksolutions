@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, CSSProperties } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2, Image as ImageIcon } from 'lucide-react'
+import { Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2, Image as ImageIcon, Camera, X } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -16,6 +16,7 @@ interface KnowledgeFile {
 interface TenantData {
   id: string; nome: string; slug: string; prompt_agente: string
   mensagem_fora_horario: string; horario_funcionamento: HorarioFuncionamento
+  avatar_url: string | null
 }
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -58,42 +59,25 @@ function iconeArquivo(tipo: string, nome: string) {
   return '📃'
 }
 
+function getInitials(name: string) {
+  return name.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
+}
+
 function derivarAgentConfig(horario: HorarioFuncionamento): {
-  horario_inicio: string
-  horario_fim: string
-  dias_funcionamento: string[]
+  horario_inicio: string; horario_fim: string; dias_funcionamento: string[]
 } {
   const diasAtivos = DIAS_SEMANA.filter(d => horario[d.key].ativo)
-
-  if (diasAtivos.length === 0) {
-    return { horario_inicio: '08:00', horario_fim: '18:00', dias_funcionamento: [] }
-  }
-
-  const toMinutes = (t: string) => {
-    const [h, m] = t.split(':').map(Number)
-    return h * 60 + m
-  }
-  const fromMinutes = (m: number) => {
-    const h = Math.floor(m / 60).toString().padStart(2, '0')
-    const min = (m % 60).toString().padStart(2, '0')
-    return `${h}:${min}`
-  }
-
-  let minInicio = Infinity
-  let maxFim = 0
-
+  if (diasAtivos.length === 0) return { horario_inicio: '08:00', horario_fim: '18:00', dias_funcionamento: [] }
+  const toMinutes = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+  const fromMinutes = (m: number) => `${Math.floor(m / 60).toString().padStart(2, '0')}:${(m % 60).toString().padStart(2, '0')}`
+  let minInicio = Infinity, maxFim = 0
   diasAtivos.forEach(d => {
     const ini = toMinutes(horario[d.key].inicio)
     const fim = toMinutes(horario[d.key].fim)
     if (ini < minInicio) minInicio = ini
     if (fim > maxFim) maxFim = fim
   })
-
-  return {
-    horario_inicio: fromMinutes(minInicio),
-    horario_fim: fromMinutes(maxFim),
-    dias_funcionamento: diasAtivos.map(d => d.agentKey),
-  }
+  return { horario_inicio: fromMinutes(minInicio), horario_fim: fromMinutes(maxFim), dias_funcionamento: diasAtivos.map(d => d.agentKey) }
 }
 
 // ─── Toggle ───────────────────────────────────────────────────────────────────
@@ -150,10 +134,12 @@ export default function ConfiguracoesPage() {
   const [salvando, setSalvando] = useState(false)
   const [uploadando, setUploadando] = useState(false)
   const [uploadProgresso, setUploadProgresso] = useState('')
+  const [uploadandoAvatar, setUploadandoAvatar] = useState(false)
   const [excluindo, setExcluindo] = useState<string | null>(null)
   const [sucesso, setSucesso] = useState(false)
   const [erro, setErro] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
   const isSelfManaged = role === 'self_managed'
 
   useEffect(() => {
@@ -161,62 +147,111 @@ export default function ConfiguracoesPage() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-
       const { data: userData } = await supabase
-        .from('users')
-        .select('tenant_id, role')
-        .eq('id', user.id)
-        .single()
+        .from('users').select('tenant_id, role').eq('id', user.id).single()
       if (!userData?.tenant_id) return
-
       setTenantId(userData.tenant_id)
       setRole(userData.role || '')
-
       const { data: tenantData } = await supabase
         .from('tenants')
-        .select('id, nome, slug, prompt_agente, mensagem_fora_horario, horario_funcionamento')
+        .select('id, nome, slug, prompt_agente, mensagem_fora_horario, horario_funcionamento, avatar_url')
         .eq('id', userData.tenant_id)
         .single()
-
       if (tenantData) {
-        setTenant(tenantData)
-        setHorario(tenantData.horario_funcionamento || HORARIO_PADRAO)
+        setTenant(tenantData as TenantData)
+        setHorario((tenantData.horario_funcionamento as HorarioFuncionamento) || HORARIO_PADRAO)
       }
-
       if (userData.role === 'self_managed') {
         const { data: files } = await supabase
-          .from('knowledge_base')
-          .select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
-          .eq('tenant_id', userData.tenant_id)
-          .order('criado_em', { ascending: false })
+          .from('knowledge_base').select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
+          .eq('tenant_id', userData.tenant_id).order('criado_em', { ascending: false })
         setArquivos(files || [])
       }
-
       setCarregando(false)
     }
     fetchData()
   }, [])
+
+  // ── Upload avatar ───────────────────────────────────────────────────────────
+  async function handleUploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!tenant || !e.target.files?.length) return
+    const file = e.target.files[0]
+
+    if (!TIPOS_IMAGEM.includes(file.type)) {
+      setErro('Formato não suportado. Use JPG, PNG ou WEBP.')
+      if (avatarInputRef.current) avatarInputRef.current.value = ''
+      return
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setErro('Imagem muito grande. Limite: 2MB.')
+      if (avatarInputRef.current) avatarInputRef.current.value = ''
+      return
+    }
+
+    setUploadandoAvatar(true)
+    setErro('')
+
+    try {
+      const supabase = createClient()
+      const ext = file.name.split('.').pop() ?? 'jpg'
+      const path = `avatars/${tenant.id}.${ext}`
+
+      // Remove avatar antigo se existir
+      await supabase.storage.from('mensagens-midia').remove([path])
+
+      const { error: uploadErr } = await supabase.storage
+        .from('mensagens-midia')
+        .upload(path, file, { upsert: true, contentType: file.type })
+
+      if (uploadErr) throw uploadErr
+
+      const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
+      const novaUrl = `${urlData.publicUrl}?t=${Date.now()}` // cache bust
+
+      await supabase.from('tenants').update({ avatar_url: novaUrl }).eq('id', tenant.id)
+      setTenant(prev => prev ? { ...prev, avatar_url: novaUrl } : prev)
+    } catch (err) {
+      console.error('[avatar upload]', err)
+      setErro('Erro ao enviar imagem. Tente novamente.')
+    }
+
+    setUploadandoAvatar(false)
+    if (avatarInputRef.current) avatarInputRef.current.value = ''
+  }
+
+  // ── Remover avatar ──────────────────────────────────────────────────────────
+  async function handleRemoverAvatar() {
+    if (!tenant?.avatar_url) return
+    setUploadandoAvatar(true)
+    try {
+      const supabase = createClient()
+      // Extrai o path do storage da URL pública
+      const url = new URL(tenant.avatar_url)
+      const parts = url.pathname.split('/mensagens-midia/')
+      if (parts[1]) {
+        await supabase.storage.from('mensagens-midia').remove([parts[1].split('?')[0]])
+      }
+      await supabase.from('tenants').update({ avatar_url: null }).eq('id', tenant.id)
+      setTenant(prev => prev ? { ...prev, avatar_url: null } : prev)
+    } catch (err) {
+      console.error('[avatar remove]', err)
+      setErro('Erro ao remover imagem.')
+    }
+    setUploadandoAvatar(false)
+  }
 
   // ── Salvar ──────────────────────────────────────────────────────────────────
   async function handleSalvar() {
     if (!tenant) return
     setSalvando(true); setSucesso(false); setErro('')
     const supabase = createClient()
-
     const { error: tenantErr } = await supabase.from('tenants').update({
       prompt_agente: tenant.prompt_agente,
       mensagem_fora_horario: tenant.mensagem_fora_horario,
       horario_funcionamento: horario,
     }).eq('id', tenant.id)
-
-    if (tenantErr) {
-      setErro('Erro ao salvar configurações. Tente novamente.')
-      setSalvando(false)
-      return
-    }
-
+    if (tenantErr) { setErro('Erro ao salvar configurações. Tente novamente.'); setSalvando(false); return }
     const agentDerived = derivarAgentConfig(horario)
-
     const { error: agentErr } = await supabase.from('agent_config').upsert({
       tenant_id: tenantId,
       prompt_principal: tenant.prompt_agente,
@@ -226,70 +261,41 @@ export default function ConfiguracoesPage() {
       dias_funcionamento: agentDerived.dias_funcionamento,
       motor_ia_principal: 'openai',
       motor_ia_backup: 'anthropic',
-      ativo: true,
-      temperatura: 0.7,
-      max_tokens: 1000,
+      ativo: true, temperatura: 0.7, max_tokens: 1000,
       atualizado_em: new Date().toISOString(),
     }, { onConflict: 'tenant_id' })
-
     setSalvando(false)
-
-    if (agentErr) {
-      setErro('Configurações salvas parcialmente. Erro ao sincronizar com o agente: ' + agentErr.message)
-      return
-    }
-
+    if (agentErr) { setErro('Configurações salvas parcialmente. Erro ao sincronizar com o agente: ' + agentErr.message); return }
     setSucesso(true)
     setTimeout(() => setSucesso(false), 3000)
   }
 
-  // ── Upload via rota server-side ─────────────────────────────────────────────
+  // ── Upload knowledge base ───────────────────────────────────────────────────
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
-
     const isImagem = TIPOS_IMAGEM.includes(file.type)
     const limiteBytes = isImagem ? 5 * 1024 * 1024 : 50 * 1024 * 1024
-    const limiteLabel = isImagem ? '5MB' : '50MB'
-
     if (file.size > limiteBytes) {
-      setErro(`Arquivo muito grande. Limite máximo para ${isImagem ? 'imagens' : 'documentos'}: ${limiteLabel}.`)
+      setErro(`Arquivo muito grande. Limite: ${isImagem ? '5MB' : '50MB'}.`)
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
-
-    setUploadando(true)
-    setErro('')
-
-    if (isImagem) {
-      setUploadProgresso('Enviando imagem...')
-    } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-      setUploadProgresso('Extraindo texto do PDF...')
-    } else if (file.type.includes('word') || file.name.endsWith('.docx')) {
-      setUploadProgresso('Extraindo texto do documento...')
-    } else {
-      setUploadProgresso('Enviando arquivo...')
-    }
-
+    setUploadando(true); setErro('')
+    setUploadProgresso(
+      isImagem ? 'Enviando imagem...'
+      : file.type === 'application/pdf' ? 'Extraindo texto do PDF...'
+      : file.type.includes('word') ? 'Extraindo texto do documento...'
+      : 'Enviando arquivo...'
+    )
     const formData = new FormData()
     formData.append('file', file)
     formData.append('tenant_id', tenant.id)
-
-    const res = await fetch('/api/knowledge-base/upload', {
-      method: 'POST',
-      body: formData,
-    })
-
+    const res = await fetch('/api/knowledge-base/upload', { method: 'POST', body: formData })
     const data = await res.json()
-    setUploadando(false)
-    setUploadProgresso('')
-
-    if (!res.ok || !data.success) {
-      setErro(data.error ?? 'Erro ao enviar arquivo.')
-    } else {
-      setArquivos(prev => [data.arquivo, ...prev])
-    }
-
+    setUploadando(false); setUploadProgresso('')
+    if (!res.ok || !data.success) { setErro(data.error ?? 'Erro ao enviar arquivo.') }
+    else { setArquivos(prev => [data.arquivo, ...prev]) }
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -328,6 +334,65 @@ export default function ConfiguracoesPage() {
         {/* Dados do tenant */}
         <div className="rounded-xl p-6" style={cardStyle}>
           <h2 className="font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Dados do tenant</h2>
+
+          {/* Avatar */}
+          <div className="flex items-center gap-4 mb-6 pb-6" style={{ borderBottom: '1px solid var(--border)' }}>
+            <div className="relative">
+              {tenant?.avatar_url ? (
+                <div className="w-16 h-16 rounded-xl overflow-hidden"
+                  style={{ border: '2px solid var(--border)' }}>
+                  <img src={tenant.avatar_url} alt={tenant.nome} className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <div className="w-16 h-16 rounded-xl flex items-center justify-center text-lg font-bold"
+                  style={{ background: 'rgba(16,185,129,0.1)', border: '2px solid rgba(16,185,129,0.25)', color: '#10B981' }}>
+                  {tenant ? getInitials(tenant.nome) : '?'}
+                </div>
+              )}
+              {uploadandoAvatar && (
+                <div className="absolute inset-0 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(0,0,0,0.5)' }}>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1">
+              <p className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                Logo / Avatar da empresa
+              </p>
+              <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+                JPG, PNG ou WEBP · máx. 2MB · aparece na barra lateral
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={uploadandoAvatar}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                  style={{ background: 'var(--bg-hover)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                  <Camera size={12} />
+                  {uploadandoAvatar ? 'Enviando...' : tenant?.avatar_url ? 'Alterar' : 'Enviar foto'}
+                </button>
+                {tenant?.avatar_url && (
+                  <button
+                    onClick={handleRemoverAvatar}
+                    disabled={uploadandoAvatar}
+                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 hover:text-red-400 hover:border-red-400/40"
+                    style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                    <X size={12} /> Remover
+                  </button>
+                )}
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleUploadAvatar}
+                  className="hidden"
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Nome</label>
@@ -340,6 +405,7 @@ export default function ConfiguracoesPage() {
                 className="w-full rounded-lg px-4 py-3 text-sm" style={inputDisabledStyle} />
             </div>
           </div>
+
           {!isSelfManaged && (
             <p className="mt-4 text-xs flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
               <AlertCircle size={12} />
@@ -457,7 +523,6 @@ export default function ConfiguracoesPage() {
                 Documentos: PDF, DOCX, TXT, XLSX (máx. 50MB) · Imagens: JPG, PNG, WEBP (máx. 5MB)
               </p>
 
-              {/* Progresso do upload */}
               {uploadando && uploadProgresso && (
                 <div className="mb-3 flex items-center gap-2 p-3 rounded-lg"
                   style={{ background: '#10B98110', border: '1px solid #10B98130' }}>
