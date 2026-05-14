@@ -61,7 +61,7 @@ async function getAccessToken(config: GoogleCalendarConfig): Promise<string> {
     encoder.encode(signingInput)
   )
 
-  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)))
+  const signatureB64 = btoa(Array.from(new Uint8Array(signatureBuffer)).map(b => String.fromCharCode(b)).join(''))
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
 
   const jwt = `${signingInput}.${signatureB64}`
