@@ -341,7 +341,8 @@ export default function ConfiguracoesPage() {
               {tenant?.avatar_url ? (
                 <div className="w-16 h-16 rounded-xl overflow-hidden"
                   style={{ border: '2px solid var(--border)' }}>
-                  <img src={tenant.avatar_url} alt={tenant.nome} className="w-full h-full object-cover" />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+<img src={tenant.avatar_url} alt={tenant.nome} className="w-full h-full object-cover" />
                 </div>
               ) : (
                 <div className="w-16 h-16 rounded-xl flex items-center justify-center text-lg font-bold"

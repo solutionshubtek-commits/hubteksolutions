@@ -2,9 +2,12 @@
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check, TrendingUp } from 'lucide-react'
+import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check, TrendingUp, Camera } from 'lucide-react'
 
-interface HeaderProps { nomeUsuario: string | null }
+interface HeaderProps {
+  nomeUsuario: string | null
+  avatarUrl: string | null
+}
 
 interface Notification {
   id: string
@@ -24,20 +27,30 @@ interface LimiteInfo {
   atingiuLimite: boolean
 }
 
-export function Header({ nomeUsuario }: HeaderProps) {
+export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
   const router = useRouter()
   const [agentAtivo, setAgentAtivo]           = useState(true)
   const [pausadoPorAdmin, setPausadoPorAdmin]  = useState(false)
   const [tenantId, setTenantId]               = useState<string | null>(null)
+  const [userId, setUserId]                   = useState<string | null>(null)
   const [tema, setTema]                       = useState<'dark' | 'light'>('dark')
   const [toggling, setToggling]               = useState(false)
   const [notifications, setNotifications]     = useState<Notification[]>([])
   const [showDropdown, setShowDropdown]       = useState(false)
   const [expiraEm, setExpiraEm]               = useState<string | null>(null)
   const [limiteInfo, setLimiteInfo]           = useState<LimiteInfo | null>(null)
+  const [avatarUrl, setAvatarUrl]             = useState<string | null>(avatarUrlProp)
+  const [showAvatarMenu, setShowAvatarMenu]   = useState(false)
+  const [uploadandoAvatar, setUploadandoAvatar] = useState(false)
   const dropdownRef                           = useRef<HTMLDivElement>(null)
+  const avatarMenuRef                         = useRef<HTMLDivElement>(null)
+  const avatarInputRef                        = useRef<HTMLInputElement>(null)
 
   const naoLidas = notifications.filter(n => !n.lida).length
+
+  const initials = nomeUsuario
+    ? nomeUsuario.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
+    : 'U'
 
   // Banner de expiração
   const bannerExpiracao = (() => {
@@ -55,6 +68,7 @@ export function Header({ nomeUsuario }: HeaderProps) {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      setUserId(user.id)
       const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
       if (!userData?.tenant_id) return
       setTenantId(userData.tenant_id)
@@ -66,18 +80,14 @@ export function Header({ nomeUsuario }: HeaderProps) {
         setExpiraEm(tenantData.expira_em ?? null)
       }
 
-      // Verifica limite de conversas (cria notificação se necessário)
+      // Verifica limite de conversas
       try {
         const res = await fetch('/api/notifications/limite-conversas', { method: 'POST' })
         if (res.ok) {
           const data = await res.json()
-          if (data.emAviso || data.atingiuLimite) {
-            setLimiteInfo(data)
-          }
+          if (data.emAviso || data.atingiuLimite) setLimiteInfo(data)
         }
-      } catch {
-        // silencioso — não bloqueia o carregamento
-      }
+      } catch { /* silencioso */ }
     }
 
     fetchData()
@@ -90,10 +100,14 @@ export function Header({ nomeUsuario }: HeaderProps) {
     }
   }, [])
 
+  // Fecha dropdowns ao clicar fora
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowDropdown(false)
+      }
+      if (avatarMenuRef.current && !avatarMenuRef.current.contains(e.target as Node)) {
+        setShowAvatarMenu(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -150,9 +164,62 @@ export function Header({ nomeUsuario }: HeaderProps) {
     router.push('/login')
   }
 
-  const initials = nomeUsuario
-    ? nomeUsuario.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
-    : 'U'
+  // ── Upload avatar do usuário ─────────────────────────────────────────────────
+  async function handleUploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!userId || !e.target.files?.length) return
+    const file = e.target.files[0]
+
+    const tiposAceitos = ['image/jpeg', 'image/png', 'image/webp']
+    if (!tiposAceitos.includes(file.type)) return
+    if (file.size > 2 * 1024 * 1024) return
+
+    setUploadandoAvatar(true)
+    setShowAvatarMenu(false)
+
+    try {
+      const supabase = createClient()
+      const ext = file.name.split('.').pop() ?? 'jpg'
+      const path = `user-avatars/${userId}.${ext}`
+
+      await supabase.storage.from('mensagens-midia').remove([path])
+
+      const { error: uploadErr } = await supabase.storage
+        .from('mensagens-midia')
+        .upload(path, file, { upsert: true, contentType: file.type })
+
+      if (uploadErr) throw uploadErr
+
+      const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
+      const novaUrl = `${urlData.publicUrl}?t=${Date.now()}`
+
+      await supabase.from('users').update({ avatar_url: novaUrl }).eq('id', userId)
+      setAvatarUrl(novaUrl)
+    } catch (err) {
+      console.error('[user avatar upload]', err)
+    }
+
+    setUploadandoAvatar(false)
+    if (avatarInputRef.current) avatarInputRef.current.value = ''
+  }
+
+  async function handleRemoverAvatar() {
+    if (!userId || !avatarUrl) return
+    setUploadandoAvatar(true)
+    setShowAvatarMenu(false)
+    try {
+      const supabase = createClient()
+      const url = new URL(avatarUrl)
+      const parts = url.pathname.split('/mensagens-midia/')
+      if (parts[1]) {
+        await supabase.storage.from('mensagens-midia').remove([parts[1].split('?')[0]])
+      }
+      await supabase.from('users').update({ avatar_url: null }).eq('id', userId)
+      setAvatarUrl(null)
+    } catch (err) {
+      console.error('[user avatar remove]', err)
+    }
+    setUploadandoAvatar(false)
+  }
 
   return (
     <>
@@ -168,8 +235,7 @@ export function Header({ nomeUsuario }: HeaderProps) {
             ? 'Seu acesso expira hoje! Entre em contato para renovar.'
             : bannerExpiracao.dias === 1
             ? 'Seu acesso expira amanhã! Entre em contato para renovar.'
-            : `Seu acesso expira em ${bannerExpiracao.dias} dias. Renove para não perder o serviço.`
-          }
+            : `Seu acesso expira em ${bannerExpiracao.dias} dias. Renove para não perder o serviço.`}
           <a href="https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+renovar+meu+acesso+HubTek"
             target="_blank" rel="noopener noreferrer"
             className="underline font-semibold ml-1">
@@ -188,8 +254,7 @@ export function Header({ nomeUsuario }: HeaderProps) {
           <TrendingUp size={14} />
           {limiteInfo.atingiuLimite
             ? `Limite de conversas atingido (${limiteInfo.totalConversas}/${limiteInfo.limite}). Seu plano foi atualizado automaticamente.`
-            : `${limiteInfo.percentual}% do limite de conversas usado este mês — ${limiteInfo.totalConversas} de ${limiteInfo.limite} (Plano ${limiteInfo.plano}).`
-          }
+            : `${limiteInfo.percentual}% do limite de conversas usado este mês — ${limiteInfo.totalConversas} de ${limiteInfo.limite} (Plano ${limiteInfo.plano}).`}
           <a href="https://wa.me/5551980104924?text=Ol%C3%A1%2C+quero+fazer+upgrade+do+meu+plano+HubTek"
             target="_blank" rel="noopener noreferrer"
             className="underline font-semibold ml-1">
@@ -261,7 +326,6 @@ export function Header({ nomeUsuario }: HeaderProps) {
                   </button>
                 )}
               </div>
-
               <div className="max-h-80 overflow-y-auto">
                 {notifications.length === 0 ? (
                   <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -297,12 +361,63 @@ export function Header({ nomeUsuario }: HeaderProps) {
 
         <div className="w-px h-6" style={{ background: 'var(--border)' }} />
 
-        <div className="flex items-center gap-2">
+        {/* Avatar do usuário — clicável */}
+        <div className="relative flex items-center gap-2" ref={avatarMenuRef}>
           <span className="text-sm hidden md:block" style={{ color: 'var(--text-secondary)' }}>{nomeUsuario}</span>
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold"
-            style={{ background: 'var(--bg-hover)', border: '1px solid var(--border-2)', color: 'var(--text-primary)' }}>
-            {initials}
-          </div>
+
+          <button
+            onClick={() => setShowAvatarMenu(prev => !prev)}
+            className="relative w-8 h-8 rounded-full overflow-hidden transition-opacity hover:opacity-80"
+            style={{ border: '2px solid var(--border-2)' }}
+            title="Alterar foto de perfil">
+            {uploadandoAvatar ? (
+              <div className="w-full h-full flex items-center justify-center"
+                style={{ background: 'var(--bg-hover)' }}>
+                <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin"
+                  style={{ color: 'var(--text-muted)' }} />
+              </div>
+            ) : avatarUrl ? (
+              <img src={avatarUrl} alt={nomeUsuario ?? 'Avatar'} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-xs font-semibold"
+                style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)' }}>
+                {initials}
+              </div>
+            )}
+          </button>
+
+          {/* Mini menu do avatar */}
+          {showAvatarMenu && (
+            <div className="absolute right-0 top-10 w-44 rounded-xl shadow-2xl z-50 overflow-hidden"
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors hover:bg-[var(--bg-hover)]"
+                style={{ color: 'var(--text-secondary)' }}>
+                <Camera size={13} />
+                {avatarUrl ? 'Alterar foto' : 'Adicionar foto'}
+              </button>
+              {avatarUrl && (
+                <button
+                  onClick={handleRemoverAvatar}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors hover:bg-red-500/10 text-red-400">
+                  <X size={13} />
+                  Remover foto
+                </button>
+              )}
+              <div className="px-4 py-2 text-[10px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
+                JPG, PNG ou WEBP · máx. 2MB
+              </div>
+            </div>
+          )}
+
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={handleUploadAvatar}
+            className="hidden"
+          />
         </div>
 
         <button onClick={handleLogout}

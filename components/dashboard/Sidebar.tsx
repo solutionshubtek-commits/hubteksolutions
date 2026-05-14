@@ -73,7 +73,8 @@ export function Sidebar() {
           {avatarUrl ? (
             <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0"
               style={{ border: '1px solid var(--border)' }}>
-              <img src={avatarUrl} alt={nomeEmpresa} className="w-full h-full object-cover" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+<img src={avatarUrl} alt={nomeEmpresa} className="w-full h-full object-cover" />
             </div>
           ) : (
             <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold shrink-0"
