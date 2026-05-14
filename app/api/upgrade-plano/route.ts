@@ -27,11 +27,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Tenant não encontrado' }, { status: 404 })
     }
 
-    const planoAtual = tenant.plano ?? 'essencial'
+    const planoAtual = (tenant as { plano?: string }).plano ?? 'essencial'
     const proximo = proximoPlano(planoAtual)
 
     if (!proximo) {
-      // Já está no Elite — não faz upgrade, apenas notifica
       return NextResponse.json({
         upgraded: false,
         motivo: 'plano_maximo',
@@ -39,10 +38,8 @@ export async function POST(request: Request) {
       })
     }
 
-    // Conta conversas do ciclo atual (mês corrente)
-    const agora = new Date()
-    // UTC-3
-    const agora3 = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
+    // Conta conversas do ciclo atual (mês corrente, UTC-3)
+    const agora3 = new Date(Date.now() - 3 * 60 * 60 * 1000)
     const inicioMes = new Date(Date.UTC(agora3.getUTCFullYear(), agora3.getUTCMonth(), 1, 3, 0, 0))
 
     const { count } = await supabaseAdmin
@@ -54,7 +51,6 @@ export async function POST(request: Request) {
     const totalConversas = count ?? 0
     const limiteAtual = PLANOS_MAP[planoAtual]?.limite ?? 50
 
-    // Só faz upgrade se realmente atingiu ou ultrapassou o limite
     if (totalConversas < limiteAtual) {
       return NextResponse.json({
         upgraded: false,
@@ -65,7 +61,7 @@ export async function POST(request: Request) {
       })
     }
 
-    // Verifica se já foi feito upgrade neste ciclo (evita upgrade em loop)
+    // Verifica se já foi feito upgrade neste ciclo (evita loop)
     const { data: upgradeRecente } = await supabaseAdmin
       .from('plan_upgrades')
       .select('id')
@@ -92,23 +88,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Erro ao atualizar plano' }, { status: 500 })
     }
 
-    // Registra o upgrade no log
-    await supabaseAdmin
-      .from('plan_upgrades')
-      .insert({
-        tenant_id,
-        plano_anterior: planoAtual,
-        plano_novo: proximo.value,
-        conversas_no_momento: totalConversas,
-        motivo: 'limite_atingido_automatico',
-      })
-      .throwOnError()
-      .catch((e: unknown) => {
-        // Tabela pode não existir ainda — apenas loga
-        console.warn('[upgrade-plano] Tabela plan_upgrades não existe ainda:', e)
-      })
+    // Registra no log (tabela pode não existir ainda — ignora erro silenciosamente)
+    try {
+      await supabaseAdmin
+        .from('plan_upgrades')
+        .insert({
+          tenant_id,
+          plano_anterior: planoAtual,
+          plano_novo: proximo.value,
+          conversas_no_momento: totalConversas,
+          motivo: 'limite_atingido_automatico',
+        })
+    } catch (e: unknown) {
+      console.warn('[upgrade-plano] Tabela plan_upgrades não existe ainda:', e)
+    }
 
-    console.log(`[upgrade-plano] Tenant ${tenant.nome} (${tenant_id}): ${planoAtual} → ${proximo.value} (${totalConversas} conversas)`)
+    console.log(`[upgrade-plano] Tenant ${(tenant as { nome: string }).nome} (${tenant_id}): ${planoAtual} → ${proximo.value} (${totalConversas} conversas)`)
 
     return NextResponse.json({
       upgraded: true,
