@@ -9,11 +9,29 @@ import {
 } from '@/lib/evolution/webhook'
 import { processIncomingMessage } from '@/lib/ai/process-message'
 import { getTenantByInstanceName } from '@/lib/supabase/queries/conversations'
+import { PLANOS_MAP } from '@/lib/planos'
 
 const WHATSAPP_STATUS: Record<string, string> = {
   open: 'conectado',
   close: 'desconectado',
   connecting: 'desconectado',
+}
+
+// ─── Upgrade automático ───────────────────────────────────────────────────────
+// Chama a API de upgrade de forma assíncrona (fire-and-forget)
+// Não bloqueia o processamento da mensagem
+async function verificarUpgradePlano(tenantId: string): Promise<void> {
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.hubteksolutions.tech'
+    await fetch(`${baseUrl}/api/upgrade-plano`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id: tenantId }),
+    })
+  } catch (err) {
+    // Nunca deixar falha de upgrade derrubar o webhook
+    console.error('[webhook] Erro ao verificar upgrade de plano:', err)
+  }
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -39,6 +57,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (event.event === 'messages.upsert' && isMessageUpsertData(event.data)) {
     const data = event.data
 
+    // ── Mensagens enviadas pelo operador (fromMe) ──────────────────────────
     if (data.key.fromMe) {
       // Ignora mídias — já salvas pela rota enviar-midia
       const isMidia = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'].includes(data.messageType)
@@ -75,8 +94,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return response
     }
 
+    // ── Ignora grupos ──────────────────────────────────────────────────────
     if (data.key.remoteJid.includes('@g.us')) return response
 
+    // ── Mensagem do cliente ────────────────────────────────────────────────
     const supabase = createServiceClient()
     const tenant = await getTenantByInstanceName(supabase, event.instance)
     if (!tenant) return response
@@ -95,6 +116,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         conteudo: extractTextContent(data),
         caption: data.message.imageMessage?.caption,
       })
+
+      // ── Verifica upgrade de plano após processar mensagem ─────────────
+      // Só verifica se o tenant tem plano definido (exceto elite que não faz upgrade)
+      const planoAtual = (tenant as { plano?: string }).plano ?? 'essencial'
+      if (planoAtual !== 'elite') {
+        // Conta conversas do mês para decidir se precisa checar
+        // Checa apenas a cada N mensagens para reduzir carga (a cada 5 mensagens)
+        // A API de upgrade tem sua própria verificação de limite
+        const agora3 = new Date(Date.now() - 3 * 60 * 60 * 1000)
+        const inicioMes = new Date(Date.UTC(agora3.getUTCFullYear(), agora3.getUTCMonth(), 1, 3, 0, 0))
+
+        const { count } = await supabase
+          .from('conversations')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenant.id)
+          .gte('criado_em', inicioMes.toISOString())
+
+        const totalConversas = count ?? 0
+        const limiteAtual = PLANOS_MAP[planoAtual]?.limite ?? 50
+
+        // Só dispara verificação se atingiu ou ultrapassou o limite
+        if (totalConversas >= limiteAtual) {
+          verificarUpgradePlano(tenant.id) // fire-and-forget
+        }
+      }
     } catch (err) {
       console.error('[webhook/evolution] Erro no processamento:', err)
     }
