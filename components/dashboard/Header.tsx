@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check } from 'lucide-react'
+import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check, TrendingUp } from 'lucide-react'
 
 interface HeaderProps { nomeUsuario: string | null }
 
@@ -12,6 +12,15 @@ interface Notification {
   mensagem: string
   lida: boolean
   criado_em: string
+}
+
+interface LimiteInfo {
+  totalConversas: number
+  limite: number
+  percentual: number
+  plano: string
+  emAviso: boolean
+  atingiuLimite: boolean
 }
 
 export function Header({ nomeUsuario }: HeaderProps) {
@@ -24,6 +33,7 @@ export function Header({ nomeUsuario }: HeaderProps) {
   const [notifications, setNotifications]     = useState<Notification[]>([])
   const [showDropdown, setShowDropdown]       = useState(false)
   const [expiraEm, setExpiraEm]               = useState<string | null>(null)
+  const [limiteInfo, setLimiteInfo]           = useState<LimiteInfo | null>(null)
   const dropdownRef                           = useRef<HTMLDivElement>(null)
 
   const naoLidas = notifications.filter(n => !n.lida).length
@@ -54,7 +64,21 @@ export function Header({ nomeUsuario }: HeaderProps) {
         setPausadoPorAdmin(tenantData.pausado_por_admin ?? false)
         setExpiraEm(tenantData.expira_em ?? null)
       }
+
+      // Verifica limite de conversas (cria notificação se necessário)
+      try {
+        const res = await fetch('/api/notifications/limite-conversas', { method: 'POST' })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.emAviso || data.atingiuLimite) {
+            setLimiteInfo(data)
+          }
+        }
+      } catch {
+        // silencioso — não bloqueia o carregamento
+      }
     }
+
     fetchData()
     fetchNotifications()
 
@@ -146,9 +170,29 @@ export function Header({ nomeUsuario }: HeaderProps) {
             : `Seu acesso expira em ${bannerExpiracao.dias} dias. Renove para não perder o serviço.`
           }
           <a href="https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+renovar+meu+acesso+HubTek"
-  target="_blank" rel="noopener noreferrer"
+            target="_blank" rel="noopener noreferrer"
             className="underline font-semibold ml-1">
             Falar com suporte
+          </a>
+        </div>
+      )}
+
+      {/* Banner limite de conversas */}
+      {limiteInfo && !bannerExpiracao && (
+        <div className={`w-full px-6 py-2.5 flex items-center justify-center gap-2 text-sm font-medium ${
+          limiteInfo.atingiuLimite
+            ? 'bg-red-500/10 border-b border-red-500/30 text-red-400'
+            : 'bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-400'
+        }`}>
+          <TrendingUp size={14} />
+          {limiteInfo.atingiuLimite
+            ? `Limite de conversas atingido (${limiteInfo.totalConversas}/${limiteInfo.limite}). Seu plano foi atualizado automaticamente.`
+            : `${limiteInfo.percentual}% do limite de conversas usado este mês — ${limiteInfo.totalConversas} de ${limiteInfo.limite} (Plano ${limiteInfo.plano}).`
+          }
+          <a href="https://wa.me/5551980104924?text=Ol%C3%A1%2C+quero+fazer+upgrade+do+meu+plano+HubTek"
+            target="_blank" rel="noopener noreferrer"
+            className="underline font-semibold ml-1">
+            {limiteInfo.atingiuLimite ? 'Falar com suporte' : 'Fazer upgrade'}
           </a>
         </div>
       )}
@@ -192,7 +236,7 @@ export function Header({ nomeUsuario }: HeaderProps) {
         {/* Sininho */}
         <div className="relative" ref={dropdownRef}>
           <button
-            onClick={() => setShowDropdown(prev => !prev)}
+            onClick={() => { setShowDropdown(prev => !prev); if (!showDropdown) fetchNotifications() }}
             className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors relative"
             style={{ color: 'var(--text-muted)' }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
@@ -227,8 +271,8 @@ export function Header({ nomeUsuario }: HeaderProps) {
                     <div key={n.id}
                       className="px-4 py-3 flex gap-3 items-start transition-colors"
                       style={{
-                        background: n.lida ? 'transparent' : 'rgba(249,115,22,0.05)',
-                        borderBottom: '1px solid var(--border)'
+                        background: n.lida ? 'transparent' : n.tipo === 'limite_conversas' ? 'rgba(234,179,8,0.05)' : 'rgba(249,115,22,0.05)',
+                        borderBottom: '1px solid var(--border)',
                       }}>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{n.titulo}</p>
