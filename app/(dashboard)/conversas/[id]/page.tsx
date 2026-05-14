@@ -140,7 +140,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     }
   }, [params.id, scrollToBottom])
 
-  // Limpa timer ao desmontar
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
@@ -201,10 +200,17 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   }
 
   async function iniciarGravacao() {
-    if (arquivo) return // não gravar se já tem arquivo selecionado
+    if (arquivo) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
+
+      // Prioriza opus/ogg para compatibilidade com WhatsApp
+      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? 'audio/ogg;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm'
+
       const recorder = new MediaRecorder(stream, { mimeType })
       chunksRef.current = []
 
@@ -214,6 +220,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
       recorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop())
+        // Sempre salva como .ogg — WhatsApp aceita nativamente
         const blob = new Blob(chunksRef.current, { type: mimeType })
         const file = new File([blob], `audio_${Date.now()}.ogg`, { type: mimeType })
         selecionarArquivo(file)
@@ -222,7 +229,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         if (timerRef.current) clearInterval(timerRef.current)
       }
 
-      recorder.start()
+      recorder.start(100) // coleta chunks a cada 100ms para garantir dados
       mediaRecorderRef.current = recorder
       setGravando(true)
       setTempoGravacao(0)
@@ -261,6 +268,21 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     return `${m}:${s}`
   }
 
+  async function enviarMensagemTexto(msg: string) {
+    if (!conversa) return
+    await fetch('/api/whatsapp/enviar-mensagem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversation_id: conversa.id,
+        tenant_id: conversa.tenant_id,
+        instance_name: conversa.instance_name,
+        telefone: conversa.contato_telefone,
+        mensagem: msg,
+      }),
+    })
+  }
+
   async function handleEnviar() {
     if (enviando || uploadando || !conversa) return
 
@@ -294,7 +316,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         const caption = temTexto ? texto.trim() : ''
         setTexto('')
 
-        // Upload direto do browser para o Supabase (sem limite de payload da Vercel)
         const supabase = createClient()
         const ext = arquivo!.name.split('.').pop() ?? 'bin'
         const safeName = `${Date.now()}.${ext}`
@@ -319,7 +340,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         const isImage = arquivo!.type.startsWith('image/')
         const tipo = isAudio ? 'audio' : isVideo ? 'video' : isImage ? 'imagem' : 'documento'
 
-        // Chama rota leve passando só a URL (sem o arquivo)
+        // Para áudio, não passa caption (sendWhatsAppAudio não suporta)
+        // O texto é enviado como mensagem separada após o áudio
         const res = await fetch('/api/whatsapp/enviar-midia-url', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -331,9 +353,14 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
             arquivo_url: publicUrl,
             tipo,
             nome: arquivo!.name,
-            caption: caption || undefined,
+            caption: isAudio ? undefined : (caption || undefined),
           }),
         })
+
+        // Se era áudio e tinha texto, envia o texto como mensagem separada
+        if (isAudio && caption) {
+          await enviarMensagemTexto(caption)
+        }
 
         setUploadando(false)
         limparArquivo()
@@ -632,10 +659,9 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                 />
               )}
 
-              {/* Spacer quando gravando para empurrar botões para direita */}
               {gravando && <div className="flex-1" />}
 
-              {/* Botão microfone / parar gravação — só aparece se não tem arquivo nem texto */}
+              {/* Botão microfone / parar gravação */}
               {!arquivo && !texto.trim() && (
                 <button
                   onClick={gravando ? pararGravacao : iniciarGravacao}
@@ -649,7 +675,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                 </button>
               )}
 
-              {/* Botão enviar — aparece quando tem texto ou arquivo (não durante gravação vazia) */}
+              {/* Botão enviar */}
               {(texto.trim() || arquivo) && !gravando && (
                 <button
                   onClick={handleEnviar}
