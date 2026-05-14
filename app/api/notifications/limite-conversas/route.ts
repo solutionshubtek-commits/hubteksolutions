@@ -49,7 +49,6 @@ export async function POST() {
   // Retorna dados para o header renderizar o banner
   // Só cria notificação no sininho se ainda não foi criada neste mês
   if (percentual >= LIMIAR_AVISO) {
-    const mesRef = `${agora3.getUTCFullYear()}-${String(agora3.getUTCMonth() + 1).padStart(2, '0')}`
 
     // Verifica se já existe notificação deste tipo neste mês
     const { data: existente } = await supabase
