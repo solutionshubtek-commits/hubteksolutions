@@ -82,9 +82,20 @@ function buildSystemPrompt(
 
 // ─── Tools do Google Calendar ─────────────────────────────────────────────────
 
-const CALENDAR_TOOLS = [
+interface ToolFunction {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+interface Tool {
+  type: 'function'
+  function: ToolFunction
+}
+
+const CALENDAR_TOOLS: Tool[] = [
   {
-    type: 'function' as const,
+    type: 'function',
     function: {
       name: 'listar_horarios_disponiveis',
       description: 'Lista horários livres na agenda para uma data específica',
@@ -99,7 +110,7 @@ const CALENDAR_TOOLS = [
     },
   },
   {
-    type: 'function' as const,
+    type: 'function',
     function: {
       name: 'criar_agendamento',
       description: 'Cria um novo agendamento na agenda',
@@ -117,7 +128,7 @@ const CALENDAR_TOOLS = [
     },
   },
   {
-    type: 'function' as const,
+    type: 'function',
     function: {
       name: 'reagendar',
       description: 'Reagenda um evento existente para nova data/hora',
@@ -134,7 +145,7 @@ const CALENDAR_TOOLS = [
     },
   },
   {
-    type: 'function' as const,
+    type: 'function',
     function: {
       name: 'cancelar_agendamento',
       description: 'Cancela/remove um agendamento existente',
@@ -148,7 +159,7 @@ const CALENDAR_TOOLS = [
     },
   },
   {
-    type: 'function' as const,
+    type: 'function',
     function: {
       name: 'ver_agenda_do_dia',
       description: 'Consulta todos os eventos de um dia específico',
@@ -162,6 +173,17 @@ const CALENDAR_TOOLS = [
     },
   },
 ]
+
+// ─── Tipo para tool call retornado pela OpenAI ────────────────────────────────
+
+interface ToolCall {
+  id: string
+  type: string
+  function: {
+    name: string
+    arguments: string
+  }
+}
 
 // ─── Executor de tool calls ───────────────────────────────────────────────────
 
@@ -356,18 +378,24 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     console.error('[process-message] Falha na busca semântica:', err)
   }
 
-  // 9. Histórico
+  // 9. Config extra (campos não tipados no AgentConfig)
+  const configExtra = config as unknown as Record<string, unknown>
+  const calendarConfig = configExtra.google_calendar_config as GoogleCalendarConfig | null
+  const funcoesAtivas = (configExtra.funcoes_ativas as string[]) ?? []
+
+  // 10. Histórico e system prompt
   const historico = await getRecentMessages(supabase, conversa.id, 10)
+  const temCalendar = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
   const chatMessages: ChatMessage[] = [
     {
       role: 'system',
       content: buildSystemPrompt(
         config.prompt_principal ?? '',
         knowledgeDocs,
-        !!((config as unknown) as Record<string, unknown>).google_calendar_config,
+        temCalendar,
         config.horario_inicio,
         config.horario_fim
-      )
+      ),
     },
     ...historico.slice(0, -1).map(m => ({
       role: (m.origem === 'agente' ? 'assistant' : 'user') as 'assistant' | 'user',
@@ -376,11 +404,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     { role: 'user', content: conteudoProcessado },
   ]
 
-  // 10. Verifica se tem Google Calendar configurado e função agendamentos ativa
-  const calendarConfig = (((config as unknown) as Record<string, unknown>).google_calendar_config) as GoogleCalendarConfig | null
-const funcoesAtivas = (((config as unknown) as Record<string, unknown>).funcoes_ativas as string[]) ?? []
-  const usarCalendar = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
-    && funcoesAtivas.includes('agendamentos')
+  const usarCalendar = temCalendar && funcoesAtivas.includes('agendamentos')
 
   // 11. Geração de resposta
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
@@ -389,13 +413,17 @@ const funcoesAtivas = (((config as unknown) as Record<string, unknown>).funcoes_
 
   try {
     if (usarCalendar && config.motor_ia_principal === 'openai') {
-      // Usa function calling com tools de calendar
-      const respostaComTools = await openAIChatCompletionWithTools(chatMessages, CALENDAR_TOOLS, chatConfig)
+      const respostaComTools = await openAIChatCompletionWithTools(
+        chatMessages,
+        CALENDAR_TOOLS as Parameters<typeof openAIChatCompletionWithTools>[1],
+        chatConfig
+      )
 
       if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
-        // Executa cada tool call
         const toolResults: ChatMessage[] = []
-        for (const tc of respostaComTools.toolCalls) {
+        const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
+
+        for (const tc of toolCallsTyped) {
           const toolResult = await executarToolCall(
             tc.function.name,
             JSON.parse(tc.function.arguments) as Record<string, unknown>,
@@ -410,7 +438,6 @@ const funcoesAtivas = (((config as unknown) as Record<string, unknown>).funcoes_
           } as ChatMessage)
         }
 
-        // Segunda chamada com resultados das tools
         const messagesComTools: ChatMessage[] = [
           ...chatMessages,
           { role: 'assistant', content: '', tool_calls: respostaComTools.toolCalls } as unknown as ChatMessage,
@@ -418,10 +445,13 @@ const funcoesAtivas = (((config as unknown) as Record<string, unknown>).funcoes_
         ]
         resultado = await openAIChatCompletion(messagesComTools, chatConfig)
       } else {
-        resultado = { content: respostaComTools.content, tokensIn: respostaComTools.tokensIn, tokensOut: respostaComTools.tokensOut }
+        resultado = {
+          content: respostaComTools.content,
+          tokensIn: respostaComTools.tokensIn,
+          tokensOut: respostaComTools.tokensOut,
+        }
       }
     } else {
-      // Sem calendar ou motor backup
       resultado = config.motor_ia_principal === 'openai'
         ? await openAIChatCompletion(chatMessages, chatConfig)
         : await anthropicChatCompletion(chatMessages, chatConfig)
