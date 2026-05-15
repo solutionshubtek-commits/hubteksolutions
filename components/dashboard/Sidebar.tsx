@@ -8,13 +8,13 @@ import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRig
 
 const WHATSAPP_SUPORTE = 'https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+de+suporte+HubTek'
 const ROLES_PLANO = ['admin_hubtek', 'admin_tenant', 'self_managed']
+const ROLES_CONFIG = ['admin_hubtek', 'admin_tenant', 'self_managed']
 
-const items = [
+const ITEMS_BASE = [
   { href: '/visao-geral',        label: 'Visão Geral',        icon: LayoutDashboard },
   { href: '/conversas',          label: 'Conversas',          icon: MessageSquare },
   { href: '/historico',          label: 'Histórico',          icon: History },
   { href: '/reconexao-whatsapp', label: 'Reconexão WhatsApp', icon: Smartphone },
-  { href: '/configuracoes',      label: 'Configurações',      icon: Settings },
 ]
 
 function getInitials(name: string) {
@@ -50,6 +50,27 @@ export function Sidebar() {
   }, [])
 
   const mostrarPlano = role !== null && ROLES_PLANO.includes(role)
+  const mostrarConfig = role !== null && ROLES_CONFIG.includes(role)
+
+  function NavLink({ href, label, icon: Icon }: { href: string; label: string; icon: React.ElementType }) {
+    const active = pathname === href || pathname.startsWith(href + '/')
+    return (
+      <Link href={href}
+        className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 border-l-2"
+        style={{
+          background:  active ? 'rgba(16,185,129,0.05)' : 'transparent',
+          color:       active ? 'var(--text-primary)'   : 'var(--text-secondary)',
+          borderColor: active ? '#10B981'               : 'transparent',
+          fontWeight:  active ? 600                     : 400,
+        }}
+        onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)' }}}
+        onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)' }}}
+      >
+        <Icon size={16} />
+        <span>{label}</span>
+      </Link>
+    )
+  }
 
   return (
     <aside className="fixed left-0 top-0 h-full w-60 flex flex-col z-40"
@@ -71,10 +92,9 @@ export function Sidebar() {
       {nomeEmpresa && (
         <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
           {avatarUrl ? (
-            <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0"
-              style={{ border: '1px solid var(--border)' }}>
+            <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-<img src={avatarUrl} alt={nomeEmpresa} className="w-full h-full object-cover" />
+              <img src={avatarUrl} alt={nomeEmpresa} className="w-full h-full object-cover" />
             </div>
           ) : (
             <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold shrink-0"
@@ -96,46 +116,15 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
-        {items.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || pathname.startsWith(href + '/')
-          return (
-            <Link key={href} href={href}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 border-l-2"
-              style={{
-                background:  active ? 'rgba(16,185,129,0.05)' : 'transparent',
-                color:       active ? 'var(--text-primary)'   : 'var(--text-secondary)',
-                borderColor: active ? '#10B981'               : 'transparent',
-                fontWeight:  active ? 600                     : 400,
-              }}
-              onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)' }}}
-              onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)' }}}
-            >
-              <Icon size={16} />
-              <span>{label}</span>
-            </Link>
-          )
-        })}
+        {ITEMS_BASE.map(item => <NavLink key={item.href} {...item} />)}
 
-        {mostrarPlano && (() => {
-          const href = '/renovar-plano'
-          const active = pathname === href
-          return (
-            <Link href={href}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 border-l-2"
-              style={{
-                background:  active ? 'rgba(16,185,129,0.05)' : 'transparent',
-                color:       active ? 'var(--text-primary)'   : 'var(--text-secondary)',
-                borderColor: active ? '#10B981'               : 'transparent',
-                fontWeight:  active ? 600                     : 400,
-              }}
-              onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)' }}}
-              onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)' }}}
-            >
-              <RefreshCw size={16} />
-              <span>Renovar Plano</span>
-            </Link>
-          )
-        })()}
+        {mostrarConfig && (
+          <NavLink href="/configuracoes" label="Configurações" icon={Settings} />
+        )}
+
+        {mostrarPlano && (
+          <NavLink href="/renovar-plano" label="Renovar Plano" icon={RefreshCw} />
+        )}
       </nav>
 
       {/* Suporte */}
