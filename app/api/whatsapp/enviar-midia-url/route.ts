@@ -16,11 +16,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Variáveis de ambiente não configuradas' }, { status: 500 })
     }
 
+    // Extrai user_id do JWT
+    const authHeader = request.headers.get('Authorization') ?? ''
+    const token = authHeader.replace('Bearer ', '')
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
+
+    let sent_by_user_id: string | null = null
+    let operadorNome: string | null = null
+    if (token) {
+      const { data: { user } } = await supabase.auth.getUser(token)
+      if (user?.id) {
+        sent_by_user_id = user.id
+        const { data: ud } = await supabase.from('users').select('nome').eq('id', user.id).single()
+        operadorNome = ud?.nome ?? null
+      }
+    }
 
     // 1. Envia via Evolution API
     const isAudio = tipo === 'audio'
@@ -52,7 +66,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Erro ao enviar arquivo' }, { status: 500 })
     }
 
-    // 2. Salva no banco
+    // 2. Salva no banco com sent_by_user_id
     const { error: insertError } = await supabase.from('messages').insert({
       conversation_id,
       tenant_id,
@@ -60,6 +74,7 @@ export async function POST(request: NextRequest) {
       tipo,
       conteudo: caption || nome || 'arquivo',
       arquivo_url,
+      sent_by_user_id: sent_by_user_id ?? undefined,
       criado_em: new Date().toISOString(),
     })
 
@@ -70,6 +85,24 @@ export async function POST(request: NextRequest) {
     await supabase.from('conversations')
       .update({ ultima_mensagem_em: new Date().toISOString() })
       .eq('id', conversation_id)
+
+    // 3. Registra log de ação
+    if (sent_by_user_id) {
+      const { data: conv } = await supabase
+        .from('conversations')
+        .select('contato_nome')
+        .eq('id', conversation_id)
+        .single()
+      const tipoLabel = tipo === 'audio' ? 'áudio' : tipo === 'imagem' ? 'imagem' : tipo === 'video' ? 'vídeo' : 'arquivo'
+      await supabase.from('conversation_logs').insert({
+        tenant_id,
+        conversation_id,
+        user_id: sent_by_user_id,
+        acao: 'enviou_midia',
+        descricao: `${operadorNome ?? 'Operador'} enviou ${tipoLabel} para ${conv?.contato_nome ?? telefone}`,
+        contato_nome: conv?.contato_nome ?? telefone,
+      })
+    }
 
     console.log('[enviar-midia-url] Concluído com sucesso')
     return NextResponse.json({ success: true })
