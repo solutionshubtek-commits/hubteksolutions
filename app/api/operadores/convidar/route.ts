@@ -36,7 +36,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email e nome são obrigatórios' }, { status: 400 })
     }
 
-    // admin_hubtek pode passar tenant_id externo; outros usam o próprio
     const tenantAlvo = usuarioAtual.role === 'admin_hubtek' ? tenant_id : usuarioAtual.tenant_id
 
     if (!tenantAlvo) {
@@ -67,7 +66,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Este e-mail já está cadastrado neste tenant' }, { status: 400 })
     }
 
-    // Buscar dados do tenant para o e-mail
+    // Buscar dados do tenant
     const { data: tenant } = await supabase
       .from('tenants')
       .select('nome')
@@ -76,7 +75,7 @@ export async function POST(req: NextRequest) {
 
     const senhaProvisoria = gerarSenhaProvisoria()
 
-    // Criar usuário no Supabase Auth via admin (service role)
+    // Criar usuário no Supabase Auth via service role
     const { createClient: createAdminClient } = await import('@supabase/supabase-js')
     const supabaseAdmin = createAdminClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -94,7 +93,7 @@ export async function POST(req: NextRequest) {
       if (authError.message.includes('already registered')) {
         return NextResponse.json({ error: 'Este e-mail já possui uma conta no sistema' }, { status: 400 })
       }
-      return NextResponse.json({ error: authError.message }, { status: 500 })
+      return NextResponse.json({ error: `Auth error: ${authError.message}` }, { status: 500 })
     }
 
     // Inserir na tabela users
@@ -113,7 +112,10 @@ export async function POST(req: NextRequest) {
     if (userError) {
       // Rollback: remover do Auth
       await supabaseAdmin.auth.admin.deleteUser(authUser.user.id)
-      return NextResponse.json({ error: 'Erro ao salvar operador' }, { status: 500 })
+      // Retorna o erro real do banco para diagnóstico
+      return NextResponse.json({
+        error: `DB error: ${userError.message} | code: ${userError.code} | details: ${userError.details}`
+      }, { status: 500 })
     }
 
     // Enviar e-mail via Resend
@@ -137,7 +139,7 @@ export async function POST(req: NextRequest) {
             <p style="margin: 0;"><strong>Senha provisória:</strong> <span style="font-family: monospace; font-size: 16px; color: #333;">${senhaProvisoria}</span></p>
           </div>
           <p style="color: #444; line-height: 1.6;">Ao entrar pela primeira vez, você será solicitado a definir uma nova senha.</p>
-          <a href="https://app.hubteksolutions.tech/login" 
+          <a href="https://app.hubteksolutions.tech/login"
              style="display: inline-block; background: #111; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-top: 8px;">
             Acessar plataforma
           </a>
@@ -149,6 +151,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error('[convidar-operador]', err)
-    return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
+    return NextResponse.json({ error: `Erro interno: ${String(err)}` }, { status: 500 })
   }
 }
