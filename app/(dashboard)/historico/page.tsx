@@ -79,7 +79,7 @@ export default function HistoricoPage() {
           .eq('tenant_id', userData.tenant_id)
           .order('criado_em', { ascending: false })
           .limit(100)
-        setLogs((logsData as ConversationLog[]) || [])
+        setLogs((logsData as unknown as ConversationLog[]) || [])
       }
       setCarregandoLogs(false)
     }
