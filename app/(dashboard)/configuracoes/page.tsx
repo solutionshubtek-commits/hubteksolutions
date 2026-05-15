@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef, CSSProperties } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2, Image as ImageIcon, Camera, X } from 'lucide-react'
+import { GestaoOperadores } from '@/components/dashboard/GestaoOperadores'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -141,6 +142,7 @@ export default function ConfiguracoesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const isSelfManaged = role === 'self_managed'
+  const podeGerenciarOperadores = role === 'admin_tenant' || role === 'self_managed'
 
   useEffect(() => {
     async function fetchData() {
@@ -172,11 +174,9 @@ export default function ConfiguracoesPage() {
     fetchData()
   }, [])
 
-  // ── Upload avatar ───────────────────────────────────────────────────────────
   async function handleUploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
-
     if (!TIPOS_IMAGEM.includes(file.type)) {
       setErro('Formato não suportado. Use JPG, PNG ou WEBP.')
       if (avatarInputRef.current) avatarInputRef.current.value = ''
@@ -187,50 +187,35 @@ export default function ConfiguracoesPage() {
       if (avatarInputRef.current) avatarInputRef.current.value = ''
       return
     }
-
-    setUploadandoAvatar(true)
-    setErro('')
-
+    setUploadandoAvatar(true); setErro('')
     try {
       const supabase = createClient()
       const ext = file.name.split('.').pop() ?? 'jpg'
       const path = `avatars/${tenant.id}.${ext}`
-
-      // Remove avatar antigo se existir
       await supabase.storage.from('mensagens-midia').remove([path])
-
       const { error: uploadErr } = await supabase.storage
-        .from('mensagens-midia')
-        .upload(path, file, { upsert: true, contentType: file.type })
-
+        .from('mensagens-midia').upload(path, file, { upsert: true, contentType: file.type })
       if (uploadErr) throw uploadErr
-
       const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
-      const novaUrl = `${urlData.publicUrl}?t=${Date.now()}` // cache bust
-
+      const novaUrl = `${urlData.publicUrl}?t=${Date.now()}`
       await supabase.from('tenants').update({ avatar_url: novaUrl }).eq('id', tenant.id)
       setTenant(prev => prev ? { ...prev, avatar_url: novaUrl } : prev)
     } catch (err) {
       console.error('[avatar upload]', err)
       setErro('Erro ao enviar imagem. Tente novamente.')
     }
-
     setUploadandoAvatar(false)
     if (avatarInputRef.current) avatarInputRef.current.value = ''
   }
 
-  // ── Remover avatar ──────────────────────────────────────────────────────────
   async function handleRemoverAvatar() {
     if (!tenant?.avatar_url) return
     setUploadandoAvatar(true)
     try {
       const supabase = createClient()
-      // Extrai o path do storage da URL pública
       const url = new URL(tenant.avatar_url)
       const parts = url.pathname.split('/mensagens-midia/')
-      if (parts[1]) {
-        await supabase.storage.from('mensagens-midia').remove([parts[1].split('?')[0]])
-      }
+      if (parts[1]) await supabase.storage.from('mensagens-midia').remove([parts[1].split('?')[0]])
       await supabase.from('tenants').update({ avatar_url: null }).eq('id', tenant.id)
       setTenant(prev => prev ? { ...prev, avatar_url: null } : prev)
     } catch (err) {
@@ -240,7 +225,6 @@ export default function ConfiguracoesPage() {
     setUploadandoAvatar(false)
   }
 
-  // ── Salvar ──────────────────────────────────────────────────────────────────
   async function handleSalvar() {
     if (!tenant) return
     setSalvando(true); setSucesso(false); setErro('')
@@ -270,7 +254,6 @@ export default function ConfiguracoesPage() {
     setTimeout(() => setSucesso(false), 3000)
   }
 
-  // ── Upload knowledge base ───────────────────────────────────────────────────
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
@@ -299,7 +282,6 @@ export default function ConfiguracoesPage() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  // ── Excluir arquivo ─────────────────────────────────────────────────────────
   async function handleExcluir(id: string, nomeArquivo: string) {
     if (!tenant) return
     setExcluindo(id)
@@ -339,10 +321,9 @@ export default function ConfiguracoesPage() {
           <div className="flex items-center gap-4 mb-6 pb-6" style={{ borderBottom: '1px solid var(--border)' }}>
             <div className="relative">
               {tenant?.avatar_url ? (
-                <div className="w-16 h-16 rounded-xl overflow-hidden"
-                  style={{ border: '2px solid var(--border)' }}>
+                <div className="w-16 h-16 rounded-xl overflow-hidden" style={{ border: '2px solid var(--border)' }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-<img src={tenant.avatar_url} alt={tenant.nome} className="w-full h-full object-cover" />
+                  <img src={tenant.avatar_url} alt={tenant.nome} className="w-full h-full object-cover" />
                 </div>
               ) : (
                 <div className="w-16 h-16 rounded-xl flex items-center justify-center text-lg font-bold"
@@ -357,39 +338,25 @@ export default function ConfiguracoesPage() {
                 </div>
               )}
             </div>
-
             <div className="flex-1">
-              <p className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                Logo / Avatar da empresa
-              </p>
-              <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
-                JPG, PNG ou WEBP · máx. 2MB · aparece na barra lateral
-              </p>
+              <p className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Logo / Avatar da empresa</p>
+              <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>JPG, PNG ou WEBP · máx. 2MB · aparece na barra lateral</p>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => avatarInputRef.current?.click()}
-                  disabled={uploadandoAvatar}
+                <button onClick={() => avatarInputRef.current?.click()} disabled={uploadandoAvatar}
                   className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
                   style={{ background: 'var(--bg-hover)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                   <Camera size={12} />
                   {uploadandoAvatar ? 'Enviando...' : tenant?.avatar_url ? 'Alterar' : 'Enviar foto'}
                 </button>
                 {tenant?.avatar_url && (
-                  <button
-                    onClick={handleRemoverAvatar}
-                    disabled={uploadandoAvatar}
+                  <button onClick={handleRemoverAvatar} disabled={uploadandoAvatar}
                     className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 hover:text-red-400 hover:border-red-400/40"
                     style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
                     <X size={12} /> Remover
                   </button>
                 )}
-                <input
-                  ref={avatarInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handleUploadAvatar}
-                  className="hidden"
-                />
+                <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp"
+                  onChange={handleUploadAvatar} className="hidden" />
               </div>
             </div>
           </div>
@@ -407,13 +374,18 @@ export default function ConfiguracoesPage() {
             </div>
           </div>
 
-          {!isSelfManaged && (
+          {!isSelfManaged && role !== 'admin_tenant' && (
             <p className="mt-4 text-xs flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
               <AlertCircle size={12} />
               Configurações avançadas disponíveis apenas para contas self-managed.
             </p>
           )}
         </div>
+
+        {/* Gestão de Operadores — F6-8 */}
+        {podeGerenciarOperadores && tenantId && (
+          <GestaoOperadores tenantId={tenantId} />
+        )}
 
         {isSelfManaged && (
           <>
@@ -423,17 +395,12 @@ export default function ConfiguracoesPage() {
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 Descreva como o agente deve se comportar, qual o tom, quais informações usar.
               </p>
-              <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>
-                Prompt do agente
-              </label>
-              <textarea
-                value={tenant?.prompt_agente || ''}
+              <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Prompt do agente</label>
+              <textarea value={tenant?.prompt_agente || ''}
                 onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
-                rows={6}
-                placeholder="Descreva como o agente deve se comportar..."
+                rows={6} placeholder="Descreva como o agente deve se comportar..."
                 className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none"
-                style={{ ...inputStyle, outlineColor: '#10B981' }}
-              />
+                style={{ ...inputStyle, outlineColor: '#10B981' }} />
             </div>
 
             {/* Horário */}
@@ -446,12 +413,8 @@ export default function ConfiguracoesPage() {
                 {DIAS_SEMANA.map(({ key, label }) => (
                   <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
                     <Toggle ativo={horario[key].ativo} onClick={() => toggleDia(key)} />
-                    <span style={{
-                      width: 36, minWidth: 36, flexShrink: 0, fontSize: 14, fontWeight: 500,
-                      color: horario[key].ativo ? 'var(--text-primary)' : 'var(--text-muted)',
-                    }}>
-                      {label}
-                    </span>
+                    <span style={{ width: 36, minWidth: 36, flexShrink: 0, fontSize: 14, fontWeight: 500,
+                      color: horario[key].ativo ? 'var(--text-primary)' : 'var(--text-muted)' }}>{label}</span>
                     {horario[key].ativo ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
                         <input type="time" value={horario[key].inicio}
@@ -470,33 +433,22 @@ export default function ConfiguracoesPage() {
                   </div>
                 ))}
               </div>
-
               {(() => {
                 const derived = derivarAgentConfig(horario)
                 if (derived.dias_funcionamento.length === 0) return null
                 return (
                   <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-muted)' }}>
-                    Agente ativo: <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
-                      {derived.dias_funcionamento.join(', ')}
-                    </span> · <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
-                      {derived.horario_inicio} às {derived.horario_fim}
-                    </span>
+                    Agente ativo: <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{derived.dias_funcionamento.join(', ')}</span>
+                    {' · '}<span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{derived.horario_inicio} às {derived.horario_fim}</span>
                   </div>
                 )
               })()}
-
               <div className="mt-5">
-                <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  Mensagem fora do horário
-                </label>
-                <textarea
-                  value={tenant?.mensagem_fora_horario || ''}
+                <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Mensagem fora do horário</label>
+                <textarea value={tenant?.mensagem_fora_horario || ''}
                   onChange={(e) => setTenant(prev => prev ? { ...prev, mensagem_fora_horario: e.target.value } : prev)}
-                  rows={3}
-                  placeholder="Ex: Olá! Nosso horário de atendimento é de seg–sex, das 8h às 18h..."
-                  className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none"
-                  style={inputStyle}
-                />
+                  rows={3} placeholder="Ex: Olá! Nosso horário de atendimento é de seg–sex, das 8h às 18h..."
+                  className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none" style={inputStyle} />
               </div>
             </div>
 
@@ -504,26 +456,18 @@ export default function ConfiguracoesPage() {
             <div className="rounded-xl p-6" style={cardStyle}>
               <div className="flex items-center justify-between mb-1">
                 <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Base de conhecimento</h2>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadando}
+                <button onClick={() => fileInputRef.current?.click()} disabled={uploadando}
                   className="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
                   style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>
-                  <Upload size={14} />
-                  {uploadando ? 'Processando...' : 'Enviar arquivo'}
+                  <Upload size={14} />{uploadando ? 'Processando...' : 'Enviar arquivo'}
                 </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
+                <input ref={fileInputRef} type="file"
                   accept=".pdf,.docx,.txt,.xlsx,image/jpeg,image/png,image/webp"
-                  onChange={handleUpload}
-                  className="hidden"
-                />
+                  onChange={handleUpload} className="hidden" />
               </div>
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 Documentos: PDF, DOCX, TXT, XLSX (máx. 50MB) · Imagens: JPG, PNG, WEBP (máx. 5MB)
               </p>
-
               {uploadando && uploadProgresso && (
                 <div className="mb-3 flex items-center gap-2 p-3 rounded-lg"
                   style={{ background: '#10B98110', border: '1px solid #10B98130' }}>
@@ -531,7 +475,6 @@ export default function ConfiguracoesPage() {
                   <p className="text-xs text-[#10B981]">{uploadProgresso}</p>
                 </div>
               )}
-
               {arquivos.length === 0 ? (
                 <div className="rounded-lg p-8 text-center" style={{ border: '1px dashed var(--border-2)' }}>
                   <FileText size={24} className="mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
@@ -542,8 +485,7 @@ export default function ConfiguracoesPage() {
                   {arquivos.map((arquivo) => {
                     const isImg = TIPOS_IMAGEM.includes(arquivo.tipo) || /\.(jpg|jpeg|png|webp)$/i.test(arquivo.nome_arquivo)
                     return (
-                      <div key={arquivo.id}
-                        className="flex items-center justify-between rounded-lg px-4 py-3"
+                      <div key={arquivo.id} className="flex items-center justify-between rounded-lg px-4 py-3"
                         style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
                         <div className="flex items-center gap-3 min-w-0">
                           {isImg ? (
@@ -561,8 +503,7 @@ export default function ConfiguracoesPage() {
                             </p>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleExcluir(arquivo.id, arquivo.nome_arquivo)}
+                        <button onClick={() => handleExcluir(arquivo.id, arquivo.nome_arquivo)}
                           disabled={excluindo === arquivo.id}
                           className="hover:text-red-400 disabled:opacity-40 transition-colors ml-3 flex-shrink-0"
                           style={{ color: 'var(--text-muted)' }}>
