@@ -537,8 +537,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       </div>
 
       {/* Mensagens */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
-        {mensagens.map((msg, i) => {
+<div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-2">
+      {mensagens.map((msg, i) => {
           const isCliente = msg.origem === 'cliente'
           const isAgente = msg.origem === 'agente'
           const isOperadorWeb = msg.origem === 'operador' && !!msg.from_me
