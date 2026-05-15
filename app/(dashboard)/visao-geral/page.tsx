@@ -1,11 +1,8 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import {
   MessageSquare, Users, Clock, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
   Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut,
-  Paperclip,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 
