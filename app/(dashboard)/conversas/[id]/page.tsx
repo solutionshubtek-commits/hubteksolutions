@@ -192,7 +192,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     const supabase = createClient()
     const novoPausado = !conversa.agente_pausado
 
-    // Se conversa encerrada, reabre ao pausar/retomar
     if (conversa.status === 'encerrada' || conversa.status === 'encerrado') {
       await supabase.from('conversations').update({
         status: 'ativa',
@@ -366,7 +365,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           }),
         })
         if (!res.ok) setTexto(msg)
-        // Se conversa foi reaberta, atualiza estado local
         if (res.ok) {
           const json = await res.json()
           if (json.reaberta) setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: false } : prev)
@@ -488,18 +486,33 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const estaEncerrada = conversa.status === 'encerrada' || conversa.status === 'encerrado'
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)]" style={{ background: 'var(--bg-base)' }}>
-
+    <div
+      className="flex flex-col overflow-hidden"
+      style={{
+        position: 'fixed',
+        top: '64px',
+        left: '160px',
+        right: 0,
+        bottom: 0,
+        background: 'var(--bg-base)',
+      }}
+    >
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 flex-shrink-0 sticky top-0 z-10"
-  style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-        <button onClick={() => router.push('/conversas')}
+      <div
+        className="flex items-center gap-3 px-4 py-3 flex-shrink-0"
+        style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}
+      >
+        <button
+          onClick={() => router.push('/conversas')}
           className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)]"
-          style={{ color: 'var(--text-muted)' }}>
+          style={{ color: 'var(--text-muted)' }}
+        >
           <ArrowLeft size={18} />
         </button>
-        <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0"
-          style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981' }}>
+        <div
+          className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0"
+          style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981' }}
+        >
           {iniciais(conversa.contato_nome)}
         </div>
         <div className="flex-1 min-w-0">
@@ -510,35 +523,44 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         </div>
         <div className="flex items-center gap-2">
           {estaEncerrada ? (
-            <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-              style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+            <span
+              className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+              style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+            >
               Encerrada
             </span>
           ) : conversa.agente_pausado ? (
-            <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
+            <span
+              className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}
+            >
               <Headphones size={11} /> Operador
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-              style={{ background: '#10B98118', color: '#10B981', border: '1px solid #10B98130' }}>
+            <span
+              className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+              style={{ background: '#10B98118', color: '#10B981', border: '1px solid #10B98130' }}
+            >
               <Bot size={11} /> Agente IA
             </span>
           )}
-          <button onClick={handlePausarRetomar} disabled={pausando}
+          <button
+            onClick={handlePausarRetomar}
+            disabled={pausando}
             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
             style={conversa.agente_pausado
               ? { background: '#10B98118', color: '#10B981', border: '1px solid #10B98130' }
               : { background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }
-            }>
+            }
+          >
             {conversa.agente_pausado ? <><Play size={11} /> Retomar IA</> : <><Pause size={11} /> Pausar IA</>}
           </button>
         </div>
       </div>
 
       {/* Mensagens */}
-<div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-2">
-      {mensagens.map((msg, i) => {
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-2">
+        {mensagens.map((msg, i) => {
           const isCliente = msg.origem === 'cliente'
           const isAgente = msg.origem === 'agente'
           const isOperadorWeb = msg.origem === 'operador' && !!msg.from_me
@@ -549,8 +571,10 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
             <div key={msg.id}>
               {showDate && (
                 <div className="flex justify-center my-3">
-                  <span className="text-[11px] px-3 py-1 rounded-full"
-                    style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                  <span
+                    className="text-[11px] px-3 py-1 rounded-full"
+                    style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+                  >
                     {new Date(msg.criado_em).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
                   </span>
                 </div>
@@ -571,7 +595,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                       WhatsApp Web
                     </span>
                   )}
-                  <div className="px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
+                  <div
+                    className="px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
                     style={isCliente
                       ? { background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderBottomLeftRadius: 4 }
                       : isOperadorWeb
@@ -579,7 +604,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                       : isOperador
                       ? { background: '#6366F118', color: 'var(--text-primary)', border: '1px solid #6366F130', borderBottomRightRadius: 4 }
                       : { background: '#10B98118', color: 'var(--text-primary)', border: '1px solid #10B98130', borderBottomRightRadius: 4 }
-                    }>
+                    }
+                  >
                     {renderConteudoMensagem(msg)}
                   </div>
                   <span className="text-[10px] px-1" style={{ color: 'var(--text-muted)' }}>
@@ -596,14 +622,16 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         <div ref={bottomRef} />
       </div>
 
-      {/* Input — sempre visível, mesmo em conversa encerrada */}
-      <div className="px-4 py-3 flex-shrink-0"
-  style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', width: '100%' }}>
-
-        {/* Banner informativo quando encerrada */}
+      {/* Footer */}
+      <div
+        className="flex-shrink-0 px-4 py-3"
+        style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}
+      >
         {estaEncerrada && (
-          <div className="mb-2 px-3 py-1.5 rounded-lg text-xs text-center"
-            style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+          <div
+            className="mb-2 px-3 py-1.5 rounded-lg text-xs text-center"
+            style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+          >
             Conversa encerrada — envie uma mensagem para reabri-la
           </div>
         )}
@@ -613,24 +641,28 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
               Pause o agente para responder manualmente
             </p>
-            <button onClick={handlePausarRetomar} disabled={pausando}
+            <button
+              onClick={handlePausarRetomar}
+              disabled={pausando}
               className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors"
-              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
+              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}
+            >
               <Pause size={10} /> Pausar
             </button>
           </div>
         ) : (
           <div className="space-y-2">
             {arquivo && !gravando && (
-              <div className="rounded-lg overflow-hidden"
-                style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+              <div className="rounded-lg overflow-hidden" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
                 {arquivoPreview ? (
                   <div className="relative">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={arquivoPreview} alt="preview" className="max-h-32 w-full object-contain" />
-                    <button onClick={limparArquivo}
+                    <button
+                      onClick={limparArquivo}
                       className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
-                      style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}>
+                      style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+                    >
                       <X size={11} />
                     </button>
                   </div>
@@ -645,29 +677,35 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
             )}
 
             {gravando && (
-              <div className="flex items-center gap-3 px-3 py-2 rounded-lg"
-                style={{ background: '#EF444418', border: '1px solid #EF444430' }}>
+              <div className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: '#EF444418', border: '1px solid #EF444430' }}>
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 <span className="text-xs font-medium" style={{ color: '#EF4444' }}>
                   Gravando... {formatarTempoGravacao(tempoGravacao)}
                 </span>
                 <div className="flex-1" />
-                <button onClick={cancelarGravacao} className="text-xs px-2 py-0.5 rounded"
-                  style={{ color: 'var(--text-muted)' }}>Cancelar</button>
+                <button onClick={cancelarGravacao} className="text-xs px-2 py-0.5 rounded" style={{ color: 'var(--text-muted)' }}>
+                  Cancelar
+                </button>
               </div>
             )}
 
             <div className="flex items-end gap-2">
               {!gravando && (
                 <>
-                  <button onClick={() => fileInputRef.current?.click()}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
                     className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
-                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+                  >
                     <Paperclip size={15} />
                   </button>
-                  <input ref={fileInputRef} type="file"
+                  <input
+                    ref={fileInputRef}
+                    type="file"
                     accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx"
-                    onChange={handleFileChange} className="hidden" />
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
                 </>
               )}
               {!gravando && (
@@ -677,7 +715,13 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                   onChange={(e) => setTexto(e.target.value)}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
-                  placeholder={arquivo ? 'Adicione uma legenda (opcional)...' : estaEncerrada ? 'Envie uma mensagem para reabrir a conversa...' : 'Digite uma mensagem... (Enter para enviar)'}
+                  placeholder={
+                    arquivo
+                      ? 'Adicione uma legenda (opcional)...'
+                      : estaEncerrada
+                      ? 'Envie uma mensagem para reabrir a conversa...'
+                      : 'Digite uma mensagem... (Enter para enviar)'
+                  }
                   rows={1}
                   className="flex-1 rounded-2xl px-4 py-2.5 text-sm focus:outline-none resize-none"
                   style={{
@@ -691,20 +735,25 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
               )}
               {gravando && <div className="flex-1" />}
               {!arquivo && !texto.trim() && (
-                <button onClick={gravando ? pararGravacao : iniciarGravacao}
+                <button
+                  onClick={gravando ? pararGravacao : iniciarGravacao}
                   disabled={enviando || uploadando}
                   className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
                   style={gravando
                     ? { background: '#EF4444', color: '#fff' }
                     : { color: 'var(--text-muted)', border: '1px solid var(--border)' }
-                  }>
+                  }
+                >
                   {gravando ? <Square size={14} /> : <Mic size={15} />}
                 </button>
               )}
               {(texto.trim() || arquivo) && !gravando && (
-                <button onClick={handleEnviar} disabled={enviando || uploadando}
+                <button
+                  onClick={handleEnviar}
+                  disabled={enviando || uploadando}
                   className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
-                  style={{ background: '#10B981', color: '#fff' }}>
+                  style={{ background: '#10B981', color: '#fff' }}
+                >
                   {enviando || uploadando
                     ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     : <Send size={15} />
