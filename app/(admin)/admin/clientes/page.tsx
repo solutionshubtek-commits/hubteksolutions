@@ -1,11 +1,12 @@
-﻿'use client'
+'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Plus, Search, AlertTriangle, CheckCircle2, AlertCircle,
   X, Save, Eye, EyeOff, Lock, Unlock, Key,
-  ChevronRight, RefreshCw, Trash2, Smartphone, LogOut, ShieldAlert, MessageCircle,
+  ChevronRight, RefreshCw, Trash2, Smartphone, LogOut, ShieldAlert, MessageCircle, UserPlus,
 } from 'lucide-react'
+import { GestaoOperadoresAdmin } from '@/components/admin/GestaoOperadoresAdmin'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
@@ -266,7 +267,7 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
 function SlideOver({ tenant, onClose, onAtualizado }: {
   tenant: Tenant; onClose: () => void; onAtualizado: (t: Tenant) => void
 }) {
-  const [aba, setAba] = useState<'detalhes' | 'editar' | 'senha' | 'extrato' | 'instancias'>('detalhes')
+  const [aba, setAba] = useState<'detalhes' | 'instancias' | 'editar' | 'senha' | 'operadores' | 'extrato'>('detalhes')
   const [nomeEdit, setNomeEdit] = useState(tenant.nome)
   const [expiraEdit, setExpiraEdit] = useState(tenant.expira_em?.slice(0, 10) ?? '')
   const [planoEdit, setPlanoEdit] = useState(tenant.plano ?? 'essencial')
@@ -429,6 +430,15 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
     return { label: 'Desconectado', cor: '#71717A', bg: '#71717A15', border: '#71717A30' }
   }
 
+  const ABAS = [
+    { key: 'detalhes',   label: 'Detalhes'   },
+    { key: 'instancias', label: 'WhatsApp'   },
+    { key: 'editar',     label: 'Editar'     },
+    { key: 'senha',      label: 'Senha'      },
+    { key: 'operadores', label: 'Operadores' },
+    { key: 'extrato',    label: 'Extrato'    },
+  ] as const
+
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
@@ -457,14 +467,14 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
 
         {/* Abas */}
         <div className="flex overflow-x-auto" style={{ borderBottom: '1px solid var(--border)' }}>
-          {(['detalhes', 'instancias', 'editar', 'senha', 'extrato'] as const).map(a => (
-            <button key={a} onClick={() => setAba(a)}
+          {ABAS.map(a => (
+            <button key={a.key} onClick={() => setAba(a.key)}
               className="flex-shrink-0 py-3 px-3 text-xs font-semibold transition-colors"
               style={{
-                color: aba === a ? '#10B981' : 'var(--text-muted)',
-                borderBottom: aba === a ? '2px solid #10B981' : '2px solid transparent',
+                color: aba === a.key ? '#10B981' : 'var(--text-muted)',
+                borderBottom: aba === a.key ? '2px solid #10B981' : '2px solid transparent',
               }}>
-              {a === 'detalhes' ? 'Detalhes' : a === 'instancias' ? 'WhatsApp' : a === 'editar' ? 'Editar' : a === 'senha' ? 'Senha' : 'Extrato'}
+              {a.label}
             </button>
           ))}
         </div>
@@ -544,8 +554,6 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                           background: banido ? '#EF444408' : 'var(--bg-surface-2)',
                           border: banido ? '1px solid #EF444430' : '1px solid var(--border)',
                         }}>
-
-                        {/* Info da instância */}
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                             style={{ background: banido ? '#EF444415' : 'rgba(16,185,129,0.1)' }}>
@@ -560,8 +568,6 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                             {sc.label}
                           </span>
                         </div>
-
-                        {/* Banner de banimento */}
                         {banido && (
                           <div className="rounded-lg p-3 space-y-2" style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
                             <div className="flex items-start gap-2">
@@ -571,92 +577,64 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                               </p>
                             </div>
                             <div className="flex gap-2">
-                              <button
-                                onClick={() => setConfirmDesconectarInst(inst.instance_name)}
+                              <button onClick={() => setConfirmDesconectarInst(inst.instance_name)}
                                 className="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg transition-colors"
-                                style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}
-                              >
+                                style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}>
                                 <LogOut size={12} /> Desconectar número
                               </button>
-                              <a
-                                href="https://wa.me/5551980104924"
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <a href="https://wa.me/5551980104924" target="_blank" rel="noopener noreferrer"
                                 className="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg transition-colors"
-                                style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}
-                              >
+                                style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}>
                                 <MessageCircle size={12} /> Falar com suporte
                               </a>
                             </div>
                           </div>
                         )}
-
-                        {/* Botão desconectar — conectadas */}
                         {conectado && !pedindoConfirm && (
-                          <button
-                            onClick={() => setConfirmDesconectarInst(inst.instance_name)}
+                          <button onClick={() => setConfirmDesconectarInst(inst.instance_name)}
                             className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg transition-colors"
-                            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-                          >
+                            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
                             <LogOut size={12} /> Desconectar número
                           </button>
                         )}
-
-                        {/* Confirmação de desconexão */}
                         {(conectado || banido) && pedindoConfirm && (
-                          <div className="rounded-lg p-3 space-y-2"
-                            style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                          <div className="rounded-lg p-3 space-y-2" style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
                             <p className="text-xs font-medium text-red-400">Confirmar desconexão de {inst.apelido}?</p>
                             <div className="flex gap-2">
-                              <button
-                                onClick={() => setConfirmDesconectarInst(null)}
+                              <button onClick={() => setConfirmDesconectarInst(null)}
                                 className="flex-1 text-xs font-medium py-1.5 rounded-lg transition-colors"
-                                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                              >
+                                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                                 Cancelar
                               </button>
-                              <button
-                                onClick={() => handleDesconectarInstAdmin(inst.instance_name)}
-                                disabled={estaDesconectando}
-                                className="flex-1 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold py-1.5 rounded-lg transition-colors"
-                              >
+                              <button onClick={() => handleDesconectarInstAdmin(inst.instance_name)} disabled={estaDesconectando}
+                                className="flex-1 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold py-1.5 rounded-lg transition-colors">
                                 <LogOut size={11} className={estaDesconectando ? 'animate-spin' : ''} />
                                 {estaDesconectando ? 'Desconectando...' : 'Confirmar'}
                               </button>
                             </div>
                           </div>
                         )}
-
-                        {/* Botão excluir — só para desconectadas */}
                         {!conectado && !banido && (
                           pedindoConfirmExcluir ? (
-                            <div className="rounded-lg p-3 space-y-2"
-                              style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
+                            <div className="rounded-lg p-3 space-y-2" style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
                               <p className="text-xs font-medium text-red-400">Excluir &quot;{inst.apelido}&quot; permanentemente?</p>
                               <div className="flex gap-2">
-                                <button
-                                  onClick={() => setConfirmExcluirInst(null)}
+                                <button onClick={() => setConfirmExcluirInst(null)}
                                   className="flex-1 text-xs font-medium py-1.5 rounded-lg transition-colors"
-                                  style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                                >
+                                  style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                                   Cancelar
                                 </button>
-                                <button
-                                  onClick={() => handleExcluirInstAdmin(inst.instance_name)}
-                                  disabled={estaExcluindo}
-                                  className="flex-1 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold py-1.5 rounded-lg transition-colors"
-                                >
+                                <button onClick={() => handleExcluirInstAdmin(inst.instance_name)} disabled={estaExcluindo}
+                                  className="flex-1 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold py-1.5 rounded-lg transition-colors">
                                   <Trash2 size={11} className={estaExcluindo ? 'animate-spin' : ''} />
                                   {estaExcluindo ? 'Excluindo...' : 'Confirmar'}
                                 </button>
                               </div>
                             </div>
                           ) : (
-                            <button
-                              onClick={() => setConfirmExcluirInst(inst.instance_name)}
+                            <button onClick={() => setConfirmExcluirInst(inst.instance_name)}
                               className="w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded-lg transition-colors"
-                              style={{ background: 'var(--bg-surface)', border: '1px solid #EF444430', color: '#EF4444' }}
-                            >
+                              style={{ background: 'var(--bg-surface)', border: '1px solid #EF444430', color: '#EF4444' }}>
                               <Trash2 size={12} /> Excluir instância
                             </button>
                           )
@@ -666,8 +644,6 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                   })}
                 </div>
               )}
-
-              {/* Adicionar novas instâncias */}
               {instancias.length < 5 && (
                 <div className="space-y-3 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
                   <div className="flex items-center justify-between pt-2">
@@ -703,7 +679,6 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                   )}
                 </div>
               )}
-
               {erroInst && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroInst}</p></div>}
               {sucessoInst && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoInst}</p></div>}
             </div>
@@ -769,6 +744,11 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                 <Key size={14} />{salvandoSenha ? 'Redefinindo...' : 'Redefinir senha'}
               </button>
             </div>
+          )}
+
+          {/* Aba Operadores — F6-8 */}
+          {aba === 'operadores' && (
+            <GestaoOperadoresAdmin tenantId={tenant.id} tenantNome={tenant.nome} />
           )}
 
           {/* Aba Extrato */}
