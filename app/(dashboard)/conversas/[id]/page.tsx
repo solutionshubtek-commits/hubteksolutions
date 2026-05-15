@@ -62,11 +62,11 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   // Busca nomes de operadores que ainda não estão no cache
   const resolverNomesOperadores = useCallback(async (msgs: Mensagem[]) => {
     const supabase = createClient()
-    const idsNovos = [...new Set(
-      msgs
-        .filter(m => m.sent_by_user_id && !operadoresNome[m.sent_by_user_id])
-        .map(m => m.sent_by_user_id as string)
-    )]
+    const idsNovos = Array.from(new Set(
+  msgs
+    .filter(m => m.sent_by_user_id && !operadoresNome[m.sent_by_user_id])
+    .map(m => m.sent_by_user_id as string)
+))
     if (idsNovos.length === 0) return
     const { data } = await supabase
       .from('users')
