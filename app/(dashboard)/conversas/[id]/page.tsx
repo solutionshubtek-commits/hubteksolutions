@@ -37,14 +37,10 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const [arquivoPreview, setArquivoPreview] = useState<string | null>(null)
   const [uploadando, setUploadando] = useState(false)
 
-  // Mapa de user_id -> nome do operador (cache local)
   const [operadoresNome, setOperadoresNome] = useState<Record<string, string>>({})
-
-  // Usuário logado
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [currentUserNome, setCurrentUserNome] = useState<string | null>(null)
 
-  // Gravação de áudio
   const [gravando, setGravando] = useState(false)
   const [tempoGravacao, setTempoGravacao] = useState(0)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -59,19 +55,15 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     bottomRef.current?.scrollIntoView({ behavior })
   }, [])
 
-  // Busca nomes de operadores que ainda não estão no cache
   const resolverNomesOperadores = useCallback(async (msgs: Mensagem[]) => {
     const supabase = createClient()
     const idsNovos = Array.from(new Set(
-  msgs
-    .filter(m => m.sent_by_user_id && !operadoresNome[m.sent_by_user_id])
-    .map(m => m.sent_by_user_id as string)
-))
+      msgs
+        .filter(m => m.sent_by_user_id && !operadoresNome[m.sent_by_user_id])
+        .map(m => m.sent_by_user_id as string)
+    ))
     if (idsNovos.length === 0) return
-    const { data } = await supabase
-      .from('users')
-      .select('id, nome')
-      .in('id', idsNovos)
+    const { data } = await supabase.from('users').select('id, nome').in('id', idsNovos)
     if (data) {
       setOperadoresNome(prev => {
         const next = { ...prev }
@@ -84,30 +76,24 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   useEffect(() => {
     async function carregar() {
       const supabase = createClient()
-
-      // Usuário logado
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         setCurrentUserId(user.id)
         const { data: ud } = await supabase.from('users').select('nome').eq('id', user.id).single()
         setCurrentUserNome(ud?.nome ?? null)
       }
-
       const { data: conv } = await supabase
         .from('conversations')
         .select('id, contato_nome, contato_telefone, status, agente_pausado, instance_name, tenant_id')
         .eq('id', params.id)
         .single()
-
       if (!conv) { router.push('/conversas'); return }
       setConversa(conv)
-
       const { data: msgs } = await supabase
         .from('messages')
         .select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me, sent_by_user_id')
         .eq('conversation_id', params.id)
         .order('criado_em', { ascending: true })
-
       const lista = msgs || []
       setMensagens(lista)
       setCarregando(false)
@@ -186,22 +172,17 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   }, [params.id, scrollToBottom])
 
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [])
 
-  // Retorna o label do remetente para mensagens do operador
   function labelOperador(msg: Mensagem): string {
     if (msg.sent_by_user_id) {
       const nome = operadoresNome[msg.sent_by_user_id]
       if (nome) {
-        // Se sou eu mesmo, exibe "Você"
         if (msg.sent_by_user_id === currentUserId) return 'Você (operador)'
         return `${nome} (operador)`
       }
     }
-    // Fallback enquanto carrega ou mensagens antigas sem user_id
     return 'Você (operador)'
   }
 
@@ -210,13 +191,23 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     setPausando(true)
     const supabase = createClient()
     const novoPausado = !conversa.agente_pausado
-    await supabase.from('conversations').update({
-      agente_pausado: novoPausado,
-      pausado_em: novoPausado ? new Date().toISOString() : null,
-    }).eq('id', conversa.id)
-    setConversa(prev => prev ? { ...prev, agente_pausado: novoPausado } : prev)
 
-    // Registra log via API (para ter o token JWT disponível)
+    // Se conversa encerrada, reabre ao pausar/retomar
+    if (conversa.status === 'encerrada' || conversa.status === 'encerrado') {
+      await supabase.from('conversations').update({
+        status: 'ativa',
+        agente_pausado: novoPausado,
+        pausado_em: novoPausado ? new Date().toISOString() : null,
+      }).eq('id', conversa.id)
+      setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: novoPausado } : prev)
+    } else {
+      await supabase.from('conversations').update({
+        agente_pausado: novoPausado,
+        pausado_em: novoPausado ? new Date().toISOString() : null,
+      }).eq('id', conversa.id)
+      setConversa(prev => prev ? { ...prev, agente_pausado: novoPausado } : prev)
+    }
+
     await fetch('/api/conversas/registrar-log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -329,13 +320,10 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     return `${m}:${s}`
   }
 
-  // Envia token JWT no header para as rotas de envio
   async function getAuthHeader(): Promise<Record<string, string>> {
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
-    if (session?.access_token) {
-      return { 'Authorization': `Bearer ${session.access_token}` }
-    }
+    if (session?.access_token) return { 'Authorization': `Bearer ${session.access_token}` }
     return {}
   }
 
@@ -378,6 +366,11 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           }),
         })
         if (!res.ok) setTexto(msg)
+        // Se conversa foi reaberta, atualiza estado local
+        if (res.ok) {
+          const json = await res.json()
+          if (json.reaberta) setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: false } : prev)
+        }
       }
       if (temArquivo) {
         setUploadando(true)
@@ -416,6 +409,10 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
             caption: isAudio ? undefined : (caption || undefined),
           }),
         })
+        if (res.ok) {
+          const json = await res.json()
+          if (json.reaberta) setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: false } : prev)
+        }
         if (isAudio && caption) await enviarMensagemTexto(caption)
         setUploadando(false)
         limparArquivo()
@@ -488,6 +485,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
   if (!conversa) return null
 
+  const estaEncerrada = conversa.status === 'encerrada' || conversa.status === 'encerrado'
+
   return (
     <div className="flex flex-col h-[calc(100vh-64px)]" style={{ background: 'var(--bg-base)' }}>
 
@@ -510,7 +509,12 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{conversa.contato_telefone}</p>
         </div>
         <div className="flex items-center gap-2">
-          {conversa.agente_pausado ? (
+          {estaEncerrada ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+              style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+              Encerrada
+            </span>
+          ) : conversa.agente_pausado ? (
             <span className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
               style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
               <Headphones size={11} /> Operador
@@ -521,16 +525,14 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
               <Bot size={11} /> Agente IA
             </span>
           )}
-          {conversa.status !== 'encerrada' && (
-            <button onClick={handlePausarRetomar} disabled={pausando}
-              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-              style={conversa.agente_pausado
-                ? { background: '#10B98118', color: '#10B981', border: '1px solid #10B98130' }
-                : { background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }
-              }>
-              {conversa.agente_pausado ? <><Play size={11} /> Retomar IA</> : <><Pause size={11} /> Pausar IA</>}
-            </button>
-          )}
+          <button onClick={handlePausarRetomar} disabled={pausando}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+            style={conversa.agente_pausado
+              ? { background: '#10B98118', color: '#10B981', border: '1px solid #10B98130' }
+              : { background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }
+            }>
+            {conversa.agente_pausado ? <><Play size={11} /> Retomar IA</> : <><Pause size={11} /> Pausar IA</>}
+          </button>
         </div>
       </div>
 
@@ -594,12 +596,19 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
+      {/* Input — sempre visível, mesmo em conversa encerrada */}
       <div className="px-4 py-3 flex-shrink-0"
         style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
-        {conversa.status === 'encerrada' ? (
-          <p className="text-center text-sm py-2" style={{ color: 'var(--text-muted)' }}>Conversa encerrada</p>
-        ) : !conversa.agente_pausado ? (
+
+        {/* Banner informativo quando encerrada */}
+        {estaEncerrada && (
+          <div className="mb-2 px-3 py-1.5 rounded-lg text-xs text-center"
+            style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+            Conversa encerrada — envie uma mensagem para reabri-la
+          </div>
+        )}
+
+        {!conversa.agente_pausado && !estaEncerrada ? (
           <div className="flex items-center justify-center gap-2 py-1">
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
               Pause o agente para responder manualmente
@@ -612,8 +621,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           </div>
         ) : (
           <div className="space-y-2">
-
-            {/* Preview de arquivo selecionado */}
             {arquivo && !gravando && (
               <div className="rounded-lg overflow-hidden"
                 style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
@@ -631,15 +638,12 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                   <div className="flex items-center gap-2 px-3 py-2">
                     <Paperclip size={13} style={{ color: '#818CF8' }} />
                     <span className="text-xs flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>{arquivo.name}</span>
-                    <button onClick={limparArquivo} style={{ color: 'var(--text-muted)' }}>
-                      <X size={13} />
-                    </button>
+                    <button onClick={limparArquivo} style={{ color: 'var(--text-muted)' }}><X size={13} /></button>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Indicador de gravação ativa */}
             {gravando && (
               <div className="flex items-center gap-3 px-3 py-2 rounded-lg"
                 style={{ background: '#EF444418', border: '1px solid #EF444430' }}>
@@ -648,11 +652,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                   Gravando... {formatarTempoGravacao(tempoGravacao)}
                 </span>
                 <div className="flex-1" />
-                <button onClick={cancelarGravacao}
-                  className="text-xs px-2 py-0.5 rounded"
-                  style={{ color: 'var(--text-muted)' }}>
-                  Cancelar
-                </button>
+                <button onClick={cancelarGravacao} className="text-xs px-2 py-0.5 rounded"
+                  style={{ color: 'var(--text-muted)' }}>Cancelar</button>
               </div>
             )}
 
@@ -669,7 +670,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                     onChange={handleFileChange} className="hidden" />
                 </>
               )}
-
               {!gravando && (
                 <textarea
                   ref={inputRef}
@@ -677,7 +677,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                   onChange={(e) => setTexto(e.target.value)}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
-                  placeholder={arquivo ? 'Adicione uma legenda (opcional)...' : 'Digite uma mensagem... (Enter para enviar)'}
+                  placeholder={arquivo ? 'Adicione uma legenda (opcional)...' : estaEncerrada ? 'Envie uma mensagem para reabrir a conversa...' : 'Digite uma mensagem... (Enter para enviar)'}
                   rows={1}
                   className="flex-1 rounded-2xl px-4 py-2.5 text-sm focus:outline-none resize-none"
                   style={{
@@ -689,12 +689,9 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                   }}
                 />
               )}
-
               {gravando && <div className="flex-1" />}
-
               {!arquivo && !texto.trim() && (
-                <button
-                  onClick={gravando ? pararGravacao : iniciarGravacao}
+                <button onClick={gravando ? pararGravacao : iniciarGravacao}
                   disabled={enviando || uploadando}
                   className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
                   style={gravando
@@ -704,11 +701,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                   {gravando ? <Square size={14} /> : <Mic size={15} />}
                 </button>
               )}
-
               {(texto.trim() || arquivo) && !gravando && (
-                <button
-                  onClick={handleEnviar}
-                  disabled={enviando || uploadando}
+                <button onClick={handleEnviar} disabled={enviando || uploadando}
                   className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
                   style={{ background: '#10B981', color: '#fff' }}>
                   {enviando || uploadando
