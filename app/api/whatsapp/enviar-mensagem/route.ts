@@ -16,7 +16,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Variáveis de ambiente não configuradas' }, { status: 500 })
     }
 
-    // Extrai user_id do JWT
     const authHeader = request.headers.get('Authorization') ?? ''
     const token = authHeader.replace('Bearer ', '')
     const supabase = createClient(
@@ -36,6 +35,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Verifica se a conversa está encerrada e reabre se necessário
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('id, status, contato_nome')
+      .eq('id', conversation_id)
+      .single()
+
+    const estaEncerrada = conv?.status === 'encerrada' || conv?.status === 'encerrado'
+    if (estaEncerrada) {
+      await supabase.from('conversations')
+        .update({
+          status: 'ativa',
+          agente_pausado: false,
+          ultima_mensagem_em: new Date().toISOString(),
+        })
+        .eq('id', conversation_id)
+    }
+
     // 1. Envia mensagem via Evolution API
     const evoRes = await fetch(`${EVOLUTION_API_URL}/message/sendText/${instance_name}`, {
       method: 'POST',
@@ -49,7 +66,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Erro ao enviar mensagem' }, { status: 500 })
     }
 
-    // 2. Salva no banco com sent_by_user_id
+    // 2. Salva no banco
     const { data: msg, error: dbError } = await supabase
       .from('messages')
       .insert({
@@ -68,29 +85,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Mensagem enviada mas erro ao salvar' }, { status: 500 })
     }
 
-    // 3. Atualiza ultima_mensagem_em
-    await supabase.from('conversations')
-      .update({ ultima_mensagem_em: new Date().toISOString() })
-      .eq('id', conversation_id)
-
-    // 4. Registra log de ação
-    if (sent_by_user_id) {
-      const { data: conv } = await supabase
-        .from('conversations')
-        .select('contato_nome')
+    // 3. Atualiza ultima_mensagem_em (se não estava encerrada — evita duplo update)
+    if (!estaEncerrada) {
+      await supabase.from('conversations')
+        .update({ ultima_mensagem_em: new Date().toISOString() })
         .eq('id', conversation_id)
-        .single()
+    }
+
+    // 4. Registra log
+    if (sent_by_user_id) {
+      const contato = conv?.contato_nome ?? telefone
       await supabase.from('conversation_logs').insert({
         tenant_id,
         conversation_id,
         user_id: sent_by_user_id,
-        acao: 'enviou_mensagem',
-        descricao: `${operadorNome ?? 'Operador'} enviou mensagem para ${conv?.contato_nome ?? telefone}`,
-        contato_nome: conv?.contato_nome ?? telefone,
+        acao: estaEncerrada ? 'reabriu_conversa' : 'enviou_mensagem',
+        descricao: estaEncerrada
+          ? `${operadorNome ?? 'Operador'} reabriu e enviou mensagem para ${contato}`
+          : `${operadorNome ?? 'Operador'} enviou mensagem para ${contato}`,
+        contato_nome: contato,
       })
     }
 
-    return NextResponse.json({ success: true, message: msg })
+    return NextResponse.json({ success: true, message: msg, reaberta: estaEncerrada })
   } catch (err) {
     console.error('Erro ao enviar mensagem:', err)
     return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
