@@ -491,8 +491,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     <div className="flex flex-col h-[calc(100vh-64px)]" style={{ background: 'var(--bg-base)' }}>
 
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 flex-shrink-0"
-        style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+      <div className="flex items-center gap-3 px-4 py-3 flex-shrink-0 sticky top-0 z-10"
+  style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
         <button onClick={() => router.push('/conversas')}
           className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)]"
           style={{ color: 'var(--text-muted)' }}>
@@ -598,7 +598,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
       {/* Input — sempre visível, mesmo em conversa encerrada */}
       <div className="px-4 py-3 flex-shrink-0"
-        style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
+  style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', width: '100%' }}>
 
         {/* Banner informativo quando encerrada */}
         {estaEncerrada && (
