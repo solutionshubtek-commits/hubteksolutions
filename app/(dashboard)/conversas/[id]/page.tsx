@@ -12,6 +12,7 @@ interface Mensagem {
   arquivo_url: string | null
   criado_em: string
   from_me: boolean | null
+  sent_by_user_id: string | null
 }
 
 interface Conversa {
@@ -36,6 +37,13 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const [arquivoPreview, setArquivoPreview] = useState<string | null>(null)
   const [uploadando, setUploadando] = useState(false)
 
+  // Mapa de user_id -> nome do operador (cache local)
+  const [operadoresNome, setOperadoresNome] = useState<Record<string, string>>({})
+
+  // Usuário logado
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [currentUserNome, setCurrentUserNome] = useState<string | null>(null)
+
   // Gravação de áudio
   const [gravando, setGravando] = useState(false)
   const [tempoGravacao, setTempoGravacao] = useState(0)
@@ -51,9 +59,40 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     bottomRef.current?.scrollIntoView({ behavior })
   }, [])
 
+  // Busca nomes de operadores que ainda não estão no cache
+  const resolverNomesOperadores = useCallback(async (msgs: Mensagem[]) => {
+    const supabase = createClient()
+    const idsNovos = [...new Set(
+      msgs
+        .filter(m => m.sent_by_user_id && !operadoresNome[m.sent_by_user_id])
+        .map(m => m.sent_by_user_id as string)
+    )]
+    if (idsNovos.length === 0) return
+    const { data } = await supabase
+      .from('users')
+      .select('id, nome')
+      .in('id', idsNovos)
+    if (data) {
+      setOperadoresNome(prev => {
+        const next = { ...prev }
+        data.forEach(u => { next[u.id] = u.nome ?? 'Operador' })
+        return next
+      })
+    }
+  }, [operadoresNome])
+
   useEffect(() => {
     async function carregar() {
       const supabase = createClient()
+
+      // Usuário logado
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        setCurrentUserId(user.id)
+        const { data: ud } = await supabase.from('users').select('nome').eq('id', user.id).single()
+        setCurrentUserNome(ud?.nome ?? null)
+      }
+
       const { data: conv } = await supabase
         .from('conversations')
         .select('id, contato_nome, contato_telefone, status, agente_pausado, instance_name, tenant_id')
@@ -65,15 +104,18 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
       const { data: msgs } = await supabase
         .from('messages')
-        .select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me')
+        .select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me, sent_by_user_id')
         .eq('conversation_id', params.id)
         .order('criado_em', { ascending: true })
 
-      setMensagens(msgs || [])
+      const lista = msgs || []
+      setMensagens(lista)
       setCarregando(false)
       setTimeout(() => scrollToBottom('auto'), 100)
+      await resolverNomesOperadores(lista)
     }
     carregar()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id, router, scrollToBottom])
 
   useEffect(() => {
@@ -89,13 +131,14 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           schema: 'public',
           table: 'messages',
           filter: `conversation_id=eq.${params.id}`,
-        }, (payload) => {
+        }, async (payload) => {
           const nova = payload.new as Mensagem
           setMensagens(prev => {
             if (prev.find(m => m.id === nova.id)) return prev
             return [...prev, nova]
           })
           setTimeout(() => scrollToBottom('smooth'), 50)
+          await resolverNomesOperadores([nova])
         })
         .subscribe((status) => {
           if (status === 'CHANNEL_ERROR') setTimeout(subscribe, 3000)
@@ -119,7 +162,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     const polling = setInterval(async () => {
       const { data } = await supabase
         .from('messages')
-        .select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me')
+        .select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me, sent_by_user_id')
         .eq('conversation_id', params.id)
         .order('criado_em', { ascending: true })
       if (data) {
@@ -128,6 +171,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           const novas = data.filter((m: Mensagem) => !idsExistentes.has(m.id))
           if (novas.length === 0) return prev
           setTimeout(() => scrollToBottom('smooth'), 50)
+          resolverNomesOperadores(novas)
           return [...prev, ...novas]
         })
       }
@@ -138,6 +182,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       supabase.removeChannel(convChannel)
       clearInterval(polling)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id, scrollToBottom])
 
   useEffect(() => {
@@ -145,6 +190,20 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [])
+
+  // Retorna o label do remetente para mensagens do operador
+  function labelOperador(msg: Mensagem): string {
+    if (msg.sent_by_user_id) {
+      const nome = operadoresNome[msg.sent_by_user_id]
+      if (nome) {
+        // Se sou eu mesmo, exibe "Você"
+        if (msg.sent_by_user_id === currentUserId) return 'Você (operador)'
+        return `${nome} (operador)`
+      }
+    }
+    // Fallback enquanto carrega ou mensagens antigas sem user_id
+    return 'Você (operador)'
+  }
 
   async function handlePausarRetomar() {
     if (!conversa) return
@@ -156,6 +215,20 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       pausado_em: novoPausado ? new Date().toISOString() : null,
     }).eq('id', conversa.id)
     setConversa(prev => prev ? { ...prev, agente_pausado: novoPausado } : prev)
+
+    // Registra log via API (para ter o token JWT disponível)
+    await fetch('/api/conversas/registrar-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversation_id: conversa.id,
+        tenant_id: conversa.tenant_id,
+        acao: novoPausado ? 'pausou_ia' : 'retomou_ia',
+        contato_nome: conversa.contato_nome || conversa.contato_telefone,
+        operador_nome: currentUserNome,
+      }),
+    })
+
     setPausando(false)
     if (novoPausado) setTimeout(() => inputRef.current?.focus(), 100)
   }
@@ -203,24 +276,16 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     if (arquivo) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-
-      // Prioriza opus/ogg para compatibilidade com WhatsApp
       const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
         ? 'audio/ogg;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm'
-
       const recorder = new MediaRecorder(stream, { mimeType })
       chunksRef.current = []
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data)
-      }
-
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       recorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop())
-        // Sempre salva como .ogg — WhatsApp aceita nativamente
         const blob = new Blob(chunksRef.current, { type: mimeType })
         const file = new File([blob], `audio_${Date.now()}.ogg`, { type: mimeType })
         selecionarArquivo(file)
@@ -228,15 +293,11 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         setTempoGravacao(0)
         if (timerRef.current) clearInterval(timerRef.current)
       }
-
-      recorder.start(100) // coleta chunks a cada 100ms para garantir dados
+      recorder.start(100)
       mediaRecorderRef.current = recorder
       setGravando(true)
       setTempoGravacao(0)
-
-      timerRef.current = setInterval(() => {
-        setTempoGravacao(prev => prev + 1)
-      }, 1000)
+      timerRef.current = setInterval(() => setTempoGravacao(prev => prev + 1), 1000)
     } catch {
       alert('Não foi possível acessar o microfone.')
     }
@@ -268,11 +329,22 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     return `${m}:${s}`
   }
 
+  // Envia token JWT no header para as rotas de envio
+  async function getAuthHeader(): Promise<Record<string, string>> {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.access_token) {
+      return { 'Authorization': `Bearer ${session.access_token}` }
+    }
+    return {}
+  }
+
   async function enviarMensagemTexto(msg: string) {
     if (!conversa) return
+    const authHeaders = await getAuthHeader()
     await fetch('/api/whatsapp/enviar-mensagem', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({
         conversation_id: conversa.id,
         tenant_id: conversa.tenant_id,
@@ -285,21 +357,18 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
   async function handleEnviar() {
     if (enviando || uploadando || !conversa) return
-
     const temTexto = texto.trim().length > 0
     const temArquivo = !!arquivo
-
     if (!temTexto && !temArquivo) return
-
     setEnviando(true)
-
     try {
+      const authHeaders = await getAuthHeader()
       if (temTexto && !temArquivo) {
         const msg = texto.trim()
         setTexto('')
         const res = await fetch('/api/whatsapp/enviar-mensagem', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify({
             conversation_id: conversa.id,
             tenant_id: conversa.tenant_id,
@@ -310,41 +379,32 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
         })
         if (!res.ok) setTexto(msg)
       }
-
       if (temArquivo) {
         setUploadando(true)
         const caption = temTexto ? texto.trim() : ''
         setTexto('')
-
         const supabase = createClient()
         const ext = arquivo!.name.split('.').pop() ?? 'bin'
         const safeName = `${Date.now()}.${ext}`
         const path = `${conversa.tenant_id}/${safeName}`
-
         const { error: uploadError } = await supabase.storage
           .from('mensagens-midia')
           .upload(path, arquivo!, { contentType: arquivo!.type })
-
         if (uploadError) {
           console.error('[page] Erro upload Supabase:', uploadError)
           setUploadando(false)
           setEnviando(false)
           return
         }
-
         const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
         const publicUrl = urlData.publicUrl
-
         const isAudio = arquivo!.type.startsWith('audio/')
         const isVideo = arquivo!.type.startsWith('video/')
         const isImage = arquivo!.type.startsWith('image/')
         const tipo = isAudio ? 'audio' : isVideo ? 'video' : isImage ? 'imagem' : 'documento'
-
-        // Para áudio, não passa caption (sendWhatsAppAudio não suporta)
-        // O texto é enviado como mensagem separada após o áudio
         const res = await fetch('/api/whatsapp/enviar-midia-url', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify({
             conversation_id: conversa.id,
             tenant_id: conversa.tenant_id,
@@ -356,12 +416,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
             caption: isAudio ? undefined : (caption || undefined),
           }),
         })
-
-        // Se era áudio e tinha texto, envia o texto como mensagem separada
-        if (isAudio && caption) {
-          await enviarMensagemTexto(caption)
-        }
-
+        if (isAudio && caption) await enviarMensagemTexto(caption)
         setUploadando(false)
         limparArquivo()
         if (!res.ok) console.error('Erro ao enviar arquivo')
@@ -390,58 +445,34 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
   function renderConteudoMensagem(msg: Mensagem) {
     if (!msg.arquivo_url) return <span>{msg.conteudo}</span>
-
     const tipo = msg.tipo?.toLowerCase() ?? ''
-
     if (tipo === 'imagem') {
       return (
         <div className="flex flex-col gap-1">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={msg.arquivo_url}
-            alt="imagem"
-            className="rounded-lg max-w-[200px] max-h-[200px] object-cover"
-          />
-          {msg.conteudo && msg.conteudo !== 'undefined' && (
-            <span className="text-xs">{msg.conteudo}</span>
-          )}
+          <img src={msg.arquivo_url} alt="imagem" className="rounded-lg max-w-[200px] max-h-[200px] object-cover" />
+          {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
         </div>
       )
     }
-
     if (tipo === 'video') {
       return (
         <div className="flex flex-col gap-1">
-          <video
-            controls
-            src={msg.arquivo_url}
-            className="rounded-lg max-w-[240px] max-h-[160px]"
-          />
-          {msg.conteudo && msg.conteudo !== 'undefined' && (
-            <span className="text-xs">{msg.conteudo}</span>
-          )}
+          <video controls src={msg.arquivo_url} className="rounded-lg max-w-[240px] max-h-[160px]" />
+          {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
         </div>
       )
     }
-
     if (tipo === 'audio') {
       return (
         <div className="flex flex-col gap-1">
           <audio controls src={msg.arquivo_url} className="max-w-[240px]" />
-          {msg.conteudo && msg.conteudo !== 'undefined' && (
-            <span className="text-xs">{msg.conteudo}</span>
-          )}
+          {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
         </div>
       )
     }
-
     return (
-      <a
-        href={msg.arquivo_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="underline text-blue-400 text-xs"
-      >
+      <a href={msg.arquivo_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-400 text-xs">
         📎 {msg.conteudo || 'Arquivo anexado'}
       </a>
     )
@@ -525,7 +556,9 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
               <div className={`flex ${isCliente ? 'justify-start' : 'justify-end'}`}>
                 <div className={`max-w-[75%] flex flex-col gap-0.5 ${isCliente ? '' : 'items-end'}`}>
                   {isOperador && (
-                    <span className="text-[10px] px-1" style={{ color: '#818CF8' }}>Você (operador)</span>
+                    <span className="text-[10px] px-1" style={{ color: '#818CF8' }}>
+                      {labelOperador(msg)}
+                    </span>
                   )}
                   {isOperadorWeb && (
                     <span className="text-[10px] px-1 flex items-center gap-1 justify-end" style={{ color: '#818CF8' }}>
@@ -624,7 +657,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
             )}
 
             <div className="flex items-end gap-2">
-              {/* Botão de anexo — oculto durante gravação */}
               {!gravando && (
                 <>
                   <button onClick={() => fileInputRef.current?.click()}
@@ -638,7 +670,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                 </>
               )}
 
-              {/* Textarea — oculto durante gravação */}
               {!gravando && (
                 <textarea
                   ref={inputRef}
@@ -661,7 +692,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
               {gravando && <div className="flex-1" />}
 
-              {/* Botão microfone / parar gravação */}
               {!arquivo && !texto.trim() && (
                 <button
                   onClick={gravando ? pararGravacao : iniciarGravacao}
@@ -675,7 +705,6 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                 </button>
               )}
 
-              {/* Botão enviar */}
               {(texto.trim() || arquivo) && !gravando && (
                 <button
                   onClick={handleEnviar}
