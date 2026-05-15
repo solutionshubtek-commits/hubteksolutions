@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'tenant_id inválido' }, { status: 400 })
     }
 
-    // Verificar limite de 3 operadores
+    // Verificar limite de 3 operadores ativos
     const { count } = await supabase
       .from('users')
       .select('id', { count: 'exact', head: true })
@@ -82,63 +82,6 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    // Verificar se e-mail já existe no Auth (evita duplicate key em retentativas)
-    const { data: listaAuth } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-    const authExistente = listaAuth?.users?.find(u => u.email === email.toLowerCase())
-    if (authExistente) {
-      // Verifica se já está na tabela users deste tenant
-      const { data: userExistenteNaTabela } = await supabaseAdmin
-        .from('users')
-        .select('id')
-        .eq('id', authExistente.id)
-        .single()
-
-      if (userExistenteNaTabela) {
-        return NextResponse.json({ error: 'Este e-mail já possui uma conta no sistema' }, { status: 400 })
-      }
-
-      // Está no Auth mas não na tabela — inserir direto sem criar novo Auth
-      const { error: userError } = await supabaseAdmin
-        .from('users')
-        .insert({
-          id: authExistente.id,
-          tenant_id: tenantAlvo,
-          email: email.toLowerCase(),
-          role: 'operador',
-          nome,
-          ativo: true,
-          senha_provisoria: true
-        })
-
-      if (userError) {
-        return NextResponse.json({
-          error: `DB error: ${userError.message} | code: ${userError.code}`
-        }, { status: 500 })
-      }
-
-      // Resetar senha provisória
-      await supabaseAdmin.auth.admin.updateUserById(authExistente.id, { password: senhaProvisoria })
-
-      // Enviar e-mail e retornar
-      const { Resend } = await import('resend')
-      const resend = new Resend(process.env.RESEND_API_KEY)
-      await resend.emails.send({
-        from: 'Hubtek Solutions <noreply@hubteksolutions.tech>',
-        to: email.toLowerCase(),
-        subject: `Você foi adicionado como operador — ${tenant?.nome ?? 'Hubtek'}`,
-        html: `<div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f9f9f9; border-radius: 8px;">
-          <h2 style="color: #111;">Olá, ${nome}!</h2>
-          <p style="color: #444;">Você foi cadastrado como <strong>operador</strong> na plataforma <strong>Hubtek Solutions</strong>${tenant?.nome ? ` para a empresa <strong>${tenant.nome}</strong>` : ''}.</p>
-          <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 20px; margin: 24px 0;">
-            <p style="margin: 0 0 8px;"><strong>E-mail:</strong> ${email.toLowerCase()}</p>
-            <p style="margin: 0;"><strong>Senha provisória:</strong> <span style="font-family: monospace; font-size: 16px;">${senhaProvisoria}</span></p>
-          </div>
-          <a href="https://app.hubteksolutions.tech/login" style="display: inline-block; background: #111; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Acessar plataforma</a>
-        </div>`
-      })
-      return NextResponse.json({ ok: true })
-    }
-
     const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: email.toLowerCase(),
       password: senhaProvisoria,
@@ -147,26 +90,28 @@ export async function POST(req: NextRequest) {
     })
 
     if (authError) {
+      if (authError.message.includes('already registered')) {
+        return NextResponse.json({ error: 'Este e-mail já possui uma conta no sistema' }, { status: 400 })
+      }
       return NextResponse.json({ error: `Auth error: ${authError.message}` }, { status: 500 })
     }
 
-    // Inserir na tabela users
+    // O trigger handle_new_user já inseriu o registro com id, email e role='operador'
+    // Apenas complementar os campos que o trigger não preenche
     const { error: userError } = await supabaseAdmin
       .from('users')
-      .insert({
-        id: authUser.user.id,
+      .update({
         tenant_id: tenantAlvo,
-        email: email.toLowerCase(),
         role: 'operador',
         nome,
         ativo: true,
         senha_provisoria: true
       })
+      .eq('id', authUser.user.id)
 
     if (userError) {
       // Rollback: remover do Auth
       await supabaseAdmin.auth.admin.deleteUser(authUser.user.id)
-      // Retorna o erro real do banco para diagnóstico
       return NextResponse.json({
         error: `DB error: ${userError.message} | code: ${userError.code} | details: ${userError.details}`
       }, { status: 500 })
