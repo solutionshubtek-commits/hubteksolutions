@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Plus, Search, AlertTriangle, CheckCircle2, AlertCircle,
   X, Save, Eye, EyeOff, Lock, Unlock, Key,
-  ChevronRight, RefreshCw, Trash2, Smartphone, LogOut, ShieldAlert, MessageCircle, UserPlus,
+  ChevronRight, RefreshCw, Trash2, Smartphone, LogOut, ShieldAlert, MessageCircle,
 } from 'lucide-react'
 import { GestaoOperadoresAdmin } from '@/components/admin/GestaoOperadoresAdmin'
 
@@ -550,10 +550,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
 
                     return (
                       <div key={inst.id} className="rounded-xl p-3 space-y-2"
-                        style={{
-                          background: banido ? '#EF444408' : 'var(--bg-surface-2)',
-                          border: banido ? '1px solid #EF444430' : '1px solid var(--border)',
-                        }}>
+                        style={{ background: banido ? '#EF444408' : 'var(--bg-surface-2)', border: banido ? '1px solid #EF444430' : '1px solid var(--border)' }}>
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                             style={{ background: banido ? '#EF444415' : 'rgba(16,185,129,0.1)' }}>
@@ -564,9 +561,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                             <p className="text-xs font-mono truncate" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</p>
                           </div>
                           <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                            style={{ color: sc.cor, background: sc.bg, border: `1px solid ${sc.border}` }}>
-                            {sc.label}
-                          </span>
+                            style={{ color: sc.cor, background: sc.bg, border: `1px solid ${sc.border}` }}>{sc.label}</span>
                         </div>
                         {banido && (
                           <div className="rounded-lg p-3 space-y-2" style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
