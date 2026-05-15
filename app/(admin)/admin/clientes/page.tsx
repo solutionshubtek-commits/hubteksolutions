@@ -442,7 +442,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 w-full max-w-md z-50 flex flex-col shadow-2xl"
+      <div className="fixed inset-y-0 right-0 w-full max-w-2xl z-50 flex flex-col shadow-2xl"
         style={{ background: 'var(--bg-surface)', borderLeft: '1px solid var(--border)' }}>
 
         {/* Header */}
