@@ -26,10 +26,14 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
-
   const { pathname } = request.nextUrl
 
-  // Rotas públicas — deixar passar sem verificação
+  // Rotas públicas
+  if (pathname === '/trocar-senha') {
+    return supabaseResponse
+  }
+
+  // Login — redireciona se já autenticado
   if (pathname.startsWith('/login')) {
     if (user) {
       return NextResponse.redirect(new URL('/visao-geral', request.url))
@@ -37,22 +41,36 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse
   }
 
-  // Sem sessão → redirecionar para login
+  // Sem sessão → login
   if (!user) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Rotas /admin → exige role admin_hubtek
-  if (pathname.startsWith('/admin')) {
-    const { data: userData } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', user.id)
-      .single()
+  // Buscar role uma vez para todas as verificações abaixo
+  const { data: userData } = await supabase
+    .from('users')
+    .select('role, senha_provisoria')
+    .eq('id', user.id)
+    .single()
 
-    if (userData?.role !== 'admin_hubtek') {
+  const role = userData?.role ?? ''
+
+  // Senha provisória → forçar troca
+  if (userData?.senha_provisoria && pathname !== '/trocar-senha') {
+    return NextResponse.redirect(new URL('/trocar-senha', request.url))
+  }
+
+  // Rotas /admin → exige admin_hubtek
+  if (pathname.startsWith('/admin')) {
+    if (role !== 'admin_hubtek') {
       return NextResponse.redirect(new URL('/visao-geral', request.url))
     }
+  }
+
+  // Rotas bloqueadas para operador
+  const ROTAS_BLOQUEADAS_OPERADOR = ['/configuracoes', '/renovar-plano']
+  if (role === 'operador' && ROTAS_BLOQUEADAS_OPERADOR.some(r => pathname.startsWith(r))) {
+    return NextResponse.redirect(new URL('/visao-geral', request.url))
   }
 
   return supabaseResponse
