@@ -144,13 +144,13 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
           )}
 
           {operadores.length < 3 && (
-            <div className="flex flex-col sm:flex-row gap-2 mb-4">
+            <div className="flex flex-row gap-2 mb-4">
               <input
                 type="text"
                 placeholder="Nome"
                 value={novoNome}
                 onChange={e => setNovoNome(e.target.value)}
-                className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                className="w-40 rounded-lg px-3 py-2 text-sm focus:outline-none"
                 style={inputStyle}
               />
               <input
