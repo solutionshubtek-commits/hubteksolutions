@@ -16,12 +16,16 @@ export default async function DashboardLayout({
 
   const { data: userData } = await supabase
     .from('users')
-    .select('nome, avatar_url')
+    .select('nome, avatar_url, senha_provisoria')
     .eq('id', user.id)
     .single()
 
+  if (userData?.senha_provisoria) {
+    redirect('/trocar-senha')
+  }
+
   const nomeUsuario = userData?.nome ?? user.email ?? null
-  const avatarUrl = (userData as { nome?: string; avatar_url?: string | null } | null)?.avatar_url ?? null
+  const avatarUrl = (userData as { nome?: string; avatar_url?: string | null; senha_provisoria?: boolean | null } | null)?.avatar_url ?? null
 
   return (
     <div className="min-h-screen bg-[var(--bg-page)]">
