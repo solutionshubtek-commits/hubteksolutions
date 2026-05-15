@@ -5,6 +5,7 @@ import {
   MessageSquare, Users, Clock, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
   Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut,
+  Paperclip,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 
@@ -38,6 +39,15 @@ interface InstanciaBanida {
 interface DiaDado {
   dia: string
   total: number
+}
+
+interface AtividadeItem {
+  id: string
+  tipo: 'conversa' | 'log'
+  texto: string
+  subtexto?: string
+  cor: string
+  criado_em: string
 }
 
 function delta(atual: number, anterior: number) {
@@ -83,11 +93,11 @@ function exportarConversasPDF(conversas: ConversaRecente[]) {
     titulo: 'Conversas Recentes',
     subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
     colunas: [
-      { label: 'Contato',       key: 'contato',  align: 'left'  },
-      { label: 'Telefone',      key: 'telefone', align: 'left'  },
-      { label: 'Última mensagem', key: 'msg',    align: 'left'  },
-      { label: 'Status',        key: 'status',   align: 'left'  },
-      { label: 'Hora',          key: 'hora',     align: 'left'  },
+      { label: 'Contato',         key: 'contato',  align: 'left' },
+      { label: 'Telefone',        key: 'telefone', align: 'left' },
+      { label: 'Última mensagem', key: 'msg',      align: 'left' },
+      { label: 'Status',          key: 'status',   align: 'left' },
+      { label: 'Hora',            key: 'hora',     align: 'left' },
     ],
     linhas: conversas.map(c => ({
       contato:  c.contato_nome || '—',
@@ -179,6 +189,23 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
   )
 }
 
+// Mapeia ação do log para cor e texto resumido
+function logParaAtividade(log: { id: string; acao: string; descricao: string; criado_em: string }): AtividadeItem {
+  const corMap: Record<string, string> = {
+    pausou_ia:       '#F59E0B',
+    retomou_ia:      '#10B981',
+    enviou_mensagem: '#818CF8',
+    enviou_midia:    '#818CF8',
+  }
+  return {
+    id: `log_${log.id}`,
+    tipo: 'log',
+    texto: log.descricao,
+    cor: corMap[log.acao] ?? 'var(--text-muted)',
+    criado_em: log.criado_em,
+  }
+}
+
 export default function VisaoGeralPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [conversas, setConversas] = useState<ConversaRecente[]>([])
@@ -193,6 +220,7 @@ export default function VisaoGeralPage() {
   const [instanciasBanidas, setInstanciasBanidas] = useState<InstanciaBanida[]>([])
   const [desconectando, setDesconectando] = useState<Record<string, boolean>>({})
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
+  const [atividades, setAtividades] = useState<AtividadeItem[]>([])
   const exportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -209,7 +237,7 @@ export default function VisaoGeralPage() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { data: userData } = await supabase.from('users').select('nome, tenant_id').eq('id', user.id).single()
+    const { data: userData } = await supabase.from('users').select('nome, tenant_id, role').eq('id', user.id).single()
     if (!userData?.tenant_id) return
     setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
     const agora = new Date()
@@ -221,6 +249,7 @@ export default function VisaoGeralPage() {
     const mesInicio = new Date(agora.getFullYear(), agora.getMonth(), 1)
     const mesAntInicio = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
     const mesAntFim = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
+
     const [hojeRes, ontemRes, semRes, semAntRes, mesRes, mesAntRes, pausadasRes, pausadasAntRes, convRes, bandasRes] =
       await Promise.all([
         supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', hojeInicio.toISOString()),
@@ -234,6 +263,7 @@ export default function VisaoGeralPage() {
         supabase.from('conversations').select('id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em').eq('tenant_id', tid).eq('status', 'ativa').order('ultima_mensagem_em', { ascending: false }).limit(20),
         supabase.from('tenant_instances').select('id, instance_name, apelido').eq('tenant_id', tid).eq('status', 'banido'),
       ])
+
     setMetrics({
       conversasHoje: hojeRes.count ?? 0,
       conversasHojeAnterior: ontemRes.count ?? 0,
@@ -245,6 +275,7 @@ export default function VisaoGeralPage() {
       pausadasAnterior: pausadasAntRes.count ?? 0,
     })
     setInstanciasBanidas((bandasRes.data ?? []) as InstanciaBanida[])
+
     const convComMsg: ConversaRecente[] = await Promise.all(
       (convRes.data ?? []).map(async (c) => {
         const { data: msg } = await supabase
@@ -255,6 +286,33 @@ export default function VisaoGeralPage() {
     )
     setConversas(convComMsg)
     setConversasFiltradas(convComMsg)
+
+    // Atividades: mistura conversas ativas + logs recentes (só para gestores)
+    const itensConversas: AtividadeItem[] = convComMsg.slice(0, 4).map(c => ({
+      id: `conv_${c.id}`,
+      tipo: 'conversa' as const,
+      texto: `${c.contato_nome || c.contato_telefone} ${c.agente_pausado ? 'solicitou atendimento humano.' : 'está em conversa com o agente.'}`,
+      cor: c.agente_pausado ? '#F59E0B' : '#10B981',
+      criado_em: c.ultima_mensagem_em,
+    }))
+
+    let itensLogs: AtividadeItem[] = []
+    if (['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userData.role)) {
+      const { data: logsData } = await supabase
+        .from('conversation_logs')
+        .select('id, acao, descricao, criado_em')
+        .eq('tenant_id', tid)
+        .order('criado_em', { ascending: false })
+        .limit(6)
+      itensLogs = (logsData ?? []).map(logParaAtividade)
+    }
+
+    // Mescla e ordena por data desc, limita a 8
+    const todos = [...itensConversas, ...itensLogs]
+      .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
+      .slice(0, 8)
+    setAtividades(todos)
+
     setCarregando(false)
   }, [])
 
@@ -299,6 +357,24 @@ export default function VisaoGeralPage() {
       pausado_em: novoPausado ? new Date().toISOString() : null,
     }).eq('id', conversa.id)
     setConversas(prev => prev.map(c => c.id === conversa.id ? { ...c, agente_pausado: novoPausado } : c))
+
+    // Registra log
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.access_token) {
+      const { data: ud } = await supabase.from('users').select('nome, tenant_id').eq('id', session.user.id).single()
+      await fetch('/api/conversas/registrar-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          conversation_id: conversa.id,
+          tenant_id: ud?.tenant_id,
+          acao: novoPausado ? 'pausou_ia' : 'retomou_ia',
+          contato_nome: conversa.contato_nome || conversa.contato_telefone,
+          operador_nome: ud?.nome,
+        }),
+      })
+    }
+
     setPausando(null)
   }
 
@@ -311,9 +387,7 @@ export default function VisaoGeralPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instance_name: instanceName }),
       })
-      if (res.ok) {
-        setInstanciasBanidas(prev => prev.filter(i => i.instance_name !== instanceName))
-      }
+      if (res.ok) setInstanciasBanidas(prev => prev.filter(i => i.instance_name !== instanceName))
     } finally {
       setDesconectando(prev => ({ ...prev, [instanceName]: false }))
     }
@@ -388,35 +462,25 @@ export default function VisaoGeralPage() {
                         <button
                           onClick={() => setConfirmDesconectar(inst.instance_name)}
                           className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
-                          style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}
-                        >
+                          style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}>
                           <LogOut size={12} /> Desconectar
                         </button>
-                        <a
-                          href="https://wa.me/5551980104924"
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <a href="https://wa.me/5551980104924" target="_blank" rel="noopener noreferrer"
                           className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
-                          style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}
-                        >
+                          style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}>
                           <MessageCircle size={12} /> Suporte
                         </a>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Confirmar desconexão?</span>
-                        <button
-                          onClick={() => setConfirmDesconectar(null)}
+                        <button onClick={() => setConfirmDesconectar(null)}
                           className="text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors"
-                          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                        >
+                          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                           Cancelar
                         </button>
-                        <button
-                          onClick={() => handleDesconectar(inst.instance_name)}
-                          disabled={estaDesconectando}
-                          className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors"
-                        >
+                        <button onClick={() => handleDesconectar(inst.instance_name)} disabled={estaDesconectando}
+                          className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors">
                           <LogOut size={11} className={estaDesconectando ? 'animate-spin' : ''} />
                           {estaDesconectando ? 'Desconectando...' : 'Confirmar'}
                         </button>
@@ -457,23 +521,21 @@ export default function VisaoGeralPage() {
           <GraficoBarras dados={grafico} />
         </div>
 
+        {/* Atividade recente — conversas + logs de operadores */}
         <div className="rounded-xl p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           <h2 className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Atividade recente</h2>
-          <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>Eventos do agente em tempo real.</p>
-          <div className="space-y-4">
-            {conversas.slice(0, 6).map(c => (
-              <div key={c.id} className="flex items-start gap-2.5">
-                <span className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${c.agente_pausado ? 'bg-[#F59E0B]' : 'bg-[#10B981]'}`} />
+          <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>Eventos do agente e ações de operadores.</p>
+          <div className="space-y-3">
+            {atividades.map(item => (
+              <div key={item.id} className="flex items-start gap-2.5">
+                <span className="w-2 h-2 rounded-full mt-1 flex-shrink-0" style={{ background: item.cor }} />
                 <div className="min-w-0">
-                  <p className="text-xs font-medium leading-snug" style={{ color: 'var(--text-primary)' }}>
-                    <span className="font-semibold">{c.contato_nome || c.contato_telefone}</span>{' '}
-                    {c.agente_pausado ? 'solicitou atendimento humano.' : 'está em conversa com o agente.'}
-                  </p>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-label)' }}>{tempoRelativo(c.ultima_mensagem_em)}</p>
+                  <p className="text-xs leading-snug" style={{ color: 'var(--text-primary)' }}>{item.texto}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-label)' }}>{tempoRelativo(item.criado_em)}</p>
                 </div>
               </div>
             ))}
-            {conversas.length === 0 && (
+            {atividades.length === 0 && (
               <p className="text-sm" style={{ color: 'var(--text-label)' }}>Nenhuma atividade recente.</p>
             )}
           </div>
