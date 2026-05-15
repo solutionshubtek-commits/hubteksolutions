@@ -17,9 +17,6 @@ const WHATSAPP_STATUS: Record<string, string> = {
   connecting: 'desconectado',
 }
 
-// ─── Upgrade automático ───────────────────────────────────────────────────────
-// Chama a API de upgrade de forma assíncrona (fire-and-forget)
-// Não bloqueia o processamento da mensagem
 async function verificarUpgradePlano(tenantId: string): Promise<void> {
   try {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.hubteksolutions.tech'
@@ -29,7 +26,6 @@ async function verificarUpgradePlano(tenantId: string): Promise<void> {
       body: JSON.stringify({ tenant_id: tenantId }),
     })
   } catch (err) {
-    // Nunca deixar falha de upgrade derrubar o webhook
     console.error('[webhook] Erro ao verificar upgrade de plano:', err)
   }
 }
@@ -57,7 +53,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (event.event === 'messages.upsert' && isMessageUpsertData(event.data)) {
     const data = event.data
 
-    // ── Mensagens enviadas pelo operador (fromMe) ──────────────────────────
+    // ── Mensagens enviadas pelo operador via WhatsApp Web (fromMe) ─────────
     if (data.key.fromMe) {
       // Ignora mídias — já salvas pela rota enviar-midia
       const isMidia = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'].includes(data.messageType)
@@ -71,7 +67,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const conteudo = extractTextContent(data)
       if (!conteudo) return response
 
-      const { data: conv } = await supabase
+      // Busca conversa ativa OU encerrada mais recente
+      const { data: convAtiva } = await supabase
         .from('conversations')
         .select('id, contato_telefone, status')
         .eq('tenant_id', tenant.id)
@@ -79,17 +76,52 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .in('status', ['ativo', 'ativa'])
         .order('criado_em', { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
 
-      if (!conv) return response
+      if (convAtiva) {
+        // Conversa ativa — salva normalmente
+        await supabase.from('messages').insert({
+          conversation_id: convAtiva.id,
+          origem: 'operador',
+          conteudo,
+          from_me: true,
+          criado_em: new Date().toISOString(),
+        })
+        await supabase.from('conversations')
+          .update({ ultima_mensagem_em: new Date().toISOString() })
+          .eq('id', convAtiva.id)
+        return response
+      }
 
-      await supabase.from('messages').insert({
-        conversation_id: conv.id,
-        origem: 'operador',
-        conteudo,
-        from_me: true,
-        criado_em: new Date().toISOString(),
-      })
+      // Conversa encerrada — reabre antes de salvar
+      const { data: convEncerrada } = await supabase
+        .from('conversations')
+        .select('id, contato_telefone, status')
+        .eq('tenant_id', tenant.id)
+        .eq('contato_telefone', phone)
+        .in('status', ['encerrada', 'encerrado'])
+        .order('criado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (convEncerrada) {
+        // Reabre a conversa existente
+        await supabase.from('conversations')
+          .update({
+            status: 'ativa',
+            agente_pausado: false,
+            ultima_mensagem_em: new Date().toISOString(),
+          })
+          .eq('id', convEncerrada.id)
+
+        await supabase.from('messages').insert({
+          conversation_id: convEncerrada.id,
+          origem: 'operador',
+          conteudo,
+          from_me: true,
+          criado_em: new Date().toISOString(),
+        })
+      }
 
       return response
     }
@@ -117,13 +149,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         caption: data.message.imageMessage?.caption,
       })
 
-      // ── Verifica upgrade de plano após processar mensagem ─────────────
-      // Só verifica se o tenant tem plano definido (exceto elite que não faz upgrade)
       const planoAtual = (tenant as { plano?: string }).plano ?? 'essencial'
       if (planoAtual !== 'elite') {
-        // Conta conversas do mês para decidir se precisa checar
-        // Checa apenas a cada N mensagens para reduzir carga (a cada 5 mensagens)
-        // A API de upgrade tem sua própria verificação de limite
         const agora3 = new Date(Date.now() - 3 * 60 * 60 * 1000)
         const inicioMes = new Date(Date.UTC(agora3.getUTCFullYear(), agora3.getUTCMonth(), 1, 3, 0, 0))
 
@@ -136,9 +163,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const totalConversas = count ?? 0
         const limiteAtual = PLANOS_MAP[planoAtual]?.limite ?? 50
 
-        // Só dispara verificação se atingiu ou ultrapassou o limite
         if (totalConversas >= limiteAtual) {
-          verificarUpgradePlano(tenant.id) // fire-and-forget
+          verificarUpgradePlano(tenant.id)
         }
       }
     } catch (err) {
