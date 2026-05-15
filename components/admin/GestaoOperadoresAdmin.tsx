@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { UserPlus, Trash2, RefreshCw, Loader2, ChevronDown, ChevronUp, Users } from 'lucide-react'
 
@@ -30,7 +30,7 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
 
   const supabase = createClient()
 
-  async function carregarOperadores() {
+  const carregarOperadores = useCallback(async () => {
     setCarregando(true)
     const { data } = await supabase
       .from('users')
@@ -41,11 +41,12 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
       .order('criado_em', { ascending: true })
     setOperadores(data ?? [])
     setCarregando(false)
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId])
 
   useEffect(() => {
     if (aberto) carregarOperadores()
-  }, [aberto])
+  }, [aberto, carregarOperadores])
 
   function mostrarSucesso(msg: string) {
     setSucesso(msg); setErro('')
@@ -105,30 +106,43 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
     } finally { setAcaoId(null) }
   }
 
+  const inputStyle = { background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
+
   return (
-    <div className="border border-gray-200 rounded-xl overflow-hidden mt-4">
+    <div className="rounded-xl overflow-hidden mt-4" style={{ border: '1px solid var(--border)' }}>
       {/* Header colapsável */}
       <button
         onClick={() => setAberto(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+        className="w-full flex items-center justify-between px-4 py-3 transition-colors text-left"
+        style={{ background: 'var(--bg-surface-2)' }}
       >
         <div className="flex items-center gap-2">
-          <Users className="w-4 h-4 text-gray-500" />
-          <span className="text-sm font-medium text-gray-700">Operadores</span>
+          <Users className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+          <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Operadores</span>
           {operadores.length > 0 && (
-            <span className="text-xs bg-gray-200 text-gray-600 rounded-full px-2 py-0.5">{operadores.length}/3</span>
+            <span className="text-xs rounded-full px-2 py-0.5"
+              style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)' }}>
+              {operadores.length}/3
+            </span>
           )}
         </div>
-        {aberto ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        {aberto
+          ? <ChevronUp className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+          : <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+        }
       </button>
 
       {aberto && (
-        <div className="p-4">
-          {/* Feedback */}
-          {erro && <p className="mb-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{erro}</p>}
-          {sucesso && <p className="mb-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{sucesso}</p>}
+        <div className="p-4" style={{ background: 'var(--bg-surface)' }}>
+          {erro && (
+            <p className="mb-3 text-sm rounded-lg px-3 py-2"
+              style={{ color: '#EF4444', background: '#EF444410', border: '1px solid #EF444430' }}>{erro}</p>
+          )}
+          {sucesso && (
+            <p className="mb-3 text-sm rounded-lg px-3 py-2"
+              style={{ color: '#10B981', background: '#10B98110', border: '1px solid #10B98130' }}>{sucesso}</p>
+          )}
 
-          {/* Formulário */}
           {operadores.length < 3 && (
             <div className="flex flex-col sm:flex-row gap-2 mb-4">
               <input
@@ -136,7 +150,8 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
                 placeholder="Nome"
                 value={novoNome}
                 onChange={e => setNovoNome(e.target.value)}
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                style={inputStyle}
               />
               <input
                 type="email"
@@ -144,12 +159,14 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
                 value={novoEmail}
                 onChange={e => setNovoEmail(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && adicionarOperador()}
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                style={inputStyle}
               />
               <button
                 onClick={adicionarOperador}
                 disabled={salvando}
-                className="flex items-center gap-2 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors whitespace-nowrap"
+                style={{ background: '#10B981', color: '#fff' }}
               >
                 {salvando ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
                 Adicionar
@@ -157,22 +174,23 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
             </div>
           )}
 
-          {/* Lista */}
           {carregando ? (
             <div className="flex justify-center py-4">
-              <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+              <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
             </div>
           ) : operadores.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-4">Nenhum operador cadastrado.</p>
+            <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>Nenhum operador cadastrado.</p>
           ) : (
-            <div className="divide-y divide-gray-100">
+            <div>
               {operadores.map(op => (
-                <div key={op.id} className="flex items-center justify-between py-2.5 gap-3">
+                <div key={op.id} className="flex items-center justify-between py-2.5 gap-3"
+                  style={{ borderBottom: '1px solid var(--border)' }}>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{op.nome}</p>
-                    <p className="text-xs text-gray-500 truncate">{op.email}</p>
+                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{op.nome}</p>
+                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{op.email}</p>
                     {op.senha_provisoria && (
-                      <span className="inline-block mt-0.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+                      <span className="inline-block mt-0.5 text-xs rounded px-2 py-0.5"
+                        style={{ color: '#F59E0B', background: '#F59E0B10', border: '1px solid #F59E0B30' }}>
                         Aguardando primeiro acesso
                       </span>
                     )}
@@ -182,7 +200,8 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
                       onClick={() => reenviarSenha(op.id)}
                       disabled={acaoId === op.id}
                       title="Reenviar senha"
-                      className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-40"
+                      className="p-2 rounded-lg transition-colors disabled:opacity-40"
+                      style={{ color: 'var(--text-muted)' }}
                     >
                       {acaoId === op.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                     </button>
@@ -190,7 +209,8 @@ export function GestaoOperadoresAdmin({ tenantId, tenantNome }: Props) {
                       onClick={() => removerOperador(op.id)}
                       disabled={acaoId === op.id}
                       title="Remover"
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40"
+                      className="p-2 rounded-lg transition-colors disabled:opacity-40"
+                      style={{ color: 'var(--text-muted)' }}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
