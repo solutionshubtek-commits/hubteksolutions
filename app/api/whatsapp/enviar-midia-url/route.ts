@@ -16,7 +16,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Variáveis de ambiente não configuradas' }, { status: 500 })
     }
 
-    // Extrai user_id do JWT
     const authHeader = request.headers.get('Authorization') ?? ''
     const token = authHeader.replace('Bearer ', '')
     const supabase = createClient(
@@ -34,6 +33,24 @@ export async function POST(request: NextRequest) {
         const { data: ud } = await supabase.from('users').select('nome').eq('id', user.id).single()
         operadorNome = ud?.nome ?? null
       }
+    }
+
+    // Verifica se a conversa está encerrada e reabre se necessário
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('id, status, contato_nome')
+      .eq('id', conversation_id)
+      .single()
+
+    const estaEncerrada = conv?.status === 'encerrada' || conv?.status === 'encerrado'
+    if (estaEncerrada) {
+      await supabase.from('conversations')
+        .update({
+          status: 'ativa',
+          agente_pausado: false,
+          ultima_mensagem_em: new Date().toISOString(),
+        })
+        .eq('id', conversation_id)
     }
 
     // 1. Envia via Evolution API
@@ -66,7 +83,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Erro ao enviar arquivo' }, { status: 500 })
     }
 
-    // 2. Salva no banco com sent_by_user_id
+    // 2. Salva no banco
     const { error: insertError } = await supabase.from('messages').insert({
       conversation_id,
       tenant_id,
@@ -82,30 +99,31 @@ export async function POST(request: NextRequest) {
       console.error('[enviar-midia-url] Erro ao salvar no banco:', insertError)
     }
 
-    await supabase.from('conversations')
-      .update({ ultima_mensagem_em: new Date().toISOString() })
-      .eq('id', conversation_id)
-
-    // 3. Registra log de ação
-    if (sent_by_user_id) {
-      const { data: conv } = await supabase
-        .from('conversations')
-        .select('contato_nome')
+    // 3. Atualiza ultima_mensagem_em (se não estava encerrada — evita duplo update)
+    if (!estaEncerrada) {
+      await supabase.from('conversations')
+        .update({ ultima_mensagem_em: new Date().toISOString() })
         .eq('id', conversation_id)
-        .single()
+    }
+
+    // 4. Registra log
+    if (sent_by_user_id) {
+      const contato = conv?.contato_nome ?? telefone
       const tipoLabel = tipo === 'audio' ? 'áudio' : tipo === 'imagem' ? 'imagem' : tipo === 'video' ? 'vídeo' : 'arquivo'
       await supabase.from('conversation_logs').insert({
         tenant_id,
         conversation_id,
         user_id: sent_by_user_id,
-        acao: 'enviou_midia',
-        descricao: `${operadorNome ?? 'Operador'} enviou ${tipoLabel} para ${conv?.contato_nome ?? telefone}`,
-        contato_nome: conv?.contato_nome ?? telefone,
+        acao: estaEncerrada ? 'reabriu_conversa' : 'enviou_midia',
+        descricao: estaEncerrada
+          ? `${operadorNome ?? 'Operador'} reabriu e enviou ${tipoLabel} para ${contato}`
+          : `${operadorNome ?? 'Operador'} enviou ${tipoLabel} para ${contato}`,
+        contato_nome: contato,
       })
     }
 
     console.log('[enviar-midia-url] Concluído com sucesso')
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, reaberta: estaEncerrada })
 
   } catch (err) {
     console.error('[enviar-midia-url] Erro interno:', err)
