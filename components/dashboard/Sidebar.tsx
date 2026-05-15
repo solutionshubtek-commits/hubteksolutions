@@ -76,21 +76,21 @@ export function Sidebar() {
     <aside className="fixed left-0 top-0 h-full w-60 flex flex-col z-40"
       style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}>
 
-      {/* Logo Hubtek */}
-      <div className="h-16 flex items-center px-5" style={{ borderBottom: '1px solid var(--border)' }}>
+      {/* Logo Hubtek — sem borda inferior */}
+      <div className="h-16 flex items-center px-5">
         <Image
           src="/logo-horizontal.png"
           alt="HUBTEK SOLUTIONS"
-          width={100}
-          height={20}
+          width={140}
+          height={28}
           priority
           style={{ filter: 'var(--logo-filter)' }}
         />
       </div>
 
-      {/* Avatar + nome da empresa */}
+      {/* Avatar + nome da empresa — sem borda superior, unificado com logo */}
       {nomeEmpresa && (
-        <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-3 px-4 pb-3">
           {avatarUrl ? (
             <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -107,6 +107,9 @@ export function Sidebar() {
           </span>
         </div>
       )}
+
+      {/* Linha divisória única antes do menu */}
+      <div style={{ borderBottom: '1px solid var(--border)' }} />
 
       {/* Label */}
       <div className="px-3 pt-3 pb-1">
