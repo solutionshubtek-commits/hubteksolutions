@@ -491,7 +491,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       style={{
         position: 'fixed',
         top: '64px',
-        left: '160px',
+        left: '240px',
         right: 0,
         bottom: 0,
         background: 'var(--bg-base)',
