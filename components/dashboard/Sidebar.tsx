@@ -81,8 +81,8 @@ export function Sidebar() {
         <Image
           src="/logo-horizontal.png"
           alt="HUBTEK SOLUTIONS"
-          width={140}
-          height={28}
+          width={160}
+          height={32}
           priority
           style={{ filter: 'var(--logo-filter)' }}
         />
@@ -107,9 +107,6 @@ export function Sidebar() {
           </span>
         </div>
       )}
-
-      {/* Linha divisória única antes do menu */}
-      <div style={{ borderBottom: '1px solid var(--border)' }} />
 
       {/* Label */}
       <div className="px-3 pt-3 pb-1">
