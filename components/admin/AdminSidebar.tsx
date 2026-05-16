@@ -67,8 +67,6 @@ export function AdminSidebar() {
   priority
   style={{ filter: 'var(--logo-filter)' }}
 />
-        <span className="text-[#10B981] text-xs font-semibold bg-[#10B981]/10 px-2 py-1 rounded-md">Admin</span>
-      </div>
 
       <div className="px-4 pt-4 pb-1">
         <span className="text-[10px] font-semibold tracking-widest uppercase" style={{ color: 'var(--text-label)' }}>
