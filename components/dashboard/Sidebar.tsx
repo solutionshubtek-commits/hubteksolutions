@@ -4,10 +4,11 @@ import { usePathname } from 'next/navigation'
 import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight, RefreshCw } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight, RefreshCw, X } from 'lucide-react'
+import { useSidebar } from '@/contexts/SidebarContext'
 
 const WHATSAPP_SUPORTE = 'https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+de+suporte+HubTek'
-const ROLES_PLANO = ['admin_hubtek', 'admin_tenant', 'self_managed']
+const ROLES_PLANO  = ['admin_hubtek', 'admin_tenant', 'self_managed']
 const ROLES_CONFIG = ['admin_hubtek', 'admin_tenant', 'self_managed']
 
 const ITEMS_BASE = [
@@ -23,9 +24,10 @@ function getInitials(name: string) {
 
 export function Sidebar() {
   const pathname = usePathname()
-  const [role, setRole] = useState<string | null>(null)
+  const { open, setOpen } = useSidebar()
+  const [role, setRole]               = useState<string | null>(null)
   const [nomeEmpresa, setNomeEmpresa] = useState<string>('')
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
+  const [avatarUrl, setAvatarUrl]     = useState<string | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
@@ -49,13 +51,17 @@ export function Sidebar() {
     })
   }, [])
 
-  const mostrarPlano = role !== null && ROLES_PLANO.includes(role)
+  // Fecha drawer ao navegar
+  useEffect(() => { setOpen(false) }, [pathname, setOpen])
+
+  const mostrarPlano  = role !== null && ROLES_PLANO.includes(role)
   const mostrarConfig = role !== null && ROLES_CONFIG.includes(role)
 
   function NavLink({ href, label, icon: Icon }: { href: string; label: string; icon: React.ElementType }) {
     const active = pathname === href || pathname.startsWith(href + '/')
     return (
-      <Link href={href}
+      <Link
+        href={href}
         className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 border-l-2"
         style={{
           background:  active ? 'rgba(16,185,129,0.05)' : 'transparent',
@@ -72,12 +78,13 @@ export function Sidebar() {
     )
   }
 
-  return (
-    <aside className="fixed left-0 top-0 h-full w-60 flex flex-col z-40"
-      style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}>
-
-      {/* Logo Hubtek — sem borda inferior */}
-      <div className="h-16 flex items-center px-5">
+  const sidebarContent = (
+    <aside
+      className="flex flex-col h-full w-60"
+      style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
+    >
+      {/* Logo + fechar (mobile) */}
+      <div className="h-16 flex items-center justify-between px-5">
         <Image
           src="/logo-horizontal.png"
           alt="HUBTEK SOLUTIONS"
@@ -86,9 +93,18 @@ export function Sidebar() {
           priority
           style={{ filter: 'var(--logo-filter)' }}
         />
+        {/* Botão fechar — só aparece quando é drawer mobile */}
+        <button
+          onClick={() => setOpen(false)}
+          className="md:hidden p-1 rounded-lg"
+          style={{ color: 'var(--text-muted)' }}
+          aria-label="Fechar menu"
+        >
+          <X size={18} />
+        </button>
       </div>
 
-      {/* Avatar + nome da empresa — sem borda superior, unificado com logo */}
+      {/* Avatar + nome empresa */}
       {nomeEmpresa && (
         <div className="flex items-center gap-3 px-4 pb-3">
           {avatarUrl ? (
@@ -117,14 +133,8 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
         {ITEMS_BASE.map(item => <NavLink key={item.href} {...item} />)}
-
-        {mostrarConfig && (
-          <NavLink href="/configuracoes" label="Configurações" icon={Settings} />
-        )}
-
-        {mostrarPlano && (
-          <NavLink href="/renovar-plano" label="Renovar Plano" icon={RefreshCw} />
-        )}
+        {mostrarConfig && <NavLink href="/configuracoes"  label="Configurações" icon={Settings}   />}
+        {mostrarPlano  && <NavLink href="/renovar-plano"  label="Renovar Plano" icon={RefreshCw}  />}
       </nav>
 
       {/* Suporte */}
@@ -141,5 +151,29 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+  )
+
+  return (
+    <>
+      {/* Desktop: sidebar fixa */}
+      <div className="hidden md:fixed md:flex md:left-0 md:top-0 md:h-full md:w-60 md:z-40">
+        {sidebarContent}
+      </div>
+
+      {/* Mobile: drawer + overlay */}
+      {open && (
+        <>
+          {/* Overlay */}
+          <div
+            className="fixed inset-0 z-40 bg-black/50 md:hidden"
+            onClick={() => setOpen(false)}
+          />
+          {/* Drawer */}
+          <div className="fixed left-0 top-0 h-full z-50 md:hidden" style={{ width: 240 }}>
+            {sidebarContent}
+          </div>
+        </>
+      )}
+    </>
   )
 }
