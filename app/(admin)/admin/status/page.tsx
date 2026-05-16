@@ -109,7 +109,7 @@ async function verificarRedis(): Promise<Omit<ServicoStatus, 'nome' | 'descricao
       latencia,
       detalhe: `Ping OK · ${latencia}ms`,
     }
-  } catch (e) {
+} catch {
     return { status: 'degradado', latencia: null, detalhe: 'Rate limit inativo (sistema continua funcionando)' }
   }
 }
