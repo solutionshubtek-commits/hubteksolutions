@@ -44,11 +44,11 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const [gravando, setGravando] = useState(false)
   const [tempoGravacao, setTempoGravacao] = useState(0)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const chunksRef        = useRef<Blob[]>([])
+  const timerRef         = useRef<NodeJS.Timeout | null>(null)
 
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const bottomRef   = useRef<HTMLDivElement>(null)
+  const inputRef    = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -58,9 +58,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const resolverNomesOperadores = useCallback(async (msgs: Mensagem[]) => {
     const supabase = createClient()
     const idsNovos = Array.from(new Set(
-      msgs
-        .filter(m => m.sent_by_user_id && !operadoresNome[m.sent_by_user_id])
-        .map(m => m.sent_by_user_id as string)
+      msgs.filter(m => m.sent_by_user_id && !operadoresNome[m.sent_by_user_id]).map(m => m.sent_by_user_id as string)
     ))
     if (idsNovos.length === 0) return
     const { data } = await supabase.from('users').select('id, nome').in('id', idsNovos)
@@ -85,15 +83,13 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       const { data: conv } = await supabase
         .from('conversations')
         .select('id, contato_nome, contato_telefone, status, agente_pausado, instance_name, tenant_id')
-        .eq('id', params.id)
-        .single()
+        .eq('id', params.id).single()
       if (!conv) { router.push('/conversas'); return }
       setConversa(conv)
       const { data: msgs } = await supabase
         .from('messages')
         .select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me, sent_by_user_id')
-        .eq('conversation_id', params.id)
-        .order('criado_em', { ascending: true })
+        .eq('conversation_id', params.id).order('criado_em', { ascending: true })
       const lista = msgs || []
       setMensagens(lista)
       setCarregando(false)
@@ -112,34 +108,19 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     function subscribe() {
       msgChannel = supabase
         .channel(`conv-messages-${params.id}-${Date.now()}`)
-        .on('postgres_changes', {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `conversation_id=eq.${params.id}`,
-        }, async (payload) => {
-          const nova = payload.new as Mensagem
-          setMensagens(prev => {
-            if (prev.find(m => m.id === nova.id)) return prev
-            return [...prev, nova]
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${params.id}` },
+          async (payload) => {
+            const nova = payload.new as Mensagem
+            setMensagens(prev => { if (prev.find(m => m.id === nova.id)) return prev; return [...prev, nova] })
+            setTimeout(() => scrollToBottom('smooth'), 50)
+            await resolverNomesOperadores([nova])
           })
-          setTimeout(() => scrollToBottom('smooth'), 50)
-          await resolverNomesOperadores([nova])
-        })
-        .subscribe((status) => {
-          if (status === 'CHANNEL_ERROR') setTimeout(subscribe, 3000)
-        })
+        .subscribe((status) => { if (status === 'CHANNEL_ERROR') setTimeout(subscribe, 3000) })
 
       convChannel = supabase
         .channel(`conv-status-${params.id}-${Date.now()}`)
-        .on('postgres_changes', {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'conversations',
-          filter: `id=eq.${params.id}`,
-        }, (payload) => {
-          setConversa(prev => prev ? { ...prev, ...payload.new } : prev)
-        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversations', filter: `id=eq.${params.id}` },
+          (payload) => { setConversa(prev => prev ? { ...prev, ...payload.new } : prev) })
         .subscribe()
     }
 
@@ -147,10 +128,8 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
     const polling = setInterval(async () => {
       const { data } = await supabase
-        .from('messages')
-        .select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me, sent_by_user_id')
-        .eq('conversation_id', params.id)
-        .order('criado_em', { ascending: true })
+        .from('messages').select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me, sent_by_user_id')
+        .eq('conversation_id', params.id).order('criado_em', { ascending: true })
       if (data) {
         setMensagens(prev => {
           const idsExistentes = new Set(prev.map(m => m.id))
@@ -163,25 +142,16 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       }
     }, 3000)
 
-    return () => {
-      supabase.removeChannel(msgChannel)
-      supabase.removeChannel(convChannel)
-      clearInterval(polling)
-    }
+    return () => { supabase.removeChannel(msgChannel); supabase.removeChannel(convChannel); clearInterval(polling) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id, scrollToBottom])
 
-  useEffect(() => {
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [])
+  useEffect(() => { return () => { if (timerRef.current) clearInterval(timerRef.current) } }, [])
 
   function labelOperador(msg: Mensagem): string {
     if (msg.sent_by_user_id) {
       const nome = operadoresNome[msg.sent_by_user_id]
-      if (nome) {
-        if (msg.sent_by_user_id === currentUserId) return 'Você (operador)'
-        return `${nome} (operador)`
-      }
+      if (nome) return msg.sent_by_user_id === currentUserId ? 'Você (operador)' : `${nome} (operador)`
     }
     return 'Você (operador)'
   }
@@ -191,34 +161,21 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     setPausando(true)
     const supabase = createClient()
     const novoPausado = !conversa.agente_pausado
-
     if (conversa.status === 'encerrada' || conversa.status === 'encerrado') {
-      await supabase.from('conversations').update({
-        status: 'ativa',
-        agente_pausado: novoPausado,
-        pausado_em: novoPausado ? new Date().toISOString() : null,
-      }).eq('id', conversa.id)
+      await supabase.from('conversations').update({ status: 'ativa', agente_pausado: novoPausado, pausado_em: novoPausado ? new Date().toISOString() : null }).eq('id', conversa.id)
       setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: novoPausado } : prev)
     } else {
-      await supabase.from('conversations').update({
-        agente_pausado: novoPausado,
-        pausado_em: novoPausado ? new Date().toISOString() : null,
-      }).eq('id', conversa.id)
+      await supabase.from('conversations').update({ agente_pausado: novoPausado, pausado_em: novoPausado ? new Date().toISOString() : null }).eq('id', conversa.id)
       setConversa(prev => prev ? { ...prev, agente_pausado: novoPausado } : prev)
     }
-
     await fetch('/api/conversas/registrar-log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        conversation_id: conversa.id,
-        tenant_id: conversa.tenant_id,
+        conversation_id: conversa.id, tenant_id: conversa.tenant_id,
         acao: novoPausado ? 'pausou_ia' : 'retomou_ia',
-        contato_nome: conversa.contato_nome || conversa.contato_telefone,
-        operador_nome: currentUserNome,
+        contato_nome: conversa.contato_nome || conversa.contato_telefone, operador_nome: currentUserNome,
       }),
     })
-
     setPausando(false)
     if (novoPausado) setTimeout(() => inputRef.current?.focus(), 100)
   }
@@ -229,34 +186,26 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       const reader = new FileReader()
       reader.onload = (e) => setArquivoPreview(e.target?.result as string)
       reader.readAsDataURL(file)
-    } else {
-      setArquivoPreview(null)
-    }
+    } else { setArquivoPreview(null) }
     setTimeout(() => inputRef.current?.focus(), 100)
   }
 
   function limparArquivo() {
-    setArquivo(null)
-    setArquivoPreview(null)
+    setArquivo(null); setArquivoPreview(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (file) selecionarArquivo(file)
+    const file = e.target.files?.[0]; if (file) selecionarArquivo(file)
   }
 
   function handlePaste(e: React.ClipboardEvent) {
-    const items = e.clipboardData?.items
-    if (!items) return
+    const items = e.clipboardData?.items; if (!items) return
     for (const item of Array.from(items)) {
       if (item.type.startsWith('image/')) {
         e.preventDefault()
         const file = item.getAsFile()
-        if (file) {
-          const named = new File([file], `imagem_${Date.now()}.png`, { type: file.type })
-          selecionarArquivo(named)
-        }
+        if (file) { selecionarArquivo(new File([file], `imagem_${Date.now()}.png`, { type: file.type })) }
         break
       }
     }
@@ -266,37 +215,27 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     if (arquivo) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-        ? 'audio/ogg;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm'
+      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
       const recorder = new MediaRecorder(stream, { mimeType })
       chunksRef.current = []
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       recorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop())
         const blob = new Blob(chunksRef.current, { type: mimeType })
-        const file = new File([blob], `audio_${Date.now()}.ogg`, { type: mimeType })
-        selecionarArquivo(file)
-        setGravando(false)
-        setTempoGravacao(0)
+        selecionarArquivo(new File([blob], `audio_${Date.now()}.ogg`, { type: mimeType }))
+        setGravando(false); setTempoGravacao(0)
         if (timerRef.current) clearInterval(timerRef.current)
       }
       recorder.start(100)
       mediaRecorderRef.current = recorder
-      setGravando(true)
-      setTempoGravacao(0)
+      setGravando(true); setTempoGravacao(0)
       timerRef.current = setInterval(() => setTempoGravacao(prev => prev + 1), 1000)
-    } catch {
-      alert('Não foi possível acessar o microfone.')
-    }
+    } catch { alert('Não foi possível acessar o microfone.') }
   }
 
   function pararGravacao() {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop()
-    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop()
     if (timerRef.current) clearInterval(timerRef.current)
   }
 
@@ -308,15 +247,11 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       mediaRecorderRef.current.stream?.getTracks().forEach(t => t.stop())
     }
     if (timerRef.current) clearInterval(timerRef.current)
-    chunksRef.current = []
-    setGravando(false)
-    setTempoGravacao(0)
+    chunksRef.current = []; setGravando(false); setTempoGravacao(0)
   }
 
   function formatarTempoGravacao(segundos: number) {
-    const m = Math.floor(segundos / 60).toString().padStart(2, '0')
-    const s = (segundos % 60).toString().padStart(2, '0')
-    return `${m}:${s}`
+    return `${Math.floor(segundos / 60).toString().padStart(2, '0')}:${(segundos % 60).toString().padStart(2, '0')}`
   }
 
   async function getAuthHeader(): Promise<Record<string, string>> {
@@ -330,103 +265,54 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     if (!conversa) return
     const authHeaders = await getAuthHeader()
     await fetch('/api/whatsapp/enviar-mensagem', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders },
-      body: JSON.stringify({
-        conversation_id: conversa.id,
-        tenant_id: conversa.tenant_id,
-        instance_name: conversa.instance_name,
-        telefone: conversa.contato_telefone,
-        mensagem: msg,
-      }),
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ conversation_id: conversa.id, tenant_id: conversa.tenant_id, instance_name: conversa.instance_name, telefone: conversa.contato_telefone, mensagem: msg }),
     })
   }
 
   async function handleEnviar() {
     if (enviando || uploadando || !conversa) return
-    const temTexto = texto.trim().length > 0
+    const temTexto   = texto.trim().length > 0
     const temArquivo = !!arquivo
     if (!temTexto && !temArquivo) return
     setEnviando(true)
     try {
       const authHeaders = await getAuthHeader()
       if (temTexto && !temArquivo) {
-        const msg = texto.trim()
-        setTexto('')
+        const msg = texto.trim(); setTexto('')
         const res = await fetch('/api/whatsapp/enviar-mensagem', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders },
-          body: JSON.stringify({
-            conversation_id: conversa.id,
-            tenant_id: conversa.tenant_id,
-            instance_name: conversa.instance_name,
-            telefone: conversa.contato_telefone,
-            mensagem: msg,
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({ conversation_id: conversa.id, tenant_id: conversa.tenant_id, instance_name: conversa.instance_name, telefone: conversa.contato_telefone, mensagem: msg }),
         })
         if (!res.ok) setTexto(msg)
-        if (res.ok) {
-          const json = await res.json()
-          if (json.reaberta) setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: false } : prev)
-        }
+        if (res.ok) { const json = await res.json(); if (json.reaberta) setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: false } : prev) }
       }
       if (temArquivo) {
         setUploadando(true)
-        const caption = temTexto ? texto.trim() : ''
-        setTexto('')
+        const caption = temTexto ? texto.trim() : ''; setTexto('')
         const supabase = createClient()
         const ext = arquivo!.name.split('.').pop() ?? 'bin'
-        const safeName = `${Date.now()}.${ext}`
-        const path = `${conversa.tenant_id}/${safeName}`
-        const { error: uploadError } = await supabase.storage
-          .from('mensagens-midia')
-          .upload(path, arquivo!, { contentType: arquivo!.type })
-        if (uploadError) {
-          console.error('[page] Erro upload Supabase:', uploadError)
-          setUploadando(false)
-          setEnviando(false)
-          return
-        }
+        const path = `${conversa.tenant_id}/${Date.now()}.${ext}`
+        const { error: uploadError } = await supabase.storage.from('mensagens-midia').upload(path, arquivo!, { contentType: arquivo!.type })
+        if (uploadError) { console.error('[page] Erro upload:', uploadError); setUploadando(false); setEnviando(false); return }
         const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
-        const publicUrl = urlData.publicUrl
         const isAudio = arquivo!.type.startsWith('audio/')
         const isVideo = arquivo!.type.startsWith('video/')
         const isImage = arquivo!.type.startsWith('image/')
         const tipo = isAudio ? 'audio' : isVideo ? 'video' : isImage ? 'imagem' : 'documento'
         const res = await fetch('/api/whatsapp/enviar-midia-url', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders },
-          body: JSON.stringify({
-            conversation_id: conversa.id,
-            tenant_id: conversa.tenant_id,
-            instance_name: conversa.instance_name,
-            telefone: conversa.contato_telefone,
-            arquivo_url: publicUrl,
-            tipo,
-            nome: arquivo!.name,
-            caption: isAudio ? undefined : (caption || undefined),
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({ conversation_id: conversa.id, tenant_id: conversa.tenant_id, instance_name: conversa.instance_name, telefone: conversa.contato_telefone, arquivo_url: urlData.publicUrl, tipo, nome: arquivo!.name, caption: isAudio ? undefined : (caption || undefined) }),
         })
-        if (res.ok) {
-          const json = await res.json()
-          if (json.reaberta) setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: false } : prev)
-        }
+        if (res.ok) { const json = await res.json(); if (json.reaberta) setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: false } : prev) }
         if (isAudio && caption) await enviarMensagemTexto(caption)
-        setUploadando(false)
-        limparArquivo()
-        if (!res.ok) console.error('Erro ao enviar arquivo')
+        setUploadando(false); limparArquivo()
       }
-    } finally {
-      setEnviando(false)
-      inputRef.current?.focus()
-    }
+    } finally { setEnviando(false); inputRef.current?.focus() }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleEnviar()
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEnviar() }
   }
 
   function formatarHora(iso: string) {
@@ -441,31 +327,25 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   function renderConteudoMensagem(msg: Mensagem) {
     if (!msg.arquivo_url) return <span>{msg.conteudo}</span>
     const tipo = msg.tipo?.toLowerCase() ?? ''
-    if (tipo === 'imagem') {
-      return (
-        <div className="flex flex-col gap-1">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={msg.arquivo_url} alt="imagem" className="rounded-lg max-w-[200px] max-h-[200px] object-cover" />
-          {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
-        </div>
-      )
-    }
-    if (tipo === 'video') {
-      return (
-        <div className="flex flex-col gap-1">
-          <video controls src={msg.arquivo_url} className="rounded-lg max-w-[240px] max-h-[160px]" />
-          {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
-        </div>
-      )
-    }
-    if (tipo === 'audio') {
-      return (
-        <div className="flex flex-col gap-1">
-          <audio controls src={msg.arquivo_url} className="max-w-[240px]" />
-          {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
-        </div>
-      )
-    }
+    if (tipo === 'imagem') return (
+      <div className="flex flex-col gap-1">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={msg.arquivo_url} alt="imagem" className="rounded-lg max-w-[200px] max-h-[200px] object-cover" />
+        {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
+      </div>
+    )
+    if (tipo === 'video') return (
+      <div className="flex flex-col gap-1">
+        <video controls src={msg.arquivo_url} className="rounded-lg max-w-[240px] max-h-[160px]" />
+        {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
+      </div>
+    )
+    if (tipo === 'audio') return (
+      <div className="flex flex-col gap-1">
+        <audio controls src={msg.arquivo_url} className="max-w-[240px]" />
+        {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
+      </div>
+    )
     return (
       <a href={msg.arquivo_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-400 text-xs">
         📎 {msg.conteudo || 'Arquivo anexado'}
@@ -475,7 +355,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
   if (carregando) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+      <div className="flex items-center justify-center" style={{ height: 'calc(100vh - 64px)' }}>
         <div className="w-6 h-6 border-2 border-[#10B981] border-t-transparent rounded-full animate-spin" />
       </div>
     )
@@ -486,105 +366,80 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const estaEncerrada = conversa.status === 'encerrada' || conversa.status === 'encerrado'
 
   return (
-    <div
-      className="flex flex-col overflow-hidden"
-      style={{
-        position: 'fixed',
-        top: '64px',
-        left: '240px',
-        right: 0,
-        bottom: 0,
-        background: 'var(--bg-base)',
-      }}
-    >
-      {/* Header */}
-      <div
-        className="flex items-center gap-3 px-4 py-3 flex-shrink-0"
-        style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}
-      >
-        <button
-          onClick={() => router.push('/conversas')}
+    /* Ocupa o espaço disponível abaixo do header — sem position fixed */
+    <div className="flex flex-col" style={{ height: 'calc(100vh - 64px)', background: 'var(--bg-base)' }}>
+
+      {/* Header da conversa */}
+      <div className="flex items-center gap-2 md:gap-3 px-3 md:px-4 py-3 flex-shrink-0"
+        style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+        <button onClick={() => router.push('/conversas')}
           className="p-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)]"
-          style={{ color: 'var(--text-muted)' }}
-        >
+          style={{ color: 'var(--text-muted)' }}>
           <ArrowLeft size={18} />
         </button>
-        <div
-          className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0"
-          style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981' }}
-        >
+        <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0"
+          style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981' }}>
           {iniciais(conversa.contato_nome)}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
             {conversa.contato_nome || conversa.contato_telefone}
           </p>
-          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{conversa.contato_telefone}</p>
+          <p className="text-xs hidden sm:block" style={{ color: 'var(--text-muted)' }}>{conversa.contato_telefone}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
           {estaEncerrada ? (
-            <span
-              className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-              style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-            >
+            <span className="flex items-center gap-1.5 text-xs font-medium px-2 md:px-2.5 py-1 rounded-full"
+              style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
               Encerrada
             </span>
           ) : conversa.agente_pausado ? (
-            <span
-              className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}
-            >
+            <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
               <Headphones size={11} /> Operador
             </span>
           ) : (
-            <span
-              className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-              style={{ background: '#10B98118', color: '#10B981', border: '1px solid #10B98130' }}
-            >
+            <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+              style={{ background: '#10B98118', color: '#10B981', border: '1px solid #10B98130' }}>
               <Bot size={11} /> Agente IA
             </span>
           )}
-          <button
-            onClick={handlePausarRetomar}
-            disabled={pausando}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+          <button onClick={handlePausarRetomar} disabled={pausando}
+            className="flex items-center gap-1 md:gap-1.5 text-xs font-semibold px-2 md:px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
             style={conversa.agente_pausado
               ? { background: '#10B98118', color: '#10B981', border: '1px solid #10B98130' }
               : { background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }
-            }
-          >
-            {conversa.agente_pausado ? <><Play size={11} /> Retomar IA</> : <><Pause size={11} /> Pausar IA</>}
+            }>
+            {conversa.agente_pausado
+              ? <><Play size={11} /> <span className="hidden sm:inline">Retomar</span> IA</>
+              : <><Pause size={11} /> <span className="hidden sm:inline">Pausar</span> IA</>}
           </button>
         </div>
       </div>
 
       {/* Mensagens */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 md:px-4 py-4 space-y-2">
         {mensagens.map((msg, i) => {
-          const isCliente = msg.origem === 'cliente'
-          const isAgente = msg.origem === 'agente'
+          const isCliente    = msg.origem === 'cliente'
+          const isAgente     = msg.origem === 'agente'
           const isOperadorWeb = msg.origem === 'operador' && !!msg.from_me
-          const isOperador = msg.origem === 'operador' && !msg.from_me
-          const showDate = i === 0 || new Date(msg.criado_em).toDateString() !== new Date(mensagens[i - 1].criado_em).toDateString()
+          const isOperador   = msg.origem === 'operador' && !msg.from_me
+          const showDate     = i === 0 || new Date(msg.criado_em).toDateString() !== new Date(mensagens[i - 1].criado_em).toDateString()
 
           return (
             <div key={msg.id}>
               {showDate && (
                 <div className="flex justify-center my-3">
-                  <span
-                    className="text-[11px] px-3 py-1 rounded-full"
-                    style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-                  >
+                  <span className="text-[11px] px-3 py-1 rounded-full"
+                    style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
                     {new Date(msg.criado_em).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
                   </span>
                 </div>
               )}
               <div className={`flex ${isCliente ? 'justify-start' : 'justify-end'}`}>
-                <div className={`max-w-[75%] flex flex-col gap-0.5 ${isCliente ? '' : 'items-end'}`}>
+                <div className={`max-w-[85%] md:max-w-[75%] flex flex-col gap-0.5 ${isCliente ? '' : 'items-end'}`}>
                   {isOperador && (
-                    <span className="text-[10px] px-1" style={{ color: '#818CF8' }}>
-                      {labelOperador(msg)}
-                    </span>
+                    <span className="text-[10px] px-1" style={{ color: '#818CF8' }}>{labelOperador(msg)}</span>
                   )}
                   {isOperadorWeb && (
                     <span className="text-[10px] px-1 flex items-center gap-1 justify-end" style={{ color: '#818CF8' }}>
@@ -595,8 +450,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                       WhatsApp Web
                     </span>
                   )}
-                  <div
-                    className="px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
+                  <div className="px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap"
                     style={isCliente
                       ? { background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderBottomLeftRadius: 4 }
                       : isOperadorWeb
@@ -604,8 +458,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                       : isOperador
                       ? { background: '#6366F118', color: 'var(--text-primary)', border: '1px solid #6366F130', borderBottomRightRadius: 4 }
                       : { background: '#10B98118', color: 'var(--text-primary)', border: '1px solid #10B98130', borderBottomRightRadius: 4 }
-                    }
-                  >
+                    }>
                     {renderConteudoMensagem(msg)}
                   </div>
                   <span className="text-[10px] px-1" style={{ color: 'var(--text-muted)' }}>
@@ -623,30 +476,21 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       </div>
 
       {/* Footer */}
-      <div
-        className="flex-shrink-0 px-4 py-3"
-        style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}
-      >
+      <div className="flex-shrink-0 px-3 md:px-4 py-3"
+        style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
         {estaEncerrada && (
-          <div
-            className="mb-2 px-3 py-1.5 rounded-lg text-xs text-center"
-            style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-          >
+          <div className="mb-2 px-3 py-1.5 rounded-lg text-xs text-center"
+            style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
             Conversa encerrada — envie uma mensagem para reabri-la
           </div>
         )}
 
         {!conversa.agente_pausado && !estaEncerrada ? (
           <div className="flex items-center justify-center gap-2 py-1">
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              Pause o agente para responder manualmente
-            </p>
-            <button
-              onClick={handlePausarRetomar}
-              disabled={pausando}
-              className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors"
-              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}
-            >
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Pause o agente para responder</p>
+            <button onClick={handlePausarRetomar} disabled={pausando}
+              className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg"
+              style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
               <Pause size={10} /> Pausar
             </button>
           </div>
@@ -658,11 +502,9 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
                   <div className="relative">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={arquivoPreview} alt="preview" className="max-h-32 w-full object-contain" />
-                    <button
-                      onClick={limparArquivo}
+                    <button onClick={limparArquivo}
                       className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
-                      style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
-                    >
+                      style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}>
                       <X size={11} />
                     </button>
                   </div>
@@ -692,72 +534,37 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
             <div className="flex items-end gap-2">
               {!gravando && (
                 <>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
+                  <button onClick={() => fileInputRef.current?.click()}
                     className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors hover:bg-[var(--bg-hover)]"
-                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-                  >
+                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
                     <Paperclip size={15} />
                   </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
+                  <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx" onChange={handleFileChange} className="hidden" />
                 </>
               )}
               {!gravando && (
-                <textarea
-                  ref={inputRef}
-                  value={texto}
-                  onChange={(e) => setTexto(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
-                  placeholder={
-                    arquivo
-                      ? 'Adicione uma legenda (opcional)...'
-                      : estaEncerrada
-                      ? 'Envie uma mensagem para reabrir a conversa...'
-                      : 'Digite uma mensagem... (Enter para enviar)'
-                  }
+                <textarea ref={inputRef} value={texto} onChange={(e) => setTexto(e.target.value)}
+                  onKeyDown={handleKeyDown} onPaste={handlePaste}
+                  placeholder={arquivo ? 'Legenda (opcional)...' : estaEncerrada ? 'Envie para reabrir...' : 'Digite... (Enter envia)'}
                   rows={1}
                   className="flex-1 rounded-2xl px-4 py-2.5 text-sm focus:outline-none resize-none"
-                  style={{
-                    background: 'var(--bg-surface-2)',
-                    border: '1px solid var(--border)',
-                    color: 'var(--text-primary)',
-                    maxHeight: 120,
-                    overflowY: 'auto',
-                  }}
-                />
+                  style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)', maxHeight: 120, overflowY: 'auto' }} />
               )}
               {gravando && <div className="flex-1" />}
               {!arquivo && !texto.trim() && (
-                <button
-                  onClick={gravando ? pararGravacao : iniciarGravacao}
-                  disabled={enviando || uploadando}
+                <button onClick={gravando ? pararGravacao : iniciarGravacao} disabled={enviando || uploadando}
                   className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
-                  style={gravando
-                    ? { background: '#EF4444', color: '#fff' }
-                    : { color: 'var(--text-muted)', border: '1px solid var(--border)' }
-                  }
-                >
+                  style={gravando ? { background: '#EF4444', color: '#fff' } : { color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
                   {gravando ? <Square size={14} /> : <Mic size={15} />}
                 </button>
               )}
               {(texto.trim() || arquivo) && !gravando && (
-                <button
-                  onClick={handleEnviar}
-                  disabled={enviando || uploadando}
+                <button onClick={handleEnviar} disabled={enviando || uploadando}
                   className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
-                  style={{ background: '#10B981', color: '#fff' }}
-                >
+                  style={{ background: '#10B981', color: '#fff' }}>
                   {enviando || uploadando
                     ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    : <Send size={15} />
-                  }
+                    : <Send size={15} />}
                 </button>
               )}
             </div>
