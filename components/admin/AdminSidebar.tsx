@@ -62,8 +62,8 @@ export function AdminSidebar() {
         <Image
   src="/logo-horizontal.png"
   alt="HUBTEK SOLUTIONS"
-  width={100}
-  height={20}
+  width={160}
+  height={32}
   priority
   style={{ filter: 'var(--logo-filter)' }}
 />
