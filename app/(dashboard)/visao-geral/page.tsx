@@ -113,14 +113,14 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   label: string; valor: number; d: number | null; icon: React.ElementType; cor: string; alt?: boolean
 }) {
   return (
-    <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: `1px solid ${alt ? 'rgba(245,158,11,0.2)' : 'var(--border)'}` }}>
+    <div className="rounded-xl p-4 md:p-5" style={{ background: 'var(--bg-surface)', border: `1px solid ${alt ? 'rgba(245,158,11,0.2)' : 'var(--border)'}` }}>
       <div className="flex items-center justify-between mb-3">
-        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</p>
+        <p className="text-xs md:text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</p>
         <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${cor}18` }}>
           <Icon size={16} color={cor} />
         </div>
       </div>
-      <p className="text-3xl font-bold mb-2" style={{ color: alt ? '#F59E0B' : 'var(--text-primary)' }}>
+      <p className="text-2xl md:text-3xl font-bold mb-2" style={{ color: alt ? '#F59E0B' : 'var(--text-primary)' }}>
         {valor.toLocaleString('pt-BR')}
       </p>
       {d != null ? (
@@ -148,21 +148,21 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
 
   return (
     <div>
-      <div className="flex items-center gap-8 mb-4">
+      <div className="flex items-center gap-4 md:gap-8 mb-4 flex-wrap">
         <div>
-          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Total no período</p>
-          <p className="text-lg font-bold text-[#10B981]">{total.toLocaleString('pt-BR')}</p>
+          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Total</p>
+          <p className="text-base md:text-lg font-bold text-[#10B981]">{total.toLocaleString('pt-BR')}</p>
         </div>
         <div>
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Média diária</p>
-          <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{media}</p>
+          <p className="text-base md:text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{media}</p>
         </div>
         <div>
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Pico</p>
-          <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
+          <p className="text-base md:text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
         </div>
       </div>
-      <div className="flex items-end gap-0.5 h-36">
+      <div className="flex items-end gap-0.5 h-28 md:h-36">
         {dados.map((d, i) => {
           const pct = (d.total / max) * 100
           const opacity = 0.4 + (0.6 * (i / dados.length))
@@ -188,7 +188,6 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
   )
 }
 
-// Mapeia ação do log para cor e texto resumido
 function logParaAtividade(log: { id: string; acao: string; descricao: string; criado_em: string }): AtividadeItem {
   const corMap: Record<string, string> = {
     pausou_ia:       '#F59E0B',
@@ -224,9 +223,7 @@ export default function VisaoGeralPage() {
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
-        setShowExportModal(false)
-      }
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExportModal(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -240,14 +237,14 @@ export default function VisaoGeralPage() {
     if (!userData?.tenant_id) return
     setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
     const agora = new Date()
-    const tid = userData.tenant_id
-    const hojeInicio = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
-    const ontemInicio = new Date(hojeInicio); ontemInicio.setDate(ontemInicio.getDate() - 1)
-    const semanaInicio = new Date(agora); semanaInicio.setDate(semanaInicio.getDate() - 7)
+    const tid   = userData.tenant_id
+    const hojeInicio    = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
+    const ontemInicio   = new Date(hojeInicio); ontemInicio.setDate(ontemInicio.getDate() - 1)
+    const semanaInicio  = new Date(agora); semanaInicio.setDate(semanaInicio.getDate() - 7)
     const semanaAntInicio = new Date(agora); semanaAntInicio.setDate(semanaAntInicio.getDate() - 14)
-    const mesInicio = new Date(agora.getFullYear(), agora.getMonth(), 1)
-    const mesAntInicio = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
-    const mesAntFim = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
+    const mesInicio     = new Date(agora.getFullYear(), agora.getMonth(), 1)
+    const mesAntInicio  = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
+    const mesAntFim     = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
 
     const [hojeRes, ontemRes, semRes, semAntRes, mesRes, mesAntRes, pausadasRes, pausadasAntRes, convRes, bandasRes] =
       await Promise.all([
@@ -264,14 +261,10 @@ export default function VisaoGeralPage() {
       ])
 
     setMetrics({
-      conversasHoje: hojeRes.count ?? 0,
-      conversasHojeAnterior: ontemRes.count ?? 0,
-      conversasSemana: semRes.count ?? 0,
-      conversasSemanaAnterior: semAntRes.count ?? 0,
-      conversasMes: mesRes.count ?? 0,
-      conversasMesAnterior: mesAntRes.count ?? 0,
-      pausadas: pausadasRes.count ?? 0,
-      pausadasAnterior: pausadasAntRes.count ?? 0,
+      conversasHoje: hojeRes.count ?? 0, conversasHojeAnterior: ontemRes.count ?? 0,
+      conversasSemana: semRes.count ?? 0, conversasSemanaAnterior: semAntRes.count ?? 0,
+      conversasMes: mesRes.count ?? 0, conversasMesAnterior: mesAntRes.count ?? 0,
+      pausadas: pausadasRes.count ?? 0, pausadasAnterior: pausadasAntRes.count ?? 0,
     })
     setInstanciasBanidas((bandasRes.data ?? []) as InstanciaBanida[])
 
@@ -286,7 +279,6 @@ export default function VisaoGeralPage() {
     setConversas(convComMsg)
     setConversasFiltradas(convComMsg)
 
-    // Atividades: mistura conversas ativas + logs recentes (só para gestores)
     const itensConversas: AtividadeItem[] = convComMsg.slice(0, 4).map(c => ({
       id: `conv_${c.id}`,
       tipo: 'conversa' as const,
@@ -298,20 +290,15 @@ export default function VisaoGeralPage() {
     let itensLogs: AtividadeItem[] = []
     if (['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userData.role)) {
       const { data: logsData } = await supabase
-        .from('conversation_logs')
-        .select('id, acao, descricao, criado_em')
-        .eq('tenant_id', tid)
-        .order('criado_em', { ascending: false })
-        .limit(6)
+        .from('conversation_logs').select('id, acao, descricao, criado_em')
+        .eq('tenant_id', tid).order('criado_em', { ascending: false }).limit(6)
       itensLogs = (logsData ?? []).map(logParaAtividade)
     }
 
-    // Mescla e ordena por data desc, limita a 8
     const todos = [...itensConversas, ...itensLogs]
       .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
       .slice(0, 8)
     setAtividades(todos)
-
     setCarregando(false)
   }, [])
 
@@ -321,21 +308,15 @@ export default function VisaoGeralPage() {
     if (!user) return
     const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
     if (!userData?.tenant_id) return
-    const dias = parseInt(p)
+    const dias   = parseInt(p)
     const inicio = new Date(); inicio.setDate(inicio.getDate() - dias); inicio.setHours(0, 0, 0, 0)
     const { data } = await supabase.from('conversations').select('criado_em')
       .eq('tenant_id', userData.tenant_id).gte('criado_em', inicio.toISOString())
     const porDia: Record<string, number> = {}
     const curr = new Date(inicio)
     const hoje = new Date(); hoje.setHours(23, 59, 59, 999)
-    while (curr <= hoje) {
-      porDia[curr.toISOString().slice(0, 10)] = 0
-      curr.setDate(curr.getDate() + 1)
-    }
-    ;(data ?? []).forEach(c => {
-      const dia = c.criado_em.slice(0, 10)
-      if (porDia[dia] !== undefined) porDia[dia]++
-    })
+    while (curr <= hoje) { porDia[curr.toISOString().slice(0, 10)] = 0; curr.setDate(curr.getDate() + 1) }
+    ;(data ?? []).forEach(c => { const dia = c.criado_em.slice(0, 10); if (porDia[dia] !== undefined) porDia[dia]++ })
     setGrafico(Object.entries(porDia).map(([dia, total]) => ({ dia, total })))
   }, [])
 
@@ -356,8 +337,6 @@ export default function VisaoGeralPage() {
       pausado_em: novoPausado ? new Date().toISOString() : null,
     }).eq('id', conversa.id)
     setConversas(prev => prev.map(c => c.id === conversa.id ? { ...c, agente_pausado: novoPausado } : c))
-
-    // Registra log
     const { data: { session } } = await supabase.auth.getSession()
     if (session?.access_token) {
       const { data: ud } = await supabase.from('users').select('nome, tenant_id').eq('id', session.user.id).single()
@@ -365,15 +344,12 @@ export default function VisaoGeralPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
         body: JSON.stringify({
-          conversation_id: conversa.id,
-          tenant_id: ud?.tenant_id,
+          conversation_id: conversa.id, tenant_id: ud?.tenant_id,
           acao: novoPausado ? 'pausou_ia' : 'retomou_ia',
-          contato_nome: conversa.contato_nome || conversa.contato_telefone,
-          operador_nome: ud?.nome,
+          contato_nome: conversa.contato_nome || conversa.contato_telefone, operador_nome: ud?.nome,
         }),
       })
     }
-
     setPausando(null)
   }
 
@@ -382,8 +358,7 @@ export default function VisaoGeralPage() {
     setConfirmDesconectar(null)
     try {
       const res = await fetch('/api/whatsapp/desconectar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instance_name: instanceName }),
       })
       if (res.ok) setInstanciasBanidas(prev => prev.filter(i => i.instance_name !== instanceName))
@@ -394,10 +369,10 @@ export default function VisaoGeralPage() {
 
   if (carregando) {
     return (
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         <div className="h-8 rounded w-48 mb-2 animate-pulse" style={{ background: 'var(--bg-surface)' }} />
         <div className="h-4 rounded w-72 mb-8 animate-pulse" style={{ background: 'var(--bg-surface)' }} />
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-28 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }} />
           ))}
@@ -408,89 +383,79 @@ export default function VisaoGeralPage() {
   }
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
 
-      <div className="flex items-start justify-between">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
-          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Visão Geral</h1>
-          <p className="text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-            Como seu agente de atendimento performou nos últimos {periodo === '7' ? '7' : periodo === '90' ? '90' : '30'} dias.
+          <h1 className="text-xl md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Visão Geral</h1>
+          <p className="text-xs md:text-sm mt-0.5 hidden sm:block" style={{ color: 'var(--text-secondary)' }}>
+            Como seu agente performou nos últimos {periodo} dias.
           </p>
         </div>
-        <div className="flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-1 rounded-lg p-1 shrink-0" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           {(['7', '30', '90'] as const).map(p => (
             <button key={p} onClick={() => setPeriodo(p)}
-              className="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              className="px-2 md:px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
               style={{ background: periodo === p ? '#10B981' : 'transparent', color: periodo === p ? '#fff' : 'var(--text-muted)' }}>
-              {p} dias
+              {p}d
             </button>
           ))}
         </div>
       </div>
 
-      {/* Banner de instâncias banidas */}
+      {/* Banner instâncias banidas */}
       {instanciasBanidas.length > 0 && (
-        <div className="rounded-xl p-4 space-y-3"
-          style={{ background: '#EF444408', border: '1px solid #EF444430' }}>
+        <div className="rounded-xl p-4 space-y-3" style={{ background: '#EF444408', border: '1px solid #EF444430' }}>
           <div className="flex items-center gap-2">
             <ShieldAlert size={16} className="text-red-400 flex-shrink-0" />
             <p className="text-sm font-semibold text-red-400">
-              {instanciasBanidas.length === 1
-                ? 'Número banido pelo WhatsApp'
-                : `${instanciasBanidas.length} números banidos pelo WhatsApp`}
+              {instanciasBanidas.length === 1 ? 'Número banido pelo WhatsApp' : `${instanciasBanidas.length} números banidos`}
             </p>
           </div>
           <div className="space-y-2">
             {instanciasBanidas.map(inst => {
               const estaDesconectando = desconectando[inst.instance_name] ?? false
-              const pedindoConfirm = confirmDesconectar === inst.instance_name
+              const pedindoConfirm    = confirmDesconectar === inst.instance_name
               return (
-                <div key={inst.id} className="rounded-lg p-3"
-                  style={{ background: '#EF444410', border: '1px solid #EF444425' }}>
+                <div key={inst.id} className="rounded-lg p-3" style={{ background: '#EF444410', border: '1px solid #EF444425' }}>
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2 min-w-0">
                       <ShieldAlert size={13} className="text-red-400 flex-shrink-0" />
                       <div className="min-w-0">
                         <span className="text-sm font-medium text-red-400">{inst.apelido}</span>
-                        <span className="text-xs font-mono ml-2" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</span>
+                        <span className="text-xs font-mono ml-2 hidden sm:inline" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</span>
                       </div>
                     </div>
                     {!pedindoConfirm ? (
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <button
-                          onClick={() => setConfirmDesconectar(inst.instance_name)}
-                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+                        <button onClick={() => setConfirmDesconectar(inst.instance_name)}
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg"
                           style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}>
                           <LogOut size={12} /> Desconectar
                         </button>
                         <a href="https://wa.me/5551980104924" target="_blank" rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg"
                           style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}>
                           <MessageCircle size={12} /> Suporte
                         </a>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Confirmar desconexão?</span>
                         <button onClick={() => setConfirmDesconectar(null)}
-                          className="text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors"
+                          className="text-xs font-medium px-2.5 py-1.5 rounded-lg"
                           style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                           Cancelar
                         </button>
                         <button onClick={() => handleDesconectar(inst.instance_name)} disabled={estaDesconectando}
-                          className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors">
+                          className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg">
                           <LogOut size={11} className={estaDesconectando ? 'animate-spin' : ''} />
-                          {estaDesconectando ? 'Desconectando...' : 'Confirmar'}
+                          {estaDesconectando ? 'Aguarde...' : 'Confirmar'}
                         </button>
                       </div>
                     )}
                   </div>
-                  {pedindoConfirm && (
-                    <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-                      O número será desvinculado. Conecte um novo número para retomar o atendimento.
-                    </p>
-                  )}
                 </div>
               )
             })}
@@ -498,21 +463,23 @@ export default function VisaoGeralPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Novas conversas hoje"    valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
-        <KpiCard label="Conversas na semana"      valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
-        <KpiCard label="Conversas no mês"         valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
-        <KpiCard label="Pausadas (atend. humano)" valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
+      {/* KPIs — 2 cols mobile, 4 cols desktop */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        <KpiCard label="Hoje"        valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
+        <KpiCard label="Na semana"   valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
+        <KpiCard label="No mês"      valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
+        <KpiCard label="Pausadas"    valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
       </div>
 
+      {/* Gráfico + Atividades */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 rounded-xl p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+        <div className="lg:col-span-2 rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Volume de conversas — últimos {periodo} dias</h2>
-              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Total agregado por dia, incluindo automatizadas e humanas.</p>
+              <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Volume de conversas — {periodo} dias</h2>
+              <p className="text-xs mt-0.5 hidden sm:block" style={{ color: 'var(--text-muted)' }}>Total agregado por dia.</p>
             </div>
-            <button className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5 transition-colors"
+            <button className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5"
               style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
               <Download size={12} />
             </button>
@@ -520,10 +487,9 @@ export default function VisaoGeralPage() {
           <GraficoBarras dados={grafico} />
         </div>
 
-        {/* Atividade recente — conversas + logs de operadores */}
-        <div className="rounded-xl p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-          <h2 className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Atividade recente</h2>
-          <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>Eventos do agente e ações de operadores.</p>
+        <div className="rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+          <h2 className="font-semibold mb-1 text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Atividade recente</h2>
+          <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>Eventos do agente e ações dos operadores.</p>
           <div className="space-y-3">
             {atividades.map(item => (
               <div key={item.id} className="flex items-start gap-2.5">
@@ -541,29 +507,28 @@ export default function VisaoGeralPage() {
         </div>
       </div>
 
+      {/* Tabela conversas recentes */}
       <div className="rounded-xl" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
+        <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4 gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--border)' }}>
           <div>
-            <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Conversas recentes</h2>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              {conversasFiltradas.length} conversa{conversasFiltradas.length !== 1 ? 's' : ''} ativa{conversasFiltradas.length !== 1 ? 's' : ''}. Pause o agente em qualquer linha para assumir o controle.
+            <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Conversas recentes</h2>
+            <p className="text-xs mt-0.5 hidden sm:block" style={{ color: 'var(--text-muted)' }}>
+              {conversasFiltradas.length} conversa{conversasFiltradas.length !== 1 ? 's' : ''} ativa{conversasFiltradas.length !== 1 ? 's' : ''}.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
               {([['todos', 'Todos'], ['ativo', 'Ativos'], ['pausado', 'Pausados']] as const).map(([val, label]) => (
                 <button key={val} onClick={() => setFiltroStatus(val)}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors"
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors"
                   style={{ background: filtroStatus === val ? 'var(--bg-hover)' : 'transparent', color: filtroStatus === val ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   <Filter size={10} />{label}
                 </button>
               ))}
             </div>
-
             <div className="relative" ref={exportRef}>
-              <button
-                onClick={() => setShowExportModal(prev => !prev)}
-                className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 transition-colors"
+              <button onClick={() => setShowExportModal(prev => !prev)}
+                className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-2"
                 style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
                 <Download size={12} /> Exportar
               </button>
@@ -571,14 +536,14 @@ export default function VisaoGeralPage() {
                 <div className="absolute right-0 top-9 w-36 rounded-xl shadow-xl z-50 overflow-hidden"
                   style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
                   <button onClick={() => { exportarCSV(conversasFiltradas); setShowExportModal(false) }}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs transition-colors"
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs"
                     style={{ color: 'var(--text-secondary)' }}
                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
                     onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                     <Download size={12} /> CSV
                   </button>
                   <button onClick={() => { exportarConversasPDF(conversasFiltradas); setShowExportModal(false) }}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs transition-colors"
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs"
                     style={{ color: 'var(--text-secondary)' }}
                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
                     onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
@@ -596,70 +561,112 @@ export default function VisaoGeralPage() {
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhuma conversa encontrada.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  {['Contato', 'Telefone', 'Última mensagem', 'Status', 'Hora', 'Ações'].map(h => (
-                    <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
-                      style={{ color: 'var(--text-muted)' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {conversasFiltradas.map(c => (
-                  <tr key={c.id} className="transition-colors last:border-0"
-                    style={{ borderBottom: '1px solid var(--border)' }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
-                          style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
-                          {(c.contato_nome || c.contato_telefone).slice(0, 2).toUpperCase()}
-                        </div>
-                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                          {c.contato_nome || '—'}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--text-secondary)' }}>
-                        <Phone size={12} />{formatFone(c.contato_telefone)}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 max-w-xs">
-                      <p className="text-sm truncate" style={{ color: 'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      {c.agente_pausado ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B]" /> Pausado
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981]">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" /> Ativo
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <button onClick={() => handlePausarRetomar(c)} disabled={pausando === c.id}
-                        className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
-                          c.agente_pausado
-                            ? 'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30'
-                            : 'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'
-                        }`}>
-                        {c.agente_pausado ? <><Play size={11} /> Retomar</> : <><Pause size={11} /> Pausar</>}
-                      </button>
-                    </td>
+          <>
+            {/* Tabela — desktop */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    {['Contato', 'Telefone', 'Última mensagem', 'Status', 'Hora', 'Ações'].map(h => (
+                      <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
+                        style={{ color: 'var(--text-muted)' }}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {conversasFiltradas.map(c => (
+                    <tr key={c.id} className="transition-colors last:border-0"
+                      style={{ borderBottom: '1px solid var(--border)' }}
+                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
+                            style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
+                            {(c.contato_nome || c.contato_telefone).slice(0, 2).toUpperCase()}
+                          </div>
+                          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{c.contato_nome || '—'}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                          <Phone size={12} />{formatFone(c.contato_telefone)}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 max-w-xs">
+                        <p className="text-sm truncate" style={{ color: 'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        {c.agente_pausado ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B]" /> Pausado
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" /> Ativo
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <button onClick={() => handlePausarRetomar(c)} disabled={pausando === c.id}
+                          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
+                            c.agente_pausado
+                              ? 'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30'
+                              : 'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'
+                          }`}>
+                          {c.agente_pausado ? <><Play size={11} /> Retomar</> : <><Pause size={11} /> Pausar</>}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Cards — mobile */}
+            <div className="md:hidden divide-y" style={{ borderColor: 'var(--border)' }}>
+              {conversasFiltradas.map(c => (
+                <div key={c.id} className="p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
+                        style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
+                        {(c.contato_nome || c.contato_telefone).slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{c.contato_nome || '—'}</p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{formatFone(c.contato_telefone)}</p>
+                      </div>
+                    </div>
+                    {c.agente_pausado ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">
+                        Pausado
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981]">
+                        Ativo
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
+                    <button onClick={() => handlePausarRetomar(c)} disabled={pausando === c.id}
+                      className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 ${
+                        c.agente_pausado
+                          ? 'bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30'
+                          : 'bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/30'
+                      }`}>
+                      {c.agente_pausado ? <><Play size={10} /> Retomar</> : <><Pause size={10} /> Pausar</>}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>
