@@ -2,7 +2,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check, TrendingUp, Camera } from 'lucide-react'
+import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check, TrendingUp, Camera, Menu } from 'lucide-react'
+import { useSidebar } from '@/contexts/SidebarContext'
 
 interface HeaderProps {
   nomeUsuario: string | null
@@ -29,6 +30,7 @@ interface LimiteInfo {
 
 export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
   const router = useRouter()
+  const { toggle } = useSidebar()
   const [agentAtivo, setAgentAtivo]           = useState(true)
   const [pausadoPorAdmin, setPausadoPorAdmin]  = useState(false)
   const [tenantId, setTenantId]               = useState<string | null>(null)
@@ -42,21 +44,20 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
   const [avatarUrl, setAvatarUrl]             = useState<string | null>(avatarUrlProp)
   const [showAvatarMenu, setShowAvatarMenu]   = useState(false)
   const [uploadandoAvatar, setUploadandoAvatar] = useState(false)
-  const dropdownRef                           = useRef<HTMLDivElement>(null)
-  const avatarMenuRef                         = useRef<HTMLDivElement>(null)
-  const avatarInputRef                        = useRef<HTMLInputElement>(null)
+  const dropdownRef   = useRef<HTMLDivElement>(null)
+  const avatarMenuRef = useRef<HTMLDivElement>(null)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
 
   const naoLidas = notifications.filter(n => !n.lida).length
-
   const initials = nomeUsuario
     ? nomeUsuario.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
     : 'U'
 
   const bannerExpiracao = (() => {
     if (!expiraEm) return null
-    const hoje = new Date()
+    const hoje  = new Date()
     const expira = new Date(expiraEm)
-    const diff = Math.round((expira.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24))
+    const diff  = Math.round((expira.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24))
     if (diff <= 1 && diff >= 0) return { dias: diff, urgente: true }
     if (diff <= 7 && diff >= 0) return { dias: diff, urgente: false }
     return null
@@ -78,7 +79,6 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
         setPausadoPorAdmin(tenantData.pausado_por_admin ?? false)
         setExpiraEm(tenantData.expira_em ?? null)
       }
-
       try {
         const res = await fetch('/api/notifications/limite-conversas', { method: 'POST' })
         if (res.ok) {
@@ -87,10 +87,8 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
         }
       } catch { /* silencioso */ }
     }
-
     fetchData()
     fetchNotifications()
-
     const temaSalvo = localStorage.getItem('hubtek-tema') as 'dark' | 'light' | null
     if (temaSalvo) {
       setTema(temaSalvo)
@@ -100,12 +98,8 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setShowDropdown(false)
-      }
-      if (avatarMenuRef.current && !avatarMenuRef.current.contains(e.target as Node)) {
-        setShowAvatarMenu(false)
-      }
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setShowDropdown(false)
+      if (avatarMenuRef.current && !avatarMenuRef.current.contains(e.target as Node)) setShowAvatarMenu(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -119,8 +113,7 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
 
   async function marcarLida(id: string) {
     await fetch('/api/notifications/marcar-lida', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
     })
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, lida: true } : n))
@@ -128,8 +121,7 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
 
   async function marcarTodasLidas() {
     await fetch('/api/notifications/marcar-lida', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: 'all' }),
     })
     setNotifications(prev => prev.map(n => ({ ...n, lida: true })))
@@ -164,36 +156,26 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
   async function handleUploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     if (!userId || !e.target.files?.length) return
     const file = e.target.files[0]
-
     const tiposAceitos = ['image/jpeg', 'image/png', 'image/webp']
     if (!tiposAceitos.includes(file.type)) return
     if (file.size > 2 * 1024 * 1024) return
-
     setUploadandoAvatar(true)
     setShowAvatarMenu(false)
-
     try {
       const supabase = createClient()
       const ext = file.name.split('.').pop() ?? 'jpg'
       const path = `user-avatars/${userId}.${ext}`
-
       await supabase.storage.from('mensagens-midia').remove([path])
-
       const { error: uploadErr } = await supabase.storage
-        .from('mensagens-midia')
-        .upload(path, file, { upsert: true, contentType: file.type })
-
+        .from('mensagens-midia').upload(path, file, { upsert: true, contentType: file.type })
       if (uploadErr) throw uploadErr
-
       const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
       const novaUrl = `${urlData.publicUrl}?t=${Date.now()}`
-
       await supabase.from('users').update({ avatar_url: novaUrl }).eq('id', userId)
       setAvatarUrl(novaUrl)
     } catch (err) {
       console.error('[user avatar upload]', err)
     }
-
     setUploadandoAvatar(false)
     if (avatarInputRef.current) avatarInputRef.current.value = ''
   }
@@ -206,9 +188,7 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
       const supabase = createClient()
       const url = new URL(avatarUrl)
       const parts = url.pathname.split('/mensagens-midia/')
-      if (parts[1]) {
-        await supabase.storage.from('mensagens-midia').remove([parts[1].split('?')[0]])
-      }
+      if (parts[1]) await supabase.storage.from('mensagens-midia').remove([parts[1].split('?')[0]])
       await supabase.from('users').update({ avatar_url: null }).eq('id', userId)
       setAvatarUrl(null)
     } catch (err) {
@@ -221,209 +201,235 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
     <>
       {/* Banner expiração */}
       {bannerExpiracao && (
-        <div className={`w-full px-6 py-2.5 flex items-center justify-center gap-2 text-sm font-medium ${
+        <div className={`w-full px-4 py-2.5 flex items-center justify-center gap-2 text-xs sm:text-sm font-medium text-center ${
           bannerExpiracao.urgente
             ? 'bg-red-500/10 border-b border-red-500/30 text-red-400'
             : 'bg-orange-500/10 border-b border-orange-500/30 text-orange-400'
         }`}>
-          <AlertTriangle size={14} />
-          {bannerExpiracao.dias === 0
-            ? 'Seu acesso expira hoje! Entre em contato para renovar.'
-            : bannerExpiracao.dias === 1
-            ? 'Seu acesso expira amanhã! Entre em contato para renovar.'
-            : `Seu acesso expira em ${bannerExpiracao.dias} dias. Renove para não perder o serviço.`}
+          <AlertTriangle size={14} className="shrink-0" />
+          <span>
+            {bannerExpiracao.dias === 0
+              ? 'Seu acesso expira hoje!'
+              : bannerExpiracao.dias === 1
+              ? 'Seu acesso expira amanhã!'
+              : `Seu acesso expira em ${bannerExpiracao.dias} dias.`}
+          </span>
           <a href="https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+renovar+meu+acesso+HubTek"
             target="_blank" rel="noopener noreferrer"
-            className="underline font-semibold ml-1">
-            Falar com suporte
+            className="underline font-semibold whitespace-nowrap">
+            Renovar
           </a>
         </div>
       )}
 
-      {/* Banner limite de conversas */}
+      {/* Banner limite */}
       {limiteInfo && !bannerExpiracao && (
-        <div className={`w-full px-6 py-2.5 flex items-center justify-center gap-2 text-sm font-medium ${
+        <div className={`w-full px-4 py-2.5 flex items-center justify-center gap-2 text-xs sm:text-sm font-medium text-center ${
           limiteInfo.atingiuLimite
             ? 'bg-red-500/10 border-b border-red-500/30 text-red-400'
             : 'bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-400'
         }`}>
-          <TrendingUp size={14} />
-          {limiteInfo.atingiuLimite
-            ? `Limite de conversas atingido (${limiteInfo.totalConversas}/${limiteInfo.limite}). Seu plano foi atualizado automaticamente.`
-            : `${limiteInfo.percentual}% do limite de conversas usado este mês — ${limiteInfo.totalConversas} de ${limiteInfo.limite} (Plano ${limiteInfo.plano}).`}
+          <TrendingUp size={14} className="shrink-0" />
+          <span>
+            {limiteInfo.atingiuLimite
+              ? `Limite atingido (${limiteInfo.totalConversas}/${limiteInfo.limite}).`
+              : `${limiteInfo.percentual}% do limite usado — ${limiteInfo.totalConversas}/${limiteInfo.limite}.`}
+          </span>
           <a href="https://wa.me/5551980104924?text=Ol%C3%A1%2C+quero+fazer+upgrade+do+meu+plano+HubTek"
             target="_blank" rel="noopener noreferrer"
-            className="underline font-semibold ml-1">
-            {limiteInfo.atingiuLimite ? 'Falar com suporte' : 'Fazer upgrade'}
+            className="underline font-semibold whitespace-nowrap">
+            {limiteInfo.atingiuLimite ? 'Suporte' : 'Upgrade'}
           </a>
         </div>
       )}
 
-      <header className="h-16 flex items-center justify-end px-8 gap-3 sticky top-0 z-30"
-        style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-
-        {pausadoPorAdmin && (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-500/10 border border-red-500/40 text-red-400">
-            <AlertTriangle size={11} />
-            <span>Agente suspenso · entre em contato com a HubTek Solutions</span>
-          </div>
-        )}
-
-        {!pausadoPorAdmin && (
-          <button onClick={handleToggleAgent} disabled={toggling}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all disabled:opacity-50 ${
-              agentAtivo
-                ? 'bg-[#10B981]/10 border-[#10B981]/40 text-[#10B981] hover:bg-[#10B981]/20'
-                : 'bg-red-500/10 border-red-500/40 text-red-400 hover:bg-red-500/20'
-            }`}>
-            <span className="relative flex h-2 w-2">
-              {agentAtivo && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75" />}
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${agentAtivo ? 'bg-[#10B981]' : 'bg-red-400'}`} />
-            </span>
-            <span>Agente</span>
-            <span className="font-bold">{agentAtivo ? 'Ativo' : 'Pausado'}</span>
-            {agentAtivo ? <Pause size={11} /> : <Play size={11} />}
-          </button>
-        )}
-
-        <button onClick={handleToggleTema}
-          className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
+      <header
+        className="h-16 flex items-center justify-between px-4 md:px-8 gap-3 sticky top-0 z-30"
+        style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}
+      >
+        {/* Hambúrguer — só mobile */}
+        <button
+          onClick={toggle}
+          className="flex md:hidden items-center justify-center w-9 h-9 rounded-lg transition-colors"
           style={{ color: 'var(--text-muted)' }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-          title={tema === 'dark' ? 'Modo claro' : 'Modo escuro'}>
-          {tema === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          aria-label="Abrir menu"
+        >
+          <Menu size={20} />
         </button>
 
-        {/* Sininho */}
-        <div className="relative" ref={dropdownRef}>
+        {/* Spacer para empurrar itens para a direita no desktop */}
+        <div className="hidden md:flex flex-1" />
+
+        {/* ── Lado direito ── */}
+        <div className="flex items-center gap-2 md:gap-3">
+
+          {pausadoPorAdmin && (
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-500/10 border border-red-500/40 text-red-400">
+              <AlertTriangle size={11} />
+              <span>Agente suspenso</span>
+            </div>
+          )}
+
+          {!pausadoPorAdmin && (
+            <button
+              onClick={handleToggleAgent}
+              disabled={toggling}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-semibold border transition-all disabled:opacity-50 ${
+                agentAtivo
+                  ? 'bg-[#10B981]/10 border-[#10B981]/40 text-[#10B981] hover:bg-[#10B981]/20'
+                  : 'bg-red-500/10 border-red-500/40 text-red-400 hover:bg-red-500/20'
+              }`}
+            >
+              <span className="relative flex h-2 w-2">
+                {agentAtivo && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75" />}
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${agentAtivo ? 'bg-[#10B981]' : 'bg-red-400'}`} />
+              </span>
+              {/* Label longo só em sm+ */}
+              <span className="hidden sm:inline">Agente</span>
+              <span className="font-bold">{agentAtivo ? 'Ativo' : 'Pausado'}</span>
+              {agentAtivo ? <Pause size={11} /> : <Play size={11} />}
+            </button>
+          )}
+
           <button
-            onClick={() => { setShowDropdown(prev => !prev); if (!showDropdown) fetchNotifications() }}
-            className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors relative"
+            onClick={handleToggleTema}
+            className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
             style={{ color: 'var(--text-muted)' }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
-            <Bell size={16} />
-            {naoLidas > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center">
-                {naoLidas > 9 ? '9+' : naoLidas}
-              </span>
-            )}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+            title={tema === 'dark' ? 'Modo claro' : 'Modo escuro'}
+          >
+            {tema === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
 
-          {showDropdown && (
-            <div className="absolute right-0 top-10 w-80 rounded-xl shadow-2xl z-50 overflow-hidden"
-              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-              <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-                <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notificações</span>
-                {naoLidas > 0 && (
-                  <button onClick={marcarTodasLidas} className="text-xs flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
-                    <Check size={12} /> Marcar todas como lidas
+          {/* Sininho */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={() => { setShowDropdown(prev => !prev); if (!showDropdown) fetchNotifications() }}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors relative"
+              style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+            >
+              <Bell size={16} />
+              {naoLidas > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  {naoLidas > 9 ? '9+' : naoLidas}
+                </span>
+              )}
+            </button>
+
+            {showDropdown && (
+              <div
+                className="absolute right-0 top-10 w-72 sm:w-80 rounded-xl shadow-2xl z-50 overflow-hidden"
+                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}
+              >
+                <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+                  <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notificações</span>
+                  {naoLidas > 0 && (
+                    <button onClick={marcarTodasLidas} className="text-xs flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                      <Check size={12} /> Marcar todas lidas
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-72 overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Nenhuma notificação</div>
+                  ) : (
+                    notifications.map(n => (
+                      <div key={n.id}
+                        className="px-4 py-3 flex gap-3 items-start transition-colors"
+                        style={{
+                          background: n.lida ? 'transparent' : n.tipo === 'limite_conversas' ? 'rgba(234,179,8,0.05)' : 'rgba(249,115,22,0.05)',
+                          borderBottom: '1px solid var(--border)',
+                        }}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{n.titulo}</p>
+                          <p className="text-xs mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>{n.mensagem}</p>
+                          <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                            {new Date(n.criado_em).toLocaleDateString('pt-BR')}
+                          </p>
+                        </div>
+                        {!n.lida && (
+                          <button onClick={() => marcarLida(n.id)} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }}>
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="w-px h-6" style={{ background: 'var(--border)' }} />
+
+          {/* Avatar */}
+          <div className="relative flex items-center gap-2" ref={avatarMenuRef}>
+            <span className="text-sm hidden lg:block" style={{ color: 'var(--text-secondary)' }}>{nomeUsuario}</span>
+
+            <button
+              onClick={() => setShowAvatarMenu(prev => !prev)}
+              className="relative w-8 h-8 rounded-full overflow-hidden transition-opacity hover:opacity-80"
+              style={{ border: '2px solid var(--border-2)' }}
+              title="Alterar foto de perfil"
+            >
+              {uploadandoAvatar ? (
+                <div className="w-full h-full flex items-center justify-center" style={{ background: 'var(--bg-hover)' }}>
+                  <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" style={{ color: 'var(--text-muted)' }} />
+                </div>
+              ) : avatarUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={avatarUrl} alt={nomeUsuario ?? 'Avatar'} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-xs font-semibold"
+                  style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)' }}>
+                  {initials}
+                </div>
+              )}
+            </button>
+
+            {showAvatarMenu && (
+              <div className="absolute right-0 top-10 w-44 rounded-xl shadow-2xl z-50 overflow-hidden"
+                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors hover:bg-[var(--bg-hover)]"
+                  style={{ color: 'var(--text-secondary)' }}>
+                  <Camera size={13} />
+                  {avatarUrl ? 'Alterar foto' : 'Adicionar foto'}
+                </button>
+                {avatarUrl && (
+                  <button
+                    onClick={handleRemoverAvatar}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors hover:bg-red-500/10 text-red-400">
+                    <X size={13} /> Remover foto
                   </button>
                 )}
-              </div>
-              <div className="max-h-80 overflow-y-auto">
-                {notifications.length === 0 ? (
-                  <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                    Nenhuma notificação
-                  </div>
-                ) : (
-                  notifications.map(n => (
-                    <div key={n.id}
-                      className="px-4 py-3 flex gap-3 items-start transition-colors"
-                      style={{
-                        background: n.lida ? 'transparent' : n.tipo === 'limite_conversas' ? 'rgba(234,179,8,0.05)' : 'rgba(249,115,22,0.05)',
-                        borderBottom: '1px solid var(--border)',
-                      }}>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{n.titulo}</p>
-                        <p className="text-xs mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>{n.mensagem}</p>
-                        <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                          {new Date(n.criado_em).toLocaleDateString('pt-BR')}
-                        </p>
-                      </div>
-                      {!n.lida && (
-                        <button onClick={() => marcarLida(n.id)} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }}>
-                          <X size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="w-px h-6" style={{ background: 'var(--border)' }} />
-
-        {/* Avatar do usuário */}
-        <div className="relative flex items-center gap-2" ref={avatarMenuRef}>
-          <span className="text-sm hidden md:block" style={{ color: 'var(--text-secondary)' }}>{nomeUsuario}</span>
-
-          <button
-            onClick={() => setShowAvatarMenu(prev => !prev)}
-            className="relative w-8 h-8 rounded-full overflow-hidden transition-opacity hover:opacity-80"
-            style={{ border: '2px solid var(--border-2)' }}
-            title="Alterar foto de perfil">
-            {uploadandoAvatar ? (
-              <div className="w-full h-full flex items-center justify-center"
-                style={{ background: 'var(--bg-hover)' }}>
-                <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin"
-                  style={{ color: 'var(--text-muted)' }} />
-              </div>
-            ) : avatarUrl ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={avatarUrl} alt={nomeUsuario ?? 'Avatar'} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-xs font-semibold"
-                style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)' }}>
-                {initials}
+                <div className="px-4 py-2 text-[10px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
+                  JPG, PNG ou WEBP · máx. 2MB
+                </div>
               </div>
             )}
+
+            <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp"
+              onChange={handleUploadAvatar} className="hidden" />
+          </div>
+
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 text-sm transition-colors"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
+            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+          >
+            <LogOut size={15} />
+            <span className="hidden sm:block">Sair</span>
           </button>
 
-          {showAvatarMenu && (
-            <div className="absolute right-0 top-10 w-44 rounded-xl shadow-2xl z-50 overflow-hidden"
-              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-              <button
-                onClick={() => avatarInputRef.current?.click()}
-                className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors hover:bg-[var(--bg-hover)]"
-                style={{ color: 'var(--text-secondary)' }}>
-                <Camera size={13} />
-                {avatarUrl ? 'Alterar foto' : 'Adicionar foto'}
-              </button>
-              {avatarUrl && (
-                <button
-                  onClick={handleRemoverAvatar}
-                  className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium transition-colors hover:bg-red-500/10 text-red-400">
-                  <X size={13} />
-                  Remover foto
-                </button>
-              )}
-              <div className="px-4 py-2 text-[10px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
-                JPG, PNG ou WEBP · máx. 2MB
-              </div>
-            </div>
-          )}
-
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={handleUploadAvatar}
-            className="hidden"
-          />
         </div>
-
-        <button onClick={handleLogout}
-          className="flex items-center gap-1.5 text-sm transition-colors"
-          style={{ color: 'var(--text-muted)' }}
-          onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
-          onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}>
-          <LogOut size={15} />
-          <span className="hidden md:block">Sair</span>
-        </button>
       </header>
     </>
   )
