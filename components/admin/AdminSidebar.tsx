@@ -4,7 +4,7 @@ import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { LayoutDashboard, Users, Wallet, Bot, FileText } from 'lucide-react'
+import { LayoutDashboard, Users, Wallet, Bot, FileText, Activity } from 'lucide-react'
 
 const itens = [
   { href: '/admin/visao-geral', label: 'Visão Geral', icone: LayoutDashboard },
@@ -42,11 +42,12 @@ function StatusSistema() {
       <div className="rounded-xl p-4" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
         <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Status do sistema</p>
         <p className="text-xs leading-relaxed mb-3" style={{ color: 'var(--text-muted)' }}>{msg}</p>
-        <a href="https://status.hubtek.io" target="_blank" rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs">
-          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${ok ? 'bg-[#10B981]' : 'bg-red-400'}`} />
-          <span className={ok ? 'text-[#10B981]' : 'text-red-400'}>status.hubtek.io</span>
-        </a>
+        {/* Link aponta para a página interna de status */}
+        <Link href="/admin/status"
+          className="flex items-center gap-1.5 text-xs hover:underline">
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${ok ? 'bg-[#10B981] animate-pulse' : 'bg-red-400'}`} />
+          <span className={ok ? 'text-[#10B981]' : 'text-red-400'}>Ver status detalhado</span>
+        </Link>
       </div>
     </div>
   )
@@ -60,15 +61,16 @@ export function AdminSidebar() {
 
       <div className="h-16 flex items-center justify-between px-6" style={{ borderBottom: '1px solid var(--border)' }}>
         <Image
-  src="/logo-horizontal.png"
-  alt="HUBTEK SOLUTIONS"
-  width={160}
-  height={32}
-  priority
-  style={{ filter: 'var(--logo-filter)' }}
-/>
-<span className="text-[#10B981] text-xs font-semibold bg-[#10B981]/10 px-2 py-1 rounded-md">Admin</span>
+          src="/logo-horizontal.png"
+          alt="HUBTEK SOLUTIONS"
+          width={160}
+          height={32}
+          priority
+          style={{ filter: 'var(--logo-filter)' }}
+        />
+        <span className="text-[#10B981] text-xs font-semibold bg-[#10B981]/10 px-2 py-1 rounded-md">Admin</span>
       </div>
+
       <div className="px-4 pt-4 pb-1">
         <span className="text-[10px] font-semibold tracking-widest uppercase" style={{ color: 'var(--text-label)' }}>
           Administração
@@ -92,6 +94,24 @@ export function AdminSidebar() {
             </Link>
           )
         })}
+
+        {/* Item Status no menu */}
+        {(() => {
+          const ativo = pathname === '/admin/status'
+          return (
+            <Link href="/admin/status"
+              className="flex items-center gap-3 py-2.5 rounded-lg mb-1 transition-all duration-200 text-sm font-medium border-l-2 pl-[11px] -ml-px"
+              style={{
+                background:  ativo ? 'rgba(16,185,129,0.05)' : 'transparent',
+                color:       ativo ? 'var(--text-primary)'   : 'var(--text-secondary)',
+                borderColor: ativo ? '#10B981'               : 'transparent',
+                fontWeight:  ativo ? 600                     : 400,
+              }}>
+              <Activity className="w-4 h-4 flex-shrink-0" />
+              Status
+            </Link>
+          )
+        })()}
       </nav>
 
       <StatusSistema />
