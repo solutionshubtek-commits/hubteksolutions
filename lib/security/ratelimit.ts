@@ -1,23 +1,18 @@
-import { Redis } from 'ioredis'
+import { Redis } from '@upstash/redis'
 
-// ─── Cliente Redis ────────────────────────────────────────────────────────────
-// Reutiliza o Redis já rodando no VPS (mesmo usado pela Evolution API)
-// REDIS_URL deve estar no formato: redis://:<password>@<host>:<port>
-// Se não tiver senha: redis://<host>:<port>
+// ─── Cliente Redis (Edge-compatible) ─────────────────────────────────────────
+// @upstash/redis usa HTTP/REST — funciona no Edge Runtime do Vercel (middleware)
 
 let redis: Redis | null = null
 
 function getRedis(): Redis | null {
-  if (!process.env.REDIS_URL) return null
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+    return null
+  }
   if (!redis) {
-    redis = new Redis(process.env.REDIS_URL, {
-      maxRetriesPerRequest: 1,
-      connectTimeout: 2000,
-      lazyConnect: true,
-      enableOfflineQueue: false,
-    })
-    redis.on('error', () => {
-      // Silencia erros de conexão — rate limit falha aberta (não bloqueia o sistema)
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
     })
   }
   return redis
@@ -31,8 +26,7 @@ interface RateLimitResult {
   resetIn: number // segundos
 }
 
-// ─── Core — sliding window simples via Redis ──────────────────────────────────
-// Usa INCR + EXPIRE: rápido, atômico, sem dependência de biblioteca extra
+// ─── Core — sliding window via Redis INCR + EXPIRE ───────────────────────────
 
 async function checkLimit(
   key: string,
@@ -41,7 +35,7 @@ async function checkLimit(
 ): Promise<RateLimitResult> {
   const client = getRedis()
 
-  // Se Redis não estiver disponível, falha aberta (permite a requisição)
+  // Se Redis não disponível, falha aberta (permite a requisição)
   if (!client) {
     return { allowed: true, remaining: limit, resetIn: windowSeconds }
   }
@@ -50,7 +44,7 @@ async function checkLimit(
     const redisKey = `rl:${key}`
     const current = await client.incr(redisKey)
 
-    // Na primeira chamada, define o TTL da janela
+    // Na primeira chamada define o TTL da janela
     if (current === 1) {
       await client.expire(redisKey, windowSeconds)
     }
@@ -64,7 +58,7 @@ async function checkLimit(
       resetIn: ttl > 0 ? ttl : windowSeconds,
     }
   } catch {
-    // Falha aberta — Redis indisponível não deve bloquear o sistema
+    // Falha aberta — Redis indisponível não bloqueia o sistema
     return { allowed: true, remaining: limit, resetIn: windowSeconds }
   }
 }
@@ -73,7 +67,7 @@ async function checkLimit(
 
 /**
  * Webhook da Evolution — limite por IP
- * 120 requisições por minuto (margem generosa para fluxo normal de mensagens)
+ * 120 requisições por minuto
  */
 export async function rateLimitWebhook(ip: string): Promise<RateLimitResult> {
   return checkLimit(`webhook:${ip}`, 120, 60)
@@ -96,24 +90,24 @@ export async function rateLimitEnvioMensagem(tenantId: string): Promise<RateLimi
 }
 
 /**
- * Upload de knowledge base — limite por tenant
- * 20 uploads por hora por tenant
+ * Upload de knowledge base — limite por IP
+ * 20 uploads por hora
  */
-export async function rateLimitUpload(tenantId: string): Promise<RateLimitResult> {
-  return checkLimit(`upload:${tenantId}`, 20, 3600)
+export async function rateLimitUpload(ip: string): Promise<RateLimitResult> {
+  return checkLimit(`upload:${ip}`, 20, 3600)
 }
 
 /**
- * Convite de operadores — limite por tenant
- * 10 convites por hora por tenant
+ * Convite de operadores — limite por IP
+ * 10 convites por hora
  */
-export async function rateLimitConviteOperador(tenantId: string): Promise<RateLimitResult> {
-  return checkLimit(`convite:${tenantId}`, 10, 3600)
+export async function rateLimitConviteOperador(ip: string): Promise<RateLimitResult> {
+  return checkLimit(`convite:${ip}`, 10, 3600)
 }
 
 /**
  * Rotas de API gerais — limite por IP
- * 200 requisições por minuto (proteção contra scraping/DDoS leve)
+ * 200 requisições por minuto
  */
 export async function rateLimitGeral(ip: string): Promise<RateLimitResult> {
   return checkLimit(`geral:${ip}`, 200, 60)
