@@ -3,13 +3,32 @@ import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60
+export const maxDuration = 120
 
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
-const LIMITE_IMAGEM = 5 * 1024 * 1024    // 5MB
-const LIMITE_DOCUMENTO = 50 * 1024 * 1024 // 50MB
+const LIMITE_IMAGEM = 5 * 1024 * 1024
+const LIMITE_DOCUMENTO = 50 * 1024 * 1024
+const CHUNK_PALAVRAS = 500
+const CHUNK_OVERLAP = 50
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+
+function chunkText(text: string): string[] {
+  const palavras = text.split(/\s+/).filter((p) => p.length > 0)
+  if (palavras.length <= CHUNK_PALAVRAS) return [text]
+
+  const chunks: string[] = []
+  let inicio = 0
+
+  while (inicio < palavras.length) {
+    const fim = Math.min(inicio + CHUNK_PALAVRAS, palavras.length)
+    chunks.push(palavras.slice(inicio, fim).join(' '))
+    if (fim === palavras.length) break
+    inicio += CHUNK_PALAVRAS - CHUNK_OVERLAP
+  }
+
+  return chunks
+}
 
 async function generateEmbedding(text: string): Promise<number[]> {
   const response = await openai.embeddings.create({
@@ -63,20 +82,14 @@ async function extractXlsxText(buffer: Buffer): Promise<string> {
     for (const sheetName of workbook.SheetNames) {
       const sheet = workbook.Sheets[sheetName]
       const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
-
       if (rows.length === 0) continue
-
       linhas.push(`[Aba: ${sheetName}]`)
-
       for (const row of rows) {
         const celulas = (row as unknown[])
           .map((c) => String(c ?? '').trim())
           .filter((c) => c.length > 0)
-        if (celulas.length > 0) {
-          linhas.push(celulas.join(' | '))
-        }
+        if (celulas.length > 0) linhas.push(celulas.join(' | '))
       }
-
       linhas.push('')
     }
 
@@ -125,7 +138,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Erro no upload do arquivo' }, { status: 500 })
     }
 
-    // 2. Extrai ou gera conteúdo texto
+    // 2. Extrai conteúdo texto
     let conteudo = ''
 
     if (isImagem) {
@@ -134,7 +147,6 @@ export async function POST(request: NextRequest) {
         conteudo = await describeImage(base64, file.type, file.name)
       } catch (err) {
         console.error('Erro ao descrever imagem:', err)
-        conteudo = ''
       }
     } else if (file.type === 'text/plain') {
       conteudo = buffer.toString('utf-8')
@@ -160,41 +172,86 @@ export async function POST(request: NextRequest) {
       conteudo = await extractXlsxText(buffer)
     }
 
-    // 3. Gera embedding se há conteúdo
-    let embedding: number[] | null = null
-    if (conteudo.trim().length > 0) {
-      try {
-        embedding = await generateEmbedding(conteudo)
-      } catch (err) {
-        console.error('Erro ao gerar embedding:', err)
+    if (!conteudo.trim()) {
+      // Sem texto — salva registro único sem embedding
+      const { data: novoArquivo, error: dbError } = await supabase
+        .from('knowledge_base')
+        .insert({
+          tenant_id: tenantId,
+          nome_arquivo: file.name,
+          tipo: file.type,
+          conteudo_texto: null,
+          embedding: null,
+          tamanho_bytes: file.size,
+        })
+        .select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
+        .single()
+
+      if (dbError) {
+        await supabase.storage.from('knowledge-base').remove([path])
+        return NextResponse.json({ error: 'Erro ao registrar arquivo' }, { status: 500 })
       }
+
+      return NextResponse.json({
+        success: true,
+        arquivo: novoArquivo,
+        texto_extraido: false,
+        embedding_gerado: false,
+        chunks: 0,
+      })
     }
 
-    // 4. Salva no banco
-    const { data: novoArquivo, error: dbError } = await supabase
-      .from('knowledge_base')
-      .insert({
-        tenant_id: tenantId,
-        nome_arquivo: file.name,
-        tipo: file.type,
-        conteudo_texto: conteudo || null,
-        embedding: embedding ? JSON.stringify(embedding) : null,
-        tamanho_bytes: file.size,
-      })
-      .select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
-      .single()
+    // 3. Chunking
+    const chunks = chunkText(conteudo)
 
-    if (dbError) {
-      console.error('Erro ao salvar no banco:', dbError)
-      await supabase.storage.from('knowledge-base').remove([path])
-      return NextResponse.json({ error: 'Erro ao registrar arquivo' }, { status: 500 })
+    // 4. Gera embeddings e salva um registro por chunk
+    let primeiroArquivo = null
+    let embeddingsGerados = 0
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkTexto = chunks[i]
+      let embedding: number[] | null = null
+
+      try {
+        embedding = await generateEmbedding(chunkTexto)
+        embeddingsGerados++
+      } catch (err) {
+        console.error(`Erro embedding chunk ${i}:`, err)
+      }
+
+      const nomeChunk = chunks.length > 1 ? `${file.name} [parte ${i + 1}/${chunks.length}]` : file.name
+
+      const { data, error: dbError } = await supabase
+        .from('knowledge_base')
+        .insert({
+          tenant_id: tenantId,
+          nome_arquivo: nomeChunk,
+          tipo: file.type,
+          conteudo_texto: chunkTexto,
+          embedding: embedding ? JSON.stringify(embedding) : null,
+          tamanho_bytes: i === 0 ? file.size : 0,
+        })
+        .select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
+        .single()
+
+      if (dbError) {
+        console.error(`Erro ao salvar chunk ${i}:`, dbError)
+        if (i === 0) {
+          await supabase.storage.from('knowledge-base').remove([path])
+          return NextResponse.json({ error: 'Erro ao registrar arquivo' }, { status: 500 })
+        }
+        continue
+      }
+
+      if (i === 0) primeiroArquivo = data
     }
 
     return NextResponse.json({
       success: true,
-      arquivo: novoArquivo,
-      texto_extraido: conteudo.length > 0,
-      embedding_gerado: embedding !== null,
+      arquivo: primeiroArquivo,
+      texto_extraido: true,
+      embedding_gerado: embeddingsGerados > 0,
+      chunks: chunks.length,
     })
   } catch (err) {
     console.error('Erro no upload:', err)
