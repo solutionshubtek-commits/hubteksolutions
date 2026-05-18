@@ -59,16 +59,19 @@ function isWithinOperatingHours(
 
 function buildSystemPrompt(
   promptPrincipal: string,
-  knowledgeDocs: Array<{ conteudo_texto: string }>,
+  knowledgeDocs: Array<{ conteudo_texto: string; criado_em: string }>,
   temCalendar: boolean,
   horarioInicio: string,
   horarioFim: string
 ): string {
   let prompt = promptPrincipal || 'Você é um assistente de atendimento ao cliente prestativo e cordial.'
+
   if (knowledgeDocs.length > 0) {
-    prompt += '\n\nBase de conhecimento relevante:\n'
-    prompt += knowledgeDocs.map(d => d.conteudo_texto).join('\n---\n')
+    prompt += '\n\nBase de conhecimento relevante (ordenada do mais recente para o mais antigo):'
+    prompt += '\nIMPORTANTE: Quando houver informações conflitantes entre os trechos abaixo, sempre priorize o trecho mais recente (primeiros da lista).\n'
+    prompt += knowledgeDocs.map((d, i) => `\n[Trecho ${i + 1}]\n${d.conteudo_texto}`).join('\n---')
   }
+
   if (temCalendar) {
     prompt += `\n\nVocê tem acesso à agenda da empresa. Horário de atendimento: ${horarioInicio} às ${horarioFim}.`
     prompt += '\nQuando o cliente pedir agendamento: consulte slots disponíveis, confirme data/hora e crie o evento.'
@@ -76,6 +79,7 @@ function buildSystemPrompt(
     prompt += '\nQuando pedir cancelamento: localize o evento e confirme antes de deletar.'
     prompt += '\nSempre confirme com o cliente após cada ação na agenda.'
   }
+
   prompt += '\n\nResponda sempre em português brasileiro. Seja direto e objetivo. Se não souber a resposta, informe que vai verificar.'
   return prompt
 }
@@ -364,16 +368,17 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   if (!conteudoProcessado.trim()) return
 
   // 8. Busca semântica
-  let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number }> = []
+  let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number; criado_em: string }> = []
   try {
     const embedding = await generateEmbedding(conteudoProcessado)
     const { data: docs } = await supabase.rpc('match_knowledge', {
       query_embedding: embedding,
       match_tenant_id: payload.tenantId,
-      match_threshold: 0.7,
+      match_threshold: 0.65,
       match_count: 5,
     })
-    knowledgeDocs = (docs ?? []) as Array<{ conteudo_texto: string; similarity: number }>
+    knowledgeDocs = ((docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>)
+      .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
   } catch (err) {
     console.error('[process-message] Falha na busca semântica:', err)
   }
