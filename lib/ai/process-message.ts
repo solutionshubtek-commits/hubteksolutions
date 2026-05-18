@@ -311,6 +311,36 @@ export interface ProcessMessagePayload {
 
 // ─── processIncomingMessage ───────────────────────────────────────────────────
 
+async function gerarRespostaHipotetica(pergunta: string): Promise<string> {
+  try {
+    const resposta = await openAIChatCompletion([
+      {
+        role: 'system',
+        content: 'Você é um assistente de atendimento. Gere uma resposta hipotética detalhada para a pergunta abaixo, como se soubesse a resposta completa. Use linguagem direta com fatos, valores e detalhes operacionais. Responda em português.',
+      },
+      { role: 'user', content: pergunta },
+    ], { temperature: 0, maxTokens: 300 })
+    return `${pergunta} ${resposta.content}`
+  } catch {
+    return pergunta
+  }
+}
+
+async function normalizarPergunta(pergunta: string): Promise<string> {
+  try {
+    const resposta = await openAIChatCompletion([
+      {
+        role: 'system',
+        content: 'Corrija erros ortográficos e expanda abreviações do texto abaixo. Retorne apenas o texto corrigido, sem explicações.',
+      },
+      { role: 'user', content: pergunta },
+    ], { temperature: 0, maxTokens: 100 })
+    return resposta.content.trim() || pergunta
+  } catch {
+    return pergunta
+  }
+}
+
 export async function processIncomingMessage(payload: ProcessMessagePayload): Promise<void> {
   const supabase = createServiceClient()
 
@@ -392,16 +422,20 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!conteudoProcessado.trim()) return
 
-  // 8. Busca semântica
+  // 8. Busca semântica com HyDE + normalização
   let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number; criado_em: string }> = []
   try {
-    const embedding = await generateEmbedding(conteudoProcessado)
+    const perguntaNormalizada = await normalizarPergunta(conteudoProcessado)
+    const textoParaEmbedding = await gerarRespostaHipotetica(perguntaNormalizada)
+    const embedding = await generateEmbedding(textoParaEmbedding)
+
     const { data: docs } = await supabase.rpc('match_knowledge', {
       query_embedding: embedding,
       match_tenant_id: payload.tenantId,
-      match_threshold: 0.65,
-      match_count: 5,
+      match_threshold: 0.6,
+      match_count: 8,
     })
+
     knowledgeDocs = ((docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>)
       .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
   } catch (err) {
