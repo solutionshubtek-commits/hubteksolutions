@@ -54,6 +54,39 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
   }
 }
 
+async function extractXlsxText(buffer: Buffer): Promise<string> {
+  try {
+    const XLSX = await import('xlsx')
+    const workbook = XLSX.read(buffer, { type: 'buffer' })
+    const linhas: string[] = []
+
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName]
+      const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+
+      if (rows.length === 0) continue
+
+      linhas.push(`[Aba: ${sheetName}]`)
+
+      for (const row of rows) {
+        const celulas = (row as unknown[])
+          .map((c) => String(c ?? '').trim())
+          .filter((c) => c.length > 0)
+        if (celulas.length > 0) {
+          linhas.push(celulas.join(' | '))
+        }
+      }
+
+      linhas.push('')
+    }
+
+    return linhas.join('\n').trim()
+  } catch (err) {
+    console.error('Erro ao extrair XLSX:', err)
+    return ''
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
@@ -118,8 +151,14 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         console.error('Erro ao extrair DOCX:', err)
       }
+    } else if (
+      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.type === 'application/vnd.ms-excel' ||
+      file.name.endsWith('.xlsx') ||
+      file.name.endsWith('.xls')
+    ) {
+      conteudo = await extractXlsxText(buffer)
     }
-    // XLSX: sem extração de texto
 
     // 3. Gera embedding se há conteúdo
     let embedding: number[] | null = null
