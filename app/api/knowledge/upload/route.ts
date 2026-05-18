@@ -8,7 +8,7 @@ export const maxDuration = 120
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
 const LIMITE_IMAGEM = 5 * 1024 * 1024
 const LIMITE_DOCUMENTO = 50 * 1024 * 1024
-const CHUNK_PALAVRAS = 500
+const CHUNK_PALAVRAS = 300
 const CHUNK_OVERLAP = 50
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
@@ -124,7 +124,6 @@ export async function POST(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // 1. Upload para o Storage
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
     const path = `${tenantId}/${Date.now()}_${file.name}`
@@ -138,7 +137,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Erro no upload do arquivo' }, { status: 500 })
     }
 
-    // 2. Extrai conteúdo texto
     let conteudo = ''
 
     if (isImagem) {
@@ -173,7 +171,6 @@ export async function POST(request: NextRequest) {
     }
 
     if (!conteudo.trim()) {
-      // Sem texto — salva registro único sem embedding
       const { data: novoArquivo, error: dbError } = await supabase
         .from('knowledge_base')
         .insert({
@@ -201,10 +198,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // 3. Chunking
     const chunks = chunkText(conteudo)
-
-    // 4. Gera embeddings e salva um registro por chunk
     let primeiroArquivo = null
     let embeddingsGerados = 0
 
