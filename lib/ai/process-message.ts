@@ -112,6 +112,7 @@ REGRAS DE COMPORTAMENTO — SIGA RIGOROSAMENTE:
     prompt += '\nUse as tools de agendamento para registrar compromissos solicitados pelo cliente.'
     prompt += '\nPara recontatos: use criar_recontato quando o cliente pedir para ser chamado depois.'
     prompt += '\nSempre confirme com o cliente após criar ou alterar um agendamento.'
+    prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
   }
 
   prompt += '\n\nResponda sempre em português brasileiro.'
@@ -226,7 +227,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
           contato_nome: { type: 'string', description: 'Nome do cliente' },
           contato_telefone: { type: 'string', description: 'Telefone do cliente com DDI (ex: 5551999999999)' },
           servico: { type: 'string', description: 'Serviço ou motivo do agendamento' },
-          data_hora: { type: 'string', description: 'Data e hora no formato ISO 8601 com offset BR (ex: 2024-06-15T14:00:00-03:00)' },
+          data_hora: { type: 'string', description: 'Data e hora no formato ISO 8601. SEMPRE use offset -03:00 (horário de Brasília). Exemplo: para 20/05/2026 às 10:00 use "2026-05-20T10:00:00-03:00"' },
           antecedencia_horas: { type: 'number', description: 'Horas de antecedência para enviar o lembrete. Padrão: 24' },
         },
         required: ['contato_nome', 'contato_telefone', 'servico', 'data_hora'],
@@ -286,7 +287,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
           contato_nome: { type: 'string', description: 'Nome do cliente' },
           contato_telefone: { type: 'string', description: 'Telefone do cliente com DDI' },
           mensagem_inicial: { type: 'string', description: 'Mensagem a enviar no recontato' },
-          agendado_para: { type: 'string', description: 'Data e hora do recontato no formato ISO 8601 com offset BR (ex: 2024-06-15T10:00:00-03:00)' },
+          agendado_para: { type: 'string', description: 'Data e hora do recontato no formato ISO 8601. SEMPRE use offset -03:00 (horário de Brasília). Exemplo: para 20/05/2026 às 10:00 use "2026-05-20T10:00:00-03:00"' },
         },
         required: ['contato_nome', 'contato_telefone', 'mensagem_inicial', 'agendado_para'],
       },
@@ -493,7 +494,7 @@ async function executarAppointmentToolCall(
           mensagem_inicial: String(args.mensagem_inicial),
           agendado_para: String(args.agendado_para),
           status: 'pendente',
-          criado_por: null, // criado pela IA
+          criado_por: null,
         })
 
       if (error) {
@@ -528,7 +529,7 @@ export interface ProcessMessagePayload {
   caption?: string
 }
 
-// ─── processIncomingMessage ───────────────────────────────────────────────────
+// ─── Helpers HyDE ─────────────────────────────────────────────────────────────
 
 async function gerarRespostaHipotetica(pergunta: string): Promise<string> {
   try {
@@ -559,6 +560,8 @@ async function normalizarPergunta(pergunta: string): Promise<string> {
     return pergunta
   }
 }
+
+// ─── processIncomingMessage ───────────────────────────────────────────────────
 
 export async function processIncomingMessage(payload: ProcessMessagePayload): Promise<void> {
   const supabase = createServiceClient()
@@ -702,6 +705,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   let motorUsado = config.motor_ia_principal
   const chatConfig = { temperature: Number(config.temperatura), maxTokens: config.max_tokens }
 
+  // Flag: bloqueia detectarMeChama se a tool criar_recontato já foi usada
+  let recontotoCriadoPorTool = false
+
   try {
     if (usarTools) {
       const respostaComTools = await openAIChatCompletionWithTools(
@@ -717,6 +723,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         for (const tc of toolCallsTyped) {
           const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
           const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
+
+          // Marca flag se recontato foi criado via tool
+          if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
 
           const toolResult = isAppointmentTool
             ? await executarAppointmentToolCall(tc.function.name, args, payload.tenantId, payload.instanceName)
@@ -786,14 +795,17 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   })
 
   // 14. Detecta intenção "me chama depois" — fire-and-forget
-  detectarMeChama({
-    mensagemCliente: conteudoProcessado,
-    conversationId: conversa.id,
-    tenantId: payload.tenantId,
-    instanceName: payload.instanceName,
-    contatoNome: conversa.contato_nome ?? payload.pushName ?? payload.phone,
-    contatoTelefone: payload.phone,
-  }).catch((err) =>
-    console.error('[process-message] detectarMeChama falhou:', err)
-  )
+  // Bloqueado se criar_recontato já foi executada via tool nesta mensagem
+  if (!recontotoCriadoPorTool) {
+    detectarMeChama({
+      mensagemCliente: conteudoProcessado,
+      conversationId: conversa.id,
+      tenantId: payload.tenantId,
+      instanceName: payload.instanceName,
+      contatoNome: conversa.contato_nome ?? payload.pushName ?? payload.phone,
+      contatoTelefone: payload.phone,
+    }).catch((err) =>
+      console.error('[process-message] detectarMeChama falhou:', err)
+    )
+  }
 }
