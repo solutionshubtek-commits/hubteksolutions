@@ -64,7 +64,8 @@ function buildSystemPrompt(
   temCalendar: boolean,
   temAgendamentosHubtek: boolean,
   horarioInicio: string,
-  horarioFim: string
+  horarioFim: string,
+  telefoneCliente: string
 ): string {
   let prompt = promptPrincipal || 'Você é um assistente de atendimento ao cliente prestativo e cordial.'
 
@@ -121,7 +122,7 @@ const agoraBrasil = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
 const dataAtual = agoraBrasil.toISOString().slice(0, 10)
 const horaAtual = agoraBrasil.toISOString().slice(11, 16)
 prompt += `\n\nDATA E HORA ATUAL (Brasília): ${dataAtual} às ${horaAtual}. Use esta referência para interpretar "hoje", "amanhã", "próxima semana" e para gerar timestamps ISO 8601 com offset -03:00.`
-
+prompt += `\n\nTELEFONE DO CLIENTE NESTA CONVERSA: ${telefoneCliente}. Quando o cliente disser "meu número", "este número", "pode ligar aqui" ou similar, use este número automaticamente — não peça confirmação.`
 prompt += '\n\nResponda sempre em português brasileiro.'
   return prompt
 }
@@ -685,13 +686,14 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     {
       role: 'system',
       content: buildSystemPrompt(
-        config.prompt_principal ?? '',
-        knowledgeDocs,
-        temCalendar,
-        temAgendamentosHubtek,
-        config.horario_inicio,
-        config.horario_fim
-      ),
+  config.prompt_principal ?? '',
+  knowledgeDocs,
+  temCalendar,
+  temAgendamentosHubtek,
+  config.horario_inicio,
+  config.horario_fim,
+  payload.phone
+),
     },
     ...historico.slice(0, -1).map(m => ({
       role: (m.origem === 'agente' ? 'assistant' : 'user') as 'assistant' | 'user',
