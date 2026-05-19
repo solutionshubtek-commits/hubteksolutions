@@ -114,16 +114,21 @@ REGRAS DE COMPORTAMENTO — SIGA RIGOROSAMENTE:
     prompt += '\nPara recontatos: use criar_recontato quando o cliente pedir para ser chamado depois.'
     prompt += '\nSempre confirme com o cliente após criar ou alterar um agendamento.'
     prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
+    prompt += `\n\nTELEFONE PARA AGENDAMENTOS: Ao registrar um telefone, siga esta ordem:`
+    prompt += `\n1. Se o cliente disser "este número", "meu número", "pode ligar aqui" ou similar → use ${telefoneCliente}`
+    prompt += `\n2. Se o cliente fornecer um número com DDD (10 ou 11 dígitos) → normalize e use`
+    prompt += `\n3. Se o cliente fornecer um número SEM DDD (8 ou 9 dígitos) → pergunte: "Qual o DDD? Aqui costumamos usar 51." e aguarde a resposta antes de criar o agendamento`
+    prompt += `\n4. NUNCA salve um número sem DDD completo`
   }
 
   // Injeta data/hora atual de Brasília
-const agora = new Date()
-const agoraBrasil = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
-const dataAtual = agoraBrasil.toISOString().slice(0, 10)
-const horaAtual = agoraBrasil.toISOString().slice(11, 16)
-prompt += `\n\nDATA E HORA ATUAL (Brasília): ${dataAtual} às ${horaAtual}. Use esta referência para interpretar "hoje", "amanhã", "próxima semana" e para gerar timestamps ISO 8601 com offset -03:00.`
-prompt += `\n\nTELEFONE DO CLIENTE NESTA CONVERSA: ${telefoneCliente}. Quando o cliente disser "meu número", "este número", "pode ligar aqui" ou similar, use este número automaticamente — não peça confirmação.`
-prompt += '\n\nResponda sempre em português brasileiro.'
+  const agora = new Date()
+  const agoraBrasil = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
+  const dataAtual = agoraBrasil.toISOString().slice(0, 10)
+  const horaAtual = agoraBrasil.toISOString().slice(11, 16)
+  prompt += `\n\nDATA E HORA ATUAL (Brasília): ${dataAtual} às ${horaAtual}. Use esta referência para interpretar "hoje", "amanhã", "próxima semana" e para gerar timestamps ISO 8601 com offset -03:00.`
+  prompt += `\n\nTELEFONE DO CLIENTE NESTA CONVERSA: ${telefoneCliente}. Quando o cliente disser "meu número", "este número", "pode ligar aqui" ou similar, use este número automaticamente — não peça confirmação.`
+  prompt += '\n\nResponda sempre em português brasileiro.'
   return prompt
 }
 
@@ -314,6 +319,18 @@ interface ToolCall {
   }
 }
 
+// ─── Normalização de telefone ─────────────────────────────────────────────────
+
+function normalizarTelefone(tel: string, dddPadrao = '51'): string {
+  const digits = tel.replace(/\D/g, '')
+  if (digits.startsWith('55') && digits.length >= 12) return digits  // já completo
+  if (digits.length === 11) return `55${digits}`                      // DDD + 9 dígitos
+  if (digits.length === 10) return `55${digits}`                      // DDD + 8 dígitos
+  if (digits.length === 9) return `55${dddPadrao}${digits}`           // sem DDD, 9 dígitos
+  if (digits.length === 8) return `55${dddPadrao}${digits}`           // sem DDD, 8 dígitos
+  return digits                                                        // não reconhecido, retorna como está
+}
+
 // ─── Executor de tool calls — Google Calendar ─────────────────────────────────
 
 async function executarToolCall(
@@ -413,7 +430,7 @@ async function executarAppointmentToolCall(
           tenant_id: tenantId,
           instance_name: instanceName,
           contato_nome: String(args.contato_nome),
-          contato_telefone: String(args.contato_telefone),
+          contato_telefone: normalizarTelefone(String(args.contato_telefone)),
           servico: String(args.servico),
           data_hora: String(args.data_hora),
           antecedencia_horas: Number(args.antecedencia_horas ?? 24),
@@ -438,7 +455,7 @@ async function executarAppointmentToolCall(
         .from('appointments')
         .select('id, servico, data_hora, status')
         .eq('tenant_id', tenantId)
-        .eq('contato_telefone', String(args.contato_telefone))
+        .eq('contato_telefone', normalizarTelefone(String(args.contato_telefone)))
         .not('status', 'eq', 'cancelado')
         .order('data_hora', { ascending: true })
         .limit(5)
@@ -496,7 +513,7 @@ async function executarAppointmentToolCall(
         .insert({
           tenant_id: tenantId,
           instance_name: instanceName,
-          contato_telefone: String(args.contato_telefone),
+          contato_telefone: normalizarTelefone(String(args.contato_telefone)),
           contato_nome: String(args.contato_nome),
           tipo: 'me_chama_depois',
           mensagem_inicial: String(args.mensagem_inicial),
@@ -686,14 +703,14 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     {
       role: 'system',
       content: buildSystemPrompt(
-  config.prompt_principal ?? '',
-  knowledgeDocs,
-  temCalendar,
-  temAgendamentosHubtek,
-  config.horario_inicio,
-  config.horario_fim,
-  payload.phone
-),
+        config.prompt_principal ?? '',
+        knowledgeDocs,
+        temCalendar,
+        temAgendamentosHubtek,
+        config.horario_inicio,
+        config.horario_fim,
+        payload.phone
+      ),
     },
     ...historico.slice(0, -1).map(m => ({
       role: (m.origem === 'agente' ? 'assistant' : 'user') as 'assistant' | 'user',
