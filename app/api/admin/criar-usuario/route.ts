@@ -4,7 +4,6 @@ import { NextResponse } from 'next/server'
 export async function POST(request: Request) {
   try {
     const { email, senha, tenant_id, role, nome, slug, instancias } = await request.json()
-    // instancias: Array<{ apelido: string }> — ex: [{ apelido: 'Vendas' }, { apelido: 'Suporte' }]
 
     if (!email || !senha || !tenant_id || !role) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes.' }, { status: 400 })
@@ -16,7 +15,25 @@ export async function POST(request: Request) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // 1. Criar auth user
+    // 1. Verificar e-mail duplicado em public.users
+    const { data: emailExiste } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle()
+
+    if (emailExiste) {
+      return NextResponse.json({ error: 'Este e-mail já está cadastrado no sistema.' }, { status: 400 })
+    }
+
+    // 2. Verificar e-mail duplicado no Auth (usuário pode existir no Auth mas não em public.users)
+    const { data: authList } = await supabaseAdmin.auth.admin.listUsers()
+    const emailNoAuth = authList?.users?.find(u => u.email === email)
+    if (emailNoAuth) {
+      return NextResponse.json({ error: 'Este e-mail já está cadastrado no sistema.' }, { status: 400 })
+    }
+
+    // 3. Criar auth user
     const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
       email,
       password: senha,
@@ -27,21 +44,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: authErr?.message ?? 'Erro ao criar auth user.' }, { status: 400 })
     }
 
-    // 2. Inserir na tabela users
-    const { error: userErr } = await supabaseAdmin.from('users').insert({
+    // 4. UPSERT na tabela users (evita duplicate key do trigger on_auth_user_created)
+    const { error: userErr } = await supabaseAdmin.from('users').upsert({
       id: authData.user.id,
       email,
       nome: nome ?? email,
       tenant_id,
       role,
-    })
+    }, { onConflict: 'id' })
 
     if (userErr) {
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
       return NextResponse.json({ error: userErr.message }, { status: 400 })
     }
 
-    // 3. Onboarding Evolution API — criar instâncias automaticamente
+    // 5. Onboarding Evolution API
     if (slug && Array.isArray(instancias) && instancias.length > 0) {
       try {
         const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.hubteksolutions.tech'
