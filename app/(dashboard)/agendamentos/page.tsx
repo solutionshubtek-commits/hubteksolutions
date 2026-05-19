@@ -76,10 +76,6 @@ function formatTime(iso: string) {
   })
 }
 
-function formatDateTime(iso: string) {
-  return `${formatDate(iso)} às ${formatTime(iso)}`
-}
-
 const STATUS_CONFIG = {
   pendente:   { label: 'Pendente',   color: 'bg-yellow-100 text-yellow-800',  icon: AlertCircle },
   confirmado: { label: 'Confirmado', color: 'bg-green-100 text-green-800',    icon: CheckCircle },
