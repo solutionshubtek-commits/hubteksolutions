@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useRef, CSSProperties } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2,
@@ -67,30 +67,6 @@ function iconeArquivo(tipo: string, nome: string) {
 
 function getInitials(name: string) {
   return name.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
-}
-
-// ─── Toggle ───────────────────────────────────────────────────────────────────
-
-function Toggle({ ativo, onClick }: { ativo: boolean; onClick: () => void }) {
-  const trackStyle: CSSProperties = {
-    width: 44, minWidth: 44, height: 24, padding: 0, margin: 0,
-    border: 'none', outline: 'none', borderRadius: 999, position: 'relative',
-    cursor: 'pointer', flexShrink: 0, display: 'inline-block', boxSizing: 'border-box',
-    backgroundColor: ativo ? '#10B981' : 'var(--border-2)',
-    transition: 'background-color 0.2s ease',
-    appearance: 'none', WebkitAppearance: 'none',
-  }
-  const thumbStyle: CSSProperties = {
-    position: 'absolute', top: 2, left: ativo ? 22 : 2,
-    width: 20, height: 20, borderRadius: '50%', backgroundColor: '#FFFFFF',
-    transition: 'left 0.2s ease', boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
-    display: 'block', pointerEvents: 'none',
-  }
-  return (
-    <button type="button" onClick={onClick} style={trackStyle} aria-checked={ativo} role="switch">
-      <span style={thumbStyle} />
-    </button>
-  )
 }
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
