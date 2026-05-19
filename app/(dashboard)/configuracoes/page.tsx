@@ -1,45 +1,50 @@
 'use client'
 import { useEffect, useState, useRef, CSSProperties } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2, Image as ImageIcon, Camera, X } from 'lucide-react'
+import {
+  Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2,
+  Image as ImageIcon, Camera, X, Calendar, ExternalLink, Eye, EyeOff,
+} from 'lucide-react'
 import { GestaoOperadores } from '@/components/dashboard/GestaoOperadores'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-interface DiaConfig { ativo: boolean; inicio: string; fim: string }
-interface HorarioFuncionamento {
-  seg: DiaConfig; ter: DiaConfig; qua: DiaConfig; qui: DiaConfig
-  sex: DiaConfig; sab: DiaConfig; dom: DiaConfig
-}
 interface KnowledgeFile {
   id: string; nome_arquivo: string; tipo: string; tamanho_bytes: number; criado_em: string
 }
 interface TenantData {
   id: string; nome: string; slug: string; prompt_agente: string
   mensagem_fora_horario: string; horario_funcionamento: HorarioFuncionamento
-  avatar_url: string | null
+  avatar_url: string | null; google_calendar_config: GoogleCalendarConfig | null
+}
+interface HorarioFuncionamento {
+  inicio: string; fim: string; dias: number[]; funcoes: string[]
+}
+interface GoogleCalendarConfig {
+  client_email: string; private_key: string; calendar_id: string
 }
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-const DIAS_SEMANA: { key: keyof HorarioFuncionamento; label: string; agentKey: string }[] = [
-  { key: 'seg', label: 'Seg', agentKey: 'seg' },
-  { key: 'ter', label: 'Ter', agentKey: 'ter' },
-  { key: 'qua', label: 'Qua', agentKey: 'qua' },
-  { key: 'qui', label: 'Qui', agentKey: 'qui' },
-  { key: 'sex', label: 'Sex', agentKey: 'sex' },
-  { key: 'sab', label: 'Sáb', agentKey: 'sab' },
-  { key: 'dom', label: 'Dom', agentKey: 'dom' },
+const DIAS_SEMANA = [
+  { num: 1, label: 'Seg' }, { num: 2, label: 'Ter' }, { num: 3, label: 'Qua' },
+  { num: 4, label: 'Qui' }, { num: 5, label: 'Sex' }, { num: 6, label: 'Sáb' },
+  { num: 0, label: 'Dom' },
 ]
 
+const FUNCOES = [
+  { id: 'agendamentos', label: '📅 Agendamentos' },
+  { id: 'suporte',      label: '💬 Suporte'      },
+  { id: 'vendas',       label: '🛒 Vendas'        },
+  { id: 'leads',        label: '🎯 Qualif. de Lead' },
+]
+
+const DIAS_NUM_TO_STR: Record<number, string> = {
+  0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab'
+}
+
 const HORARIO_PADRAO: HorarioFuncionamento = {
-  seg: { ativo: true,  inicio: '08:00', fim: '18:00' },
-  ter: { ativo: true,  inicio: '08:00', fim: '18:00' },
-  qua: { ativo: true,  inicio: '08:00', fim: '18:00' },
-  qui: { ativo: true,  inicio: '08:00', fim: '18:00' },
-  sex: { ativo: true,  inicio: '08:00', fim: '18:00' },
-  sab: { ativo: false, inicio: '08:00', fim: '12:00' },
-  dom: { ativo: false, inicio: '08:00', fim: '12:00' },
+  inicio: '08:00', fim: '18:00', dias: [1, 2, 3, 4, 5], funcoes: []
 }
 
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
@@ -62,23 +67,6 @@ function iconeArquivo(tipo: string, nome: string) {
 
 function getInitials(name: string) {
   return name.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
-}
-
-function derivarAgentConfig(horario: HorarioFuncionamento): {
-  horario_inicio: string; horario_fim: string; dias_funcionamento: string[]
-} {
-  const diasAtivos = DIAS_SEMANA.filter(d => horario[d.key].ativo)
-  if (diasAtivos.length === 0) return { horario_inicio: '08:00', horario_fim: '18:00', dias_funcionamento: [] }
-  const toMinutes = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
-  const fromMinutes = (m: number) => `${Math.floor(m / 60).toString().padStart(2, '0')}:${(m % 60).toString().padStart(2, '0')}`
-  let minInicio = Infinity, maxFim = 0
-  diasAtivos.forEach(d => {
-    const ini = toMinutes(horario[d.key].inicio)
-    const fim = toMinutes(horario[d.key].fim)
-    if (ini < minInicio) minInicio = ini
-    if (fim > maxFim) maxFim = fim
-  })
-  return { horario_inicio: fromMinutes(minInicio), horario_fim: fromMinutes(maxFim), dias_funcionamento: diasAtivos.map(d => d.agentKey) }
 }
 
 // ─── Toggle ───────────────────────────────────────────────────────────────────
@@ -130,6 +118,7 @@ export default function ConfiguracoesPage() {
   const [tenantId, setTenantId] = useState<string>('')
   const [role, setRole] = useState<string>('')
   const [horario, setHorario] = useState<HorarioFuncionamento>(HORARIO_PADRAO)
+  const [funcoes, setFuncoes] = useState<string[]>([])
   const [arquivos, setArquivos] = useState<KnowledgeFile[]>([])
   const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
@@ -139,10 +128,21 @@ export default function ConfiguracoesPage() {
   const [excluindo, setExcluindo] = useState<string | null>(null)
   const [sucesso, setSucesso] = useState(false)
   const [erro, setErro] = useState('')
+
+  // Google Calendar
+  const [gcClientEmail, setGcClientEmail] = useState('')
+  const [gcPrivateKey, setGcPrivateKey] = useState('')
+  const [gcCalendarId, setGcCalendarId] = useState('')
+  const [showPrivateKey, setShowPrivateKey] = useState(false)
+  const [testingCalendar, setTestingCalendar] = useState(false)
+  const [calendarTestResult, setCalendarTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
+
   const isSelfManaged = role === 'self_managed'
   const podeGerenciarOperadores = role === 'admin_tenant' || role === 'self_managed'
+  const agendamentosAtivo = funcoes.includes('agendamentos')
 
   useEffect(() => {
     async function fetchData() {
@@ -156,12 +156,18 @@ export default function ConfiguracoesPage() {
       setRole(userData.role || '')
       const { data: tenantData } = await supabase
         .from('tenants')
-        .select('id, nome, slug, prompt_agente, mensagem_fora_horario, horario_funcionamento, avatar_url')
+        .select('id, nome, slug, prompt_agente, mensagem_fora_horario, horario_funcionamento, avatar_url, google_calendar_config')
         .eq('id', userData.tenant_id)
         .single()
       if (tenantData) {
         setTenant(tenantData as TenantData)
-        setHorario((tenantData.horario_funcionamento as HorarioFuncionamento) || HORARIO_PADRAO)
+        const h = tenantData.horario_funcionamento as HorarioFuncionamento | null
+        setHorario(h ?? HORARIO_PADRAO)
+        setFuncoes(h?.funcoes ?? [])
+        const gc = tenantData.google_calendar_config as GoogleCalendarConfig | null
+        setGcClientEmail(gc?.client_email ?? '')
+        setGcPrivateKey(gc?.private_key ?? '')
+        setGcCalendarId(gc?.calendar_id ?? '')
       }
       if (userData.role === 'self_managed') {
         const { data: files } = await supabase
@@ -173,6 +179,8 @@ export default function ConfiguracoesPage() {
     }
     fetchData()
   }, [])
+
+  // ─── Avatar ───────────────────────────────────────────────────────────────
 
   async function handleUploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
@@ -225,34 +233,61 @@ export default function ConfiguracoesPage() {
     setUploadandoAvatar(false)
   }
 
+  // ─── Salvar ───────────────────────────────────────────────────────────────
+
   async function handleSalvar() {
     if (!tenant) return
     setSalvando(true); setSucesso(false); setErro('')
     const supabase = createClient()
+
+    const horarioComFuncoes: HorarioFuncionamento = { ...horario, funcoes }
+
+    const gcConfig = gcClientEmail && gcPrivateKey && gcCalendarId
+      ? { client_email: gcClientEmail.trim(), private_key: gcPrivateKey.trim(), calendar_id: gcCalendarId.trim() }
+      : null
+
     const { error: tenantErr } = await supabase.from('tenants').update({
       prompt_agente: tenant.prompt_agente,
       mensagem_fora_horario: tenant.mensagem_fora_horario,
-      horario_funcionamento: horario,
+      horario_funcionamento: horarioComFuncoes,
+      google_calendar_config: gcConfig,
     }).eq('id', tenant.id)
-    if (tenantErr) { setErro('Erro ao salvar configurações. Tente novamente.'); setSalvando(false); return }
-    const agentDerived = derivarAgentConfig(horario)
+
+    if (tenantErr) {
+      setErro('Erro ao salvar configurações. Tente novamente.')
+      setSalvando(false)
+      return
+    }
+
+    const diasStr = horario.dias.map(d => DIAS_NUM_TO_STR[d]).filter(Boolean)
+
     const { error: agentErr } = await supabase.from('agent_config').upsert({
       tenant_id: tenantId,
       prompt_principal: tenant.prompt_agente,
       mensagem_ausencia: tenant.mensagem_fora_horario,
-      horario_inicio: agentDerived.horario_inicio,
-      horario_fim: agentDerived.horario_fim,
-      dias_funcionamento: agentDerived.dias_funcionamento,
+      horario_inicio: horario.inicio,
+      horario_fim: horario.fim,
+      dias_funcionamento: diasStr,
+      funcoes_ativas: funcoes,
+      google_calendar_config: gcConfig,
       motor_ia_principal: 'openai',
       motor_ia_backup: 'anthropic',
-      ativo: true, temperatura: 0.7, max_tokens: 1000,
+      ativo: true,
+      temperatura: 0.7,
+      max_tokens: 1000,
       atualizado_em: new Date().toISOString(),
     }, { onConflict: 'tenant_id' })
+
     setSalvando(false)
-    if (agentErr) { setErro('Configurações salvas parcialmente. Erro ao sincronizar com o agente: ' + agentErr.message); return }
+    if (agentErr) {
+      setErro('Configurações salvas parcialmente. Erro ao sincronizar com o agente: ' + agentErr.message)
+      return
+    }
     setSucesso(true)
     setTimeout(() => setSucesso(false), 3000)
   }
+
+  // ─── Upload KB ────────────────────────────────────────────────────────────
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
@@ -274,11 +309,15 @@ export default function ConfiguracoesPage() {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('tenant_id', tenant.id)
-    const res = await fetch('/api/knowledge-base/upload', { method: 'POST', body: formData })
+    // ✅ Rota correta
+    const res = await fetch('/api/knowledge/upload', { method: 'POST', body: formData })
     const data = await res.json()
     setUploadando(false); setUploadProgresso('')
-    if (!res.ok || !data.success) { setErro(data.error ?? 'Erro ao enviar arquivo.') }
-    else { setArquivos(prev => [data.arquivo, ...prev]) }
+    if (!res.ok || !data.success) {
+      setErro(data.error ?? 'Erro ao enviar arquivo.')
+    } else {
+      setArquivos(prev => [data.arquivo, ...prev])
+    }
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -294,11 +333,42 @@ export default function ConfiguracoesPage() {
     setExcluindo(null)
   }
 
-  function toggleDia(dia: keyof HorarioFuncionamento) {
-    setHorario(prev => ({ ...prev, [dia]: { ...prev[dia], ativo: !prev[dia].ativo } }))
+  // ─── Google Calendar test ─────────────────────────────────────────────────
+
+  async function handleTestCalendar() {
+    if (!gcClientEmail || !gcPrivateKey || !gcCalendarId) return
+    setTestingCalendar(true); setCalendarTestResult(null)
+    try {
+      const res = await fetch('/api/admin/testar-calendar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_email: gcClientEmail.trim(),
+          private_key: gcPrivateKey.trim(),
+          calendar_id: gcCalendarId.trim(),
+        }),
+      })
+      const data = await res.json()
+      setCalendarTestResult(
+        res.ok
+          ? { ok: true, msg: 'Conexão com o Google Calendar funcionando!' }
+          : { ok: false, msg: data.error ?? 'Erro ao conectar.' }
+      )
+    } catch {
+      setCalendarTestResult({ ok: false, msg: 'Erro de rede ao testar conexão.' })
+    }
+    setTestingCalendar(false)
   }
-  function updateHorarioDia(dia: keyof HorarioFuncionamento, campo: 'inicio' | 'fim', valor: string) {
-    setHorario(prev => ({ ...prev, [dia]: { ...prev[dia], [campo]: valor } }))
+
+  function toggleDia(d: number) {
+    setHorario(prev => ({
+      ...prev,
+      dias: prev.dias.includes(d) ? prev.dias.filter(x => x !== d) : [...prev.dias, d]
+    }))
+  }
+
+  function toggleFuncao(f: string) {
+    setFuncoes(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f])
   }
 
   if (carregando) return <Skeleton />
@@ -373,34 +443,51 @@ export default function ConfiguracoesPage() {
                 className="w-full rounded-lg px-4 py-3 text-sm" style={inputDisabledStyle} />
             </div>
           </div>
-
-          {!isSelfManaged && role !== 'admin_tenant' && (
-            <p className="mt-4 text-xs flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
-              <AlertCircle size={12} />
-              Configurações avançadas disponíveis apenas para contas self-managed.
-            </p>
-          )}
         </div>
 
-        {/* Gestão de Operadores — F6-8 */}
+        {/* Gestão de Operadores */}
         {podeGerenciarOperadores && tenantId && (
           <GestaoOperadores tenantId={tenantId} />
         )}
 
         {isSelfManaged && (
           <>
-            {/* Agente */}
+            {/* Funções do agente */}
             <div className="rounded-xl p-6" style={cardStyle}>
               <h2 className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Agente de atendimento</h2>
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 Descreva como o agente deve se comportar, qual o tom, quais informações usar.
               </p>
+
+              {/* Funções */}
+              <div className="mb-4">
+                <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
+                  Função principal do agente
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {FUNCOES.map(f => (
+                    <button key={f.id} type="button" onClick={() => toggleFuncao(f.id)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
+                      style={{
+                        background: funcoes.includes(f.id) ? 'rgba(16,185,129,0.1)' : 'var(--bg-hover)',
+                        borderColor: funcoes.includes(f.id) ? 'rgba(16,185,129,0.4)' : 'var(--border)',
+                        color: funcoes.includes(f.id) ? '#10B981' : 'var(--text-muted)',
+                      }}>
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Prompt do agente</label>
               <textarea value={tenant?.prompt_agente || ''}
                 onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
                 rows={6} placeholder="Descreva como o agente deve se comportar..."
                 className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none"
-                style={{ ...inputStyle, outlineColor: '#10B981' }} />
+                style={inputStyle} />
+              <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                {(tenant?.prompt_agente || '').length} caracteres · ~{Math.round((tenant?.prompt_agente || '').length / 4)} tokens
+              </p>
             </div>
 
             {/* Horário */}
@@ -409,41 +496,44 @@ export default function ConfiguracoesPage() {
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 O agente só responderá nos dias e horários marcados como ativos.
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {DIAS_SEMANA.map(({ key, label }) => (
-                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                    <Toggle ativo={horario[key].ativo} onClick={() => toggleDia(key)} />
-                    <span style={{ width: 36, minWidth: 36, flexShrink: 0, fontSize: 14, fontWeight: 500,
-                      color: horario[key].ativo ? 'var(--text-primary)' : 'var(--text-muted)' }}>{label}</span>
-                    {horario[key].ativo ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                        <input type="time" value={horario[key].inicio}
-                          onChange={(e) => updateHorarioDia(key, 'inicio', e.target.value)}
-                          style={{ flex: 1, minWidth: 0, ...inputStyle, borderRadius: 8, padding: '8px', fontSize: 14 }}
-                          className="focus:outline-none" />
-                        <span style={{ color: 'var(--text-muted)', fontSize: 12, flexShrink: 0 }}>até</span>
-                        <input type="time" value={horario[key].fim}
-                          onChange={(e) => updateHorarioDia(key, 'fim', e.target.value)}
-                          style={{ flex: 1, minWidth: 0, ...inputStyle, borderRadius: 8, padding: '8px', fontSize: 14 }}
-                          className="focus:outline-none" />
-                      </div>
-                    ) : (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>Fechado</span>
-                    )}
-                  </div>
+
+              <div className="flex items-center gap-3 mb-4">
+                <input type="time" value={horario.inicio}
+                  onChange={(e) => setHorario(prev => ({ ...prev, inicio: e.target.value }))}
+                  className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ ...inputStyle, colorScheme: 'dark' }} />
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>até</span>
+                <input type="time" value={horario.fim}
+                  onChange={(e) => setHorario(prev => ({ ...prev, fim: e.target.value }))}
+                  className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ ...inputStyle, colorScheme: 'dark' }} />
+              </div>
+
+              <div className="flex gap-2 flex-wrap mb-4">
+                {DIAS_SEMANA.map(({ num, label }) => (
+                  <button key={num} type="button" onClick={() => toggleDia(num)}
+                    className="w-10 h-9 rounded-lg text-xs font-medium border transition-all"
+                    style={{
+                      background: horario.dias.includes(num) ? 'rgba(16,185,129,0.1)' : 'var(--bg-hover)',
+                      borderColor: horario.dias.includes(num) ? 'rgba(16,185,129,0.4)' : 'var(--border)',
+                      color: horario.dias.includes(num) ? '#10B981' : 'var(--text-muted)',
+                    }}>
+                    {label}
+                  </button>
                 ))}
               </div>
-              {(() => {
-                const derived = derivarAgentConfig(horario)
-                if (derived.dias_funcionamento.length === 0) return null
-                return (
-                  <div className="mt-4 p-3 rounded-lg text-xs" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-muted)' }}>
-                    Agente ativo: <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{derived.dias_funcionamento.join(', ')}</span>
-                    {' · '}<span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{derived.horario_inicio} às {derived.horario_fim}</span>
-                  </div>
-                )
-              })()}
-              <div className="mt-5">
+
+              {horario.dias.length > 0 && (
+                <div className="p-3 rounded-lg text-xs mb-4" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-muted)' }}>
+                  Agente ativo: <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {horario.dias.map(d => DIAS_SEMANA.find(x => x.num === d)?.label).join(', ')}
+                  </span>
+                  {' · '}
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{horario.inicio} às {horario.fim}</span>
+                </div>
+              )}
+
+              <div>
                 <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Mensagem fora do horário</label>
                 <textarea value={tenant?.mensagem_fora_horario || ''}
                   onChange={(e) => setTenant(prev => prev ? { ...prev, mensagem_fora_horario: e.target.value } : prev)}
@@ -451,6 +541,100 @@ export default function ConfiguracoesPage() {
                   className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none" style={inputStyle} />
               </div>
             </div>
+
+            {/* Google Calendar — só quando Agendamentos ativo */}
+            {agendamentosAtivo && (
+              <div className="rounded-xl p-6" style={cardStyle}>
+                <div className="flex items-center gap-2 mb-1">
+                  <Calendar size={15} style={{ color: '#10B981' }} />
+                  <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Integração Google Calendar</h2>
+                </div>
+                <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                  O agente usará estas credenciais para consultar, criar, reagendar e cancelar eventos automaticamente.
+                </p>
+
+                <details className="mb-4 rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+                  <summary className="px-4 py-2.5 text-xs font-semibold cursor-pointer select-none"
+                    style={{ background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
+                    📋 Como obter as credenciais (passo a passo)
+                  </summary>
+                  <div className="px-4 py-3 text-xs space-y-1.5" style={{ color: 'var(--text-muted)', background: 'var(--bg-surface-2)' }}>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>1.</strong> Acesse <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-[#10B981] underline inline-flex items-center gap-0.5">console.cloud.google.com <ExternalLink size={10} /></a></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>2.</strong> Crie ou selecione um projeto → ative a <strong>Google Calendar API</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>3.</strong> Vá em <strong>IAM e administrador → Contas de serviço → Criar conta de serviço</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>4.</strong> Na conta criada, clique em <strong>Chaves → Adicionar chave → JSON</strong> — baixe o arquivo</p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>5.</strong> No arquivo JSON, copie os campos <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>client_email</code> e <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>private_key</code></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>6.</strong> No Google Calendar, vá em <strong>Configurações da agenda → Compartilhar com pessoas específicas</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>7.</strong> Adicione o <strong>client_email</strong> com permissão <strong>&quot;Fazer alterações em eventos&quot;</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>8.</strong> O <strong>Calendar ID</strong> está em <strong>Configurações da agenda → Integrar agenda</strong></p>
+                  </div>
+                </details>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                      Client Email (Service Account)
+                    </label>
+                    <input type="email" value={gcClientEmail} onChange={(e) => setGcClientEmail(e.target.value)}
+                      placeholder="nome@projeto.iam.gserviceaccount.com"
+                      className="w-full rounded-lg px-3 py-2 text-xs focus:outline-none font-mono" style={inputStyle} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                      Private Key
+                    </label>
+                    <div className="relative">
+                      <textarea value={gcPrivateKey} onChange={(e) => setGcPrivateKey(e.target.value)}
+                        placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+                        rows={showPrivateKey ? 5 : 2}
+                        className="w-full rounded-lg px-3 py-2 text-xs focus:outline-none font-mono resize-none pr-10"
+                        style={{ ...inputStyle, filter: showPrivateKey ? 'none' : 'blur(3px)', userSelect: showPrivateKey ? 'auto' : 'none' }} />
+                      <button onClick={() => setShowPrivateKey(v => !v)}
+                        className="absolute right-2 top-2 p-1 rounded transition-colors"
+                        style={{ color: 'var(--text-muted)' }}>
+                        {showPrivateKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                      Cole a chave completa incluindo os cabeçalhos BEGIN/END. Será salva de forma segura.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                      Calendar ID
+                    </label>
+                    <input type="text" value={gcCalendarId} onChange={(e) => setGcCalendarId(e.target.value)}
+                      placeholder="exemplo@group.calendar.google.com"
+                      className="w-full rounded-lg px-3 py-2 text-xs focus:outline-none font-mono" style={inputStyle} />
+                  </div>
+                  <div className="flex items-center gap-3 pt-1">
+                    <button onClick={handleTestCalendar}
+                      disabled={testingCalendar || !gcClientEmail || !gcPrivateKey || !gcCalendarId}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40"
+                      style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--bg-hover)' }}>
+                      {testingCalendar
+                        ? <><div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> Testando...</>
+                        : <><Calendar size={12} /> Testar conexão</>
+                      }
+                    </button>
+                    {calendarTestResult && (
+                      <span className={`text-xs font-medium ${calendarTestResult.ok ? 'text-[#10B981]' : 'text-red-400'}`}>
+                        {calendarTestResult.ok ? '✓' : '✗'} {calendarTestResult.msg}
+                      </span>
+                    )}
+                  </div>
+                  {gcClientEmail && gcPrivateKey && gcCalendarId && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+                      style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)' }}>
+                      <div className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                      <p className="text-xs" style={{ color: '#10B981' }}>
+                        Credenciais configuradas — salve para ativar no agente
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Base de conhecimento */}
             <div className="rounded-xl p-6" style={cardStyle}>
