@@ -310,7 +310,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
       .from('users')
       .select('email')
       .eq('tenant_id', tenant.id)
-      .in('role', ['admin_tenant', 'self_managed'])
+      .in('role', ['admin_tenant', 'self_managed', 'admin_hubtek'])
       .order('criado_em', { ascending: true })
       .limit(1)
       .maybeSingle()
