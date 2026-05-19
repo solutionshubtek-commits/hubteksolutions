@@ -310,7 +310,7 @@ export default function AgendamentosPage() {
       if (!user) return
       const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
       if (!userData) return
-      const { data } = await supabase.from('tenant_instances').select('instance_name, apelido, status').eq('tenant_id', userData.tenant_id).eq('status', 'open')
+      const { data } = await supabase.from('tenant_instances').select('instance_name, apelido, status').eq('tenant_id', userData.tenant_id).eq('status', 'conectado')
       setInstances(data ?? [])
     }
     fetchInstances()
