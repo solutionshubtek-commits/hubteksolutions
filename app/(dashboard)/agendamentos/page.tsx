@@ -3,27 +3,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
-  Calendar,
-  Clock,
-  Plus,
-  Phone,
-  User,
-  Scissors,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
-  RefreshCw,
-  ChevronLeft,
-  ChevronRight,
-  Send,
-  Trash2,
-  Bell,
-  BellOff,
+  Calendar, Clock, Plus, Phone, User, Scissors,
+  CheckCircle, XCircle, AlertCircle, RefreshCw,
+  ChevronLeft, ChevronRight, Send, Trash2, Bell, BellOff,
 } from 'lucide-react'
 
-// ----------------------------------------------------------------
-// Types
-// ----------------------------------------------------------------
 interface Appointment {
   id: string
   contato_nome: string
@@ -56,215 +40,141 @@ interface TenantInstance {
   status: string
 }
 
-// ----------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
+    day: '2-digit', month: '2-digit', year: 'numeric',
     timeZone: 'America/Sao_Paulo',
   })
 }
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('pt-BR', {
-    hour: '2-digit',
-    minute: '2-digit',
+    hour: '2-digit', minute: '2-digit',
     timeZone: 'America/Sao_Paulo',
   })
 }
 
+const inputStyle: React.CSSProperties = {
+  width: '100%', borderRadius: 10,
+  border: '1px solid var(--border)',
+  background: 'var(--bg-surface-2)',
+  color: 'var(--text-primary)',
+  padding: '10px 14px', fontSize: 14, outline: 'none',
+}
+
+const labelStyle: React.CSSProperties = {
+  display: 'block', fontSize: 13, fontWeight: 500,
+  color: 'var(--text-secondary)', marginBottom: 6,
+}
+
+const selectStyle: React.CSSProperties = {
+  borderRadius: 10, border: '1px solid var(--border)',
+  background: 'var(--bg-surface-2)', color: 'var(--text-primary)',
+  padding: '10px 14px', fontSize: 14, outline: 'none', cursor: 'pointer',
+}
+
 const STATUS_CONFIG = {
-  pendente:   { label: 'Pendente',   color: 'bg-yellow-100 text-yellow-800',  icon: AlertCircle },
-  confirmado: { label: 'Confirmado', color: 'bg-green-100 text-green-800',    icon: CheckCircle },
-  cancelado:  { label: 'Cancelado',  color: 'bg-red-100 text-red-800',        icon: XCircle },
-  concluido:  { label: 'Concluído',  color: 'bg-gray-100 text-gray-600',      icon: CheckCircle },
+  pendente:   { label: 'Pendente',   bg: 'rgba(234,179,8,0.15)',   color: '#EAB308', icon: AlertCircle },
+  confirmado: { label: 'Confirmado', bg: 'rgba(34,197,94,0.15)',   color: '#22C55E', icon: CheckCircle },
+  cancelado:  { label: 'Cancelado',  bg: 'rgba(239,68,68,0.15)',   color: '#EF4444', icon: XCircle },
+  concluido:  { label: 'Concluído',  bg: 'rgba(163,163,163,0.15)', color: '#A3A3A3', icon: CheckCircle },
 }
 
 const TASK_STATUS_CONFIG = {
-  pendente:  { label: 'Agendado',  color: 'bg-blue-100 text-blue-800' },
-  enviado:   { label: 'Enviado',   color: 'bg-green-100 text-green-800' },
-  falhou:    { label: 'Falhou',    color: 'bg-red-100 text-red-800' },
-  cancelado: { label: 'Cancelado', color: 'bg-gray-100 text-gray-600' },
+  pendente:  { label: 'Agendado',  bg: 'rgba(59,130,246,0.15)',  color: '#3B82F6' },
+  enviado:   { label: 'Enviado',   bg: 'rgba(34,197,94,0.15)',   color: '#22C55E' },
+  falhou:    { label: 'Falhou',    bg: 'rgba(239,68,68,0.15)',   color: '#EF4444' },
+  cancelado: { label: 'Cancelado', bg: 'rgba(163,163,163,0.15)', color: '#A3A3A3' },
 }
 
-// ----------------------------------------------------------------
-// Modal Novo Agendamento
-// ----------------------------------------------------------------
-function ModalNovoAgendamento({
-  onClose,
-  onSaved,
-  instances,
-}: {
-  onClose: () => void
-  onSaved: () => void
-  instances: TenantInstance[]
+function ModalNovoAgendamento({ onClose, onSaved, instances }: {
+  onClose: () => void; onSaved: () => void; instances: TenantInstance[]
 }) {
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({
     instance_name: instances[0]?.instance_name ?? '',
-    contato_nome: '',
-    contato_telefone: '',
-    servico: '',
-    data_hora: '',
-    antecedencia_horas: 24,
+    contato_nome: '', contato_telefone: '', servico: '',
+    data_hora: '', antecedencia_horas: 24,
   })
 
   async function handleSubmit() {
     if (!form.contato_nome || !form.contato_telefone || !form.data_hora || !form.instance_name) {
-      alert('Preencha todos os campos obrigatórios')
-      return
+      alert('Preencha todos os campos obrigatórios'); return
     }
-
     setLoading(true)
     try {
       const res = await fetch('/api/agendamentos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error)
-      onSaved()
-      onClose()
+      onSaved(); onClose()
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Erro ao salvar')
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-gray-100 p-6">
-          <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-blue-50 p-2">
-              <Calendar className="h-5 w-5 text-blue-600" />
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', padding: 16 }}>
+      <div style={{ width: '100%', maxWidth: 520, borderRadius: 16, background: 'var(--bg-surface)', border: '1px solid var(--border)', boxShadow: '0 24px 48px rgba(0,0,0,0.4)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ borderRadius: 10, background: 'rgba(59,130,246,0.1)', padding: 8 }}>
+              <Calendar size={18} color="#3B82F6" />
             </div>
-            <h2 className="text-lg font-semibold text-gray-900">Novo Agendamento</h2>
+            <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>Novo Agendamento</span>
           </div>
-          <button onClick={onClose} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-            <XCircle className="h-5 w-5" />
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
+            <XCircle size={20} />
           </button>
         </div>
 
-        <div className="space-y-4 p-6">
-          {/* Instância */}
+        <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Instância WhatsApp <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={form.instance_name}
-              onChange={(e) => setForm((f) => ({ ...f, instance_name: e.target.value }))}
-              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            >
-              {instances.map((i) => (
-                <option key={i.instance_name} value={i.instance_name}>
-                  {i.apelido ?? i.instance_name}
-                </option>
-              ))}
+            <label style={labelStyle}>Instância WhatsApp <span style={{ color: '#EF4444' }}>*</span></label>
+            <select value={form.instance_name} onChange={e => setForm(f => ({ ...f, instance_name: e.target.value }))} style={{ ...selectStyle, width: '100%' }}>
+              {instances.length === 0 && <option value="">Nenhuma instância conectada</option>}
+              {instances.map(i => <option key={i.instance_name} value={i.instance_name}>{i.apelido ?? i.instance_name}</option>)}
             </select>
           </div>
 
-          {/* Nome e telefone */}
-          <div className="grid grid-cols-2 gap-4">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Nome do cliente <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                placeholder="João Silva"
-                value={form.contato_nome}
-                onChange={(e) => setForm((f) => ({ ...f, contato_nome: e.target.value }))}
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              />
+              <label style={labelStyle}>Nome do cliente <span style={{ color: '#EF4444' }}>*</span></label>
+              <input type="text" placeholder="João Silva" value={form.contato_nome} onChange={e => setForm(f => ({ ...f, contato_nome: e.target.value }))} style={inputStyle} />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Telefone <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                placeholder="51999999999"
-                value={form.contato_telefone}
-                onChange={(e) => setForm((f) => ({ ...f, contato_telefone: e.target.value }))}
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              />
+              <label style={labelStyle}>Telefone <span style={{ color: '#EF4444' }}>*</span></label>
+              <input type="text" placeholder="51999999999" value={form.contato_telefone} onChange={e => setForm(f => ({ ...f, contato_telefone: e.target.value }))} style={inputStyle} />
             </div>
           </div>
 
-          {/* Serviço */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">Serviço</label>
-            <input
-              type="text"
-              placeholder="Ex: Corte de cabelo, Consulta, Limpeza dental..."
-              value={form.servico}
-              onChange={(e) => setForm((f) => ({ ...f, servico: e.target.value }))}
-              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            />
+            <label style={labelStyle}>Serviço</label>
+            <input type="text" placeholder="Ex: Corte, Consulta, Limpeza dental..." value={form.servico} onChange={e => setForm(f => ({ ...f, servico: e.target.value }))} style={inputStyle} />
           </div>
 
-          {/* Data/hora */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Data e horário <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="datetime-local"
-              value={form.data_hora}
-              onChange={(e) => setForm((f) => ({ ...f, data_hora: e.target.value }))}
-              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            />
+            <label style={labelStyle}>Data e horário <span style={{ color: '#EF4444' }}>*</span></label>
+            <input type="datetime-local" value={form.data_hora} onChange={e => setForm(f => ({ ...f, data_hora: e.target.value }))} style={inputStyle} />
           </div>
 
-          {/* Antecedência do lembrete */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Enviar lembrete com antecedência de
-            </label>
-            <div className="flex items-center gap-3">
-              <select
-                value={form.antecedencia_horas}
-                onChange={(e) => setForm((f) => ({ ...f, antecedencia_horas: parseInt(e.target.value) }))}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              >
-                <option value={1}>1 hora</option>
-                <option value={2}>2 horas</option>
-                <option value={4}>4 horas</option>
-                <option value={6}>6 horas</option>
-                <option value={12}>12 horas</option>
-                <option value={24}>24 horas</option>
-                <option value={48}>48 horas</option>
+            <label style={labelStyle}>Enviar lembrete com antecedência de</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <select value={form.antecedencia_horas} onChange={e => setForm(f => ({ ...f, antecedencia_horas: parseInt(e.target.value) }))} style={selectStyle}>
+                {[1,2,4,6,12,24,48].map(h => <option key={h} value={h}>{h === 1 ? '1 hora' : `${h} horas`}</option>)}
               </select>
-              <p className="text-sm text-gray-500">antes do agendamento</p>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>antes do agendamento</span>
             </div>
           </div>
         </div>
 
-        <div className="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
-          <button
-            onClick={onClose}
-            className="rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-          >
-            {loading ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="h-4 w-4" />
-            )}
-            Salvar agendamento
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, padding: '16px 24px', borderTop: '1px solid var(--border)' }}>
+          <button onClick={onClose} style={{ borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', padding: '10px 20px', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>Cancelar</button>
+          <button onClick={handleSubmit} disabled={loading} style={{ borderRadius: 10, border: 'none', background: '#3B82F6', color: '#fff', padding: '10px 20px', fontSize: 14, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: loading ? 0.6 : 1 }}>
+            {loading ? <RefreshCw size={16} /> : <Plus size={16} />} Salvar agendamento
           </button>
         </div>
       </div>
@@ -272,144 +182,88 @@ function ModalNovoAgendamento({
   )
 }
 
-// ----------------------------------------------------------------
-// Modal Novo "Me Chama Depois" manual
-// ----------------------------------------------------------------
-function ModalMeChama({
-  onClose,
-  onSaved,
-  instances,
-}: {
-  onClose: () => void
-  onSaved: () => void
-  instances: TenantInstance[]
+function ModalMeChama({ onClose, onSaved, instances }: {
+  onClose: () => void; onSaved: () => void; instances: TenantInstance[]
 }) {
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({
     instance_name: instances[0]?.instance_name ?? '',
-    contato_nome: '',
-    contato_telefone: '',
+    contato_nome: '', contato_telefone: '',
     mensagem_inicial: 'Olá {{nome}}! Você pediu para eu entrar em contato agora. Como posso ajudar? 😊',
     agendado_para: '',
   })
 
   async function handleSubmit() {
     if (!form.contato_nome || !form.contato_telefone || !form.agendado_para || !form.mensagem_inicial) {
-      alert('Preencha todos os campos obrigatórios')
-      return
+      alert('Preencha todos os campos obrigatórios'); return
     }
-
     setLoading(true)
     try {
       const res = await fetch('/api/scheduled-tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          variaveis: { nome: form.contato_nome },
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, variaveis: { nome: form.contato_nome } }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error)
-      onSaved()
-      onClose()
+      onSaved(); onClose()
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Erro ao salvar')
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-gray-100 p-6">
-          <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-purple-50 p-2">
-              <Phone className="h-5 w-5 text-purple-600" />
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', padding: 16 }}>
+      <div style={{ width: '100%', maxWidth: 520, borderRadius: 16, background: 'var(--bg-surface)', border: '1px solid var(--border)', boxShadow: '0 24px 48px rgba(0,0,0,0.4)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ borderRadius: 10, background: 'rgba(168,85,247,0.1)', padding: 8 }}>
+              <Phone size={18} color="#A855F7" />
             </div>
-            <h2 className="text-lg font-semibold text-gray-900">Agendar Recontato</h2>
+            <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>Agendar Recontato</span>
           </div>
-          <button onClick={onClose} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-            <XCircle className="h-5 w-5" />
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
+            <XCircle size={20} />
           </button>
         </div>
 
-        <div className="space-y-4 p-6">
+        <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">Instância WhatsApp</label>
-            <select
-              value={form.instance_name}
-              onChange={(e) => setForm((f) => ({ ...f, instance_name: e.target.value }))}
-              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
-            >
-              {instances.map((i) => (
-                <option key={i.instance_name} value={i.instance_name}>
-                  {i.apelido ?? i.instance_name}
-                </option>
-              ))}
+            <label style={labelStyle}>Instância WhatsApp</label>
+            <select value={form.instance_name} onChange={e => setForm(f => ({ ...f, instance_name: e.target.value }))} style={{ ...selectStyle, width: '100%' }}>
+              {instances.length === 0 && <option value="">Nenhuma instância conectada</option>}
+              {instances.map(i => <option key={i.instance_name} value={i.instance_name}>{i.apelido ?? i.instance_name}</option>)}
             </select>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Nome <span className="text-red-500">*</span></label>
-              <input
-                type="text"
-                placeholder="Nome do cliente"
-                value={form.contato_nome}
-                onChange={(e) => setForm((f) => ({ ...f, contato_nome: e.target.value }))}
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
-              />
+              <label style={labelStyle}>Nome <span style={{ color: '#EF4444' }}>*</span></label>
+              <input type="text" placeholder="Nome do cliente" value={form.contato_nome} onChange={e => setForm(f => ({ ...f, contato_nome: e.target.value }))} style={inputStyle} />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Telefone <span className="text-red-500">*</span></label>
-              <input
-                type="text"
-                placeholder="51999999999"
-                value={form.contato_telefone}
-                onChange={(e) => setForm((f) => ({ ...f, contato_telefone: e.target.value }))}
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
-              />
+              <label style={labelStyle}>Telefone <span style={{ color: '#EF4444' }}>*</span></label>
+              <input type="text" placeholder="51999999999" value={form.contato_telefone} onChange={e => setForm(f => ({ ...f, contato_telefone: e.target.value }))} style={inputStyle} />
             </div>
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Quando contatar <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="datetime-local"
-              value={form.agendado_para}
-              onChange={(e) => setForm((f) => ({ ...f, agendado_para: e.target.value }))}
-              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
-            />
+            <label style={labelStyle}>Quando contatar <span style={{ color: '#EF4444' }}>*</span></label>
+            <input type="datetime-local" value={form.agendado_para} onChange={e => setForm(f => ({ ...f, agendado_para: e.target.value }))} style={inputStyle} />
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Mensagem de abertura <span className="text-sm text-gray-400">(use {'{{nome}}'} para o nome)</span>
+            <label style={labelStyle}>
+              Mensagem de abertura{' '}
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>(use {'{{nome}}'} para o nome)</span>
             </label>
-            <textarea
-              rows={3}
-              value={form.mensagem_inicial}
-              onChange={(e) => setForm((f) => ({ ...f, mensagem_inicial: e.target.value }))}
-              className="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
-            />
+            <textarea rows={3} value={form.mensagem_inicial} onChange={e => setForm(f => ({ ...f, mensagem_inicial: e.target.value }))} style={{ ...inputStyle, resize: 'none' }} />
           </div>
         </div>
 
-        <div className="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
-          <button onClick={onClose} className="rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Cancelar
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="flex items-center gap-2 rounded-xl bg-purple-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-60"
-          >
-            {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Agendar recontato
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, padding: '16px 24px', borderTop: '1px solid var(--border)' }}>
+          <button onClick={onClose} style={{ borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', padding: '10px 20px', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>Cancelar</button>
+          <button onClick={handleSubmit} disabled={loading} style={{ borderRadius: 10, border: 'none', background: '#A855F7', color: '#fff', padding: '10px 20px', fontSize: 14, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: loading ? 0.6 : 1 }}>
+            {loading ? <RefreshCw size={16} /> : <Send size={16} />} Agendar recontato
           </button>
         </div>
       </div>
@@ -417,12 +271,8 @@ function ModalMeChama({
   )
 }
 
-// ----------------------------------------------------------------
-// Página principal
-// ----------------------------------------------------------------
 export default function AgendamentosPage() {
   const supabase = createClient()
-
   const [tab, setTab] = useState<'agendamentos' | 'recontatos'>('agendamentos')
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [tasks, setTasks] = useState<ScheduledTask[]>([])
@@ -433,42 +283,26 @@ export default function AgendamentosPage() {
   const [filterStatus, setFilterStatus] = useState('')
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
-
   const LIMIT = 15
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
       if (tab === 'agendamentos') {
-        const params = new URLSearchParams({
-          page: String(page),
-          limit: String(LIMIT),
-          ...(filterStatus && { status: filterStatus }),
-        })
+        const params = new URLSearchParams({ page: String(page), limit: String(LIMIT), ...(filterStatus && { status: filterStatus }) })
         const res = await fetch(`/api/agendamentos?${params}`)
         const json = await res.json()
-        setAppointments(json.data ?? [])
-        setTotalCount(json.count ?? 0)
+        setAppointments(json.data ?? []); setTotalCount(json.count ?? 0)
       } else {
-        const params = new URLSearchParams({
-          page: String(page),
-          limit: String(LIMIT),
-          ...(filterStatus && { status: filterStatus }),
-          tipo: 'me_chama_depois',
-        })
+        const params = new URLSearchParams({ page: String(page), limit: String(LIMIT), ...(filterStatus && { status: filterStatus }), tipo: 'me_chama_depois' })
         const res = await fetch(`/api/scheduled-tasks?${params}`)
         const json = await res.json()
-        setTasks(json.data ?? [])
-        setTotalCount(json.count ?? 0)
+        setTasks(json.data ?? []); setTotalCount(json.count ?? 0)
       }
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }, [tab, page, filterStatus])
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  useEffect(() => { fetchData() }, [fetchData])
 
   useEffect(() => {
     async function fetchInstances() {
@@ -476,215 +310,132 @@ export default function AgendamentosPage() {
       if (!user) return
       const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
       if (!userData) return
-      const { data } = await supabase
-        .from('tenant_instances')
-        .select('instance_name, apelido, status')
-        .eq('tenant_id', userData.tenant_id)
-        .eq('status', 'open')
+      const { data } = await supabase.from('tenant_instances').select('instance_name, apelido, status').eq('tenant_id', userData.tenant_id).eq('status', 'open')
       setInstances(data ?? [])
     }
     fetchInstances()
   }, [supabase])
 
   async function cancelarTask(id: string) {
-    await fetch(`/api/scheduled-tasks?id=${id}`, { method: 'DELETE' })
-    fetchData()
+    await fetch(`/api/scheduled-tasks?id=${id}`, { method: 'DELETE' }); fetchData()
   }
-
   async function cancelarAgendamento(id: string) {
-    await fetch(`/api/agendamentos`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, status: 'cancelado' }),
-    })
-    fetchData()
+    await fetch('/api/agendamentos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status: 'cancelado' }) }); fetchData()
   }
-
   async function confirmarAgendamento(id: string) {
-    await fetch(`/api/agendamentos`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, status: 'confirmado' }),
-    })
-    fetchData()
+    await fetch('/api/agendamentos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status: 'confirmado' }) }); fetchData()
   }
 
   const totalPages = Math.ceil(totalCount / LIMIT)
+  const thStyle: React.CSSProperties = { padding: '12px 20px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-6xl space-y-6 p-6">
+    <div style={{ minHeight: '100vh', background: 'var(--bg-page)', padding: 24 }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
 
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Agendamentos</h1>
-            <p className="text-sm text-gray-500">Gerencie lembretes e recontatos proativos</p>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Agendamentos</h1>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>Gerencie lembretes e recontatos proativos</p>
           </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => setModalRecontato(true)}
-              className="flex items-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-sm font-medium text-purple-700 hover:bg-purple-100"
-            >
-              <Phone className="h-4 w-4" />
-              Agendar recontato
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button onClick={() => setModalRecontato(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 10, border: '1px solid var(--border-2)', background: 'rgba(168,85,247,0.08)', color: '#A855F7', padding: '10px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+              <Phone size={15} /> Agendar recontato
             </button>
-            <button
-              onClick={() => setModalAgendamento(true)}
-              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              <Plus className="h-4 w-4" />
-              Novo agendamento
+            <button onClick={() => setModalAgendamento(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 10, border: 'none', background: '#3B82F6', color: '#fff', padding: '10px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+              <Plus size={15} /> Novo agendamento
             </button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 rounded-xl bg-gray-100 p-1 w-fit">
-          {[
-            { key: 'agendamentos', label: 'Agendamentos', icon: Calendar },
-            { key: 'recontatos', label: 'Recontatos', icon: Phone },
-          ].map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => { setTab(key as typeof tab); setPage(1); setFilterStatus('') }}
-              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
-                tab === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
+        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 4, width: 'fit-content' }}>
+          {([{ key: 'agendamentos', label: 'Agendamentos', icon: Calendar }, { key: 'recontatos', label: 'Recontatos', icon: Phone }] as const).map(({ key, label, icon: Icon }) => (
+            <button key={key} onClick={() => { setTab(key); setPage(1); setFilterStatus('') }} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 8, border: 'none', background: tab === key ? 'var(--bg-hover)' : 'transparent', color: tab === key ? 'var(--text-primary)' : 'var(--text-muted)', padding: '8px 16px', fontSize: 13, fontWeight: tab === key ? 600 : 400, cursor: 'pointer' }}>
+              <Icon size={14} /> {label}
             </button>
           ))}
         </div>
 
         {/* Filtros */}
-        <div className="flex items-center gap-3">
-          <select
-            value={filterStatus}
-            onChange={(e) => { setFilterStatus(e.target.value); setPage(1) }}
-            className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none"
-          >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }} style={selectStyle}>
             <option value="">Todos os status</option>
-            {tab === 'agendamentos' ? (
-              <>
-                <option value="pendente">Pendente</option>
-                <option value="confirmado">Confirmado</option>
-                <option value="cancelado">Cancelado</option>
-                <option value="concluido">Concluído</option>
-              </>
-            ) : (
-              <>
-                <option value="pendente">Agendado</option>
-                <option value="enviado">Enviado</option>
-                <option value="falhou">Falhou</option>
-                <option value="cancelado">Cancelado</option>
-              </>
-            )}
+            {tab === 'agendamentos'
+              ? <><option value="pendente">Pendente</option><option value="confirmado">Confirmado</option><option value="cancelado">Cancelado</option><option value="concluido">Concluído</option></>
+              : <><option value="pendente">Agendado</option><option value="enviado">Enviado</option><option value="falhou">Falhou</option><option value="cancelado">Cancelado</option></>
+            }
           </select>
-          <button
-            onClick={fetchData}
-            className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            Atualizar
+          <button onClick={fetchData} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', padding: '10px 16px', fontSize: 13, cursor: 'pointer' }}>
+            <RefreshCw size={14} /> Atualizar
           </button>
-          <span className="text-sm text-gray-400">{totalCount} registro{totalCount !== 1 ? 's' : ''}</span>
+          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{totalCount} registro{totalCount !== 1 ? 's' : ''}</span>
         </div>
 
-        {/* Lista Agendamentos */}
+        {/* Tabela Agendamentos */}
         {tab === 'agendamentos' && (
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <div style={{ borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
             {loading ? (
-              <div className="flex items-center justify-center py-16">
-                <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
-              </div>
+              <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}><RefreshCw size={24} color="var(--text-muted)" /></div>
             ) : appointments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                <Calendar className="h-10 w-10 text-gray-300" />
-                <p className="text-sm text-gray-500">Nenhum agendamento encontrado</p>
-                <button
-                  onClick={() => setModalAgendamento(true)}
-                  className="text-sm font-medium text-blue-600 hover:underline"
-                >
-                  Criar o primeiro agendamento
-                </button>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 64, textAlign: 'center' }}>
+                <Calendar size={40} color="var(--text-label)" />
+                <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: 0 }}>Nenhum agendamento encontrado</p>
+                <button onClick={() => setModalAgendamento(true)} style={{ background: 'none', border: 'none', color: '#3B82F6', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>Criar o primeiro agendamento</button>
               </div>
             ) : (
-              <table className="w-full">
-                <thead className="border-b border-gray-100 bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Cliente</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Serviço</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Data/Hora</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Lembrete</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">Ações</th>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-surface-2)' }}>
+                    {['Cliente', 'Serviço', 'Data/Hora', 'Status', 'Lembrete', 'Ações'].map(h => <th key={h} style={thStyle}>{h}</th>)}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {appointments.map((appt) => {
+                <tbody>
+                  {appointments.map(appt => {
                     const sc = STATUS_CONFIG[appt.status]
                     const StatusIcon = sc.icon
                     return (
-                      <tr key={appt.id} className="hover:bg-gray-50/50 transition-colors">
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50">
-                              <User className="h-4 w-4 text-blue-600" />
+                      <tr key={appt.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '14px 20px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <User size={15} color="#3B82F6" />
                             </div>
                             <div>
-                              <p className="text-sm font-medium text-gray-900">{appt.contato_nome}</p>
-                              <p className="text-xs text-gray-400">{appt.contato_telefone}</p>
+                              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>{appt.contato_nome}</p>
+                              <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>{appt.contato_telefone}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <Scissors className="h-4 w-4 text-gray-400" />
-                            <span className="text-sm text-gray-700">{appt.servico ?? '—'}</span>
+                        <td style={{ padding: '14px 20px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Scissors size={13} color="var(--text-muted)" />
+                            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{appt.servico ?? '—'}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{formatDate(appt.data_hora)}</p>
-                            <p className="text-xs text-gray-400">{formatTime(appt.data_hora)}</p>
-                          </div>
+                        <td style={{ padding: '14px 20px' }}>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{formatDate(appt.data_hora)}</p>
+                          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>{formatTime(appt.data_hora)}</p>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${sc.color}`}>
-                            <StatusIcon className="h-3 w-3" />
-                            {sc.label}
+                        <td style={{ padding: '14px 20px' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, borderRadius: 20, padding: '4px 10px', fontSize: 12, fontWeight: 500, background: sc.bg, color: sc.color }}>
+                            <StatusIcon size={11} /> {sc.label}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
-                          {appt.lembrete_enviado ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs text-green-600">
-                              <Bell className="h-3.5 w-3.5" /> Enviado
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
-                              <BellOff className="h-3.5 w-3.5" /> {appt.antecedencia_horas}h antes
-                            </span>
-                          )}
+                        <td style={{ padding: '14px 20px' }}>
+                          {appt.lembrete_enviado
+                            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#22C55E' }}><Bell size={13} /> Enviado</span>
+                            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}><BellOff size={13} /> {appt.antecedencia_horas}h antes</span>
+                          }
                         </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                        <td style={{ padding: '14px 20px', textAlign: 'right' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
                             {appt.status === 'pendente' && (
-                              <button
-                                onClick={() => confirmarAgendamento(appt.id)}
-                                className="rounded-lg bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100"
-                              >
-                                Confirmar
-                              </button>
+                              <button onClick={() => confirmarAgendamento(appt.id)} style={{ borderRadius: 8, border: 'none', background: 'rgba(34,197,94,0.1)', color: '#22C55E', padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Confirmar</button>
                             )}
                             {(appt.status === 'pendente' || appt.status === 'confirmado') && (
-                              <button
-                                onClick={() => cancelarAgendamento(appt.id)}
-                                className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              <button onClick={() => cancelarAgendamento(appt.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><Trash2 size={15} /></button>
                             )}
                           </div>
                         </td>
@@ -697,86 +448,58 @@ export default function AgendamentosPage() {
           </div>
         )}
 
-        {/* Lista Recontatos */}
+        {/* Tabela Recontatos */}
         {tab === 'recontatos' && (
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <div style={{ borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
             {loading ? (
-              <div className="flex items-center justify-center py-16">
-                <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
-              </div>
+              <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}><RefreshCw size={24} color="var(--text-muted)" /></div>
             ) : tasks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                <Phone className="h-10 w-10 text-gray-300" />
-                <p className="text-sm text-gray-500">Nenhum recontato agendado</p>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 64, textAlign: 'center' }}>
+                <Phone size={40} color="var(--text-label)" />
+                <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: 0 }}>Nenhum recontato agendado</p>
               </div>
             ) : (
-              <table className="w-full">
-                <thead className="border-b border-gray-100 bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Cliente</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Agendado para</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Origem</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Mensagem</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">Ações</th>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-surface-2)' }}>
+                    {['Cliente', 'Agendado para', 'Origem', 'Status', 'Mensagem', 'Ações'].map(h => <th key={h} style={thStyle}>{h}</th>)}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {tasks.map((task) => {
+                <tbody>
+                  {tasks.map(task => {
                     const sc = TASK_STATUS_CONFIG[task.status]
                     return (
-                      <tr key={task.id} className="hover:bg-gray-50/50 transition-colors">
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-purple-50">
-                              <User className="h-4 w-4 text-purple-600" />
+                      <tr key={task.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '14px 20px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'rgba(168,85,247,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <User size={15} color="#A855F7" />
                             </div>
                             <div>
-                              <p className="text-sm font-medium text-gray-900">{task.contato_nome}</p>
-                              <p className="text-xs text-gray-400">{task.contato_telefone}</p>
+                              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>{task.contato_nome}</p>
+                              <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>{task.contato_telefone}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{formatDate(task.agendado_para)}</p>
-                            <p className="text-xs text-gray-400">{formatTime(task.agendado_para)}</p>
-                          </div>
+                        <td style={{ padding: '14px 20px' }}>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{formatDate(task.agendado_para)}</p>
+                          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>{formatTime(task.agendado_para)}</p>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-                            task.criado_por ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'
-                          }`}>
-                            {task.criado_por ? (
-                              <><User className="h-3 w-3" /> Operador</>
-                            ) : (
-                              <><Clock className="h-3 w-3" /> Agente IA</>
-                            )}
+                        <td style={{ padding: '14px 20px' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, borderRadius: 20, padding: '4px 10px', fontSize: 12, fontWeight: 500, background: task.criado_por ? 'rgba(59,130,246,0.1)' : 'rgba(249,115,22,0.1)', color: task.criado_por ? '#3B82F6' : '#F97316' }}>
+                            {task.criado_por ? <><User size={11} /> Operador</> : <><Clock size={11} /> Agente IA</>}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${sc.color}`}>
-                            {sc.label}
-                          </span>
-                          {task.erro && (
-                            <p className="mt-1 text-xs text-red-500 max-w-[150px] truncate" title={task.erro}>
-                              {task.erro}
-                            </p>
-                          )}
+                        <td style={{ padding: '14px 20px' }}>
+                          <span style={{ display: 'inline-flex', borderRadius: 20, padding: '4px 10px', fontSize: 12, fontWeight: 500, background: sc.bg, color: sc.color }}>{sc.label}</span>
+                          {task.erro && <p style={{ margin: '4px 0 0', fontSize: 11, color: '#EF4444', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={task.erro}>{task.erro}</p>}
                         </td>
-                        <td className="px-6 py-4">
-                          <p className="max-w-[200px] truncate text-xs text-gray-500" title={task.mensagem_inicial}>
-                            {task.mensagem_inicial}
-                          </p>
+                        <td style={{ padding: '14px 20px' }}>
+                          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={task.mensagem_inicial}>{task.mensagem_inicial}</p>
                         </td>
-                        <td className="px-6 py-4 text-right">
+                        <td style={{ padding: '14px 20px', textAlign: 'right' }}>
                           {task.status === 'pendente' && (
-                            <button
-                              onClick={() => cancelarTask(task.id)}
-                              className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            <button onClick={() => cancelarTask(task.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><Trash2 size={15} /></button>
                           )}
                         </td>
                       </tr>
@@ -790,45 +513,18 @@ export default function AgendamentosPage() {
 
         {/* Paginação */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-500">
-              Página {page} de {totalPages}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Página {page} de {totalPages}</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={{ borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', padding: 8, cursor: 'pointer', opacity: page === 1 ? 0.4 : 1 }}><ChevronLeft size={15} /></button>
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={{ borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)', padding: 8, cursor: 'pointer', opacity: page === totalPages ? 0.4 : 1 }}><ChevronRight size={15} /></button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Modais */}
-      {modalAgendamento && (
-        <ModalNovoAgendamento
-          onClose={() => setModalAgendamento(false)}
-          onSaved={fetchData}
-          instances={instances}
-        />
-      )}
-      {modalRecontato && (
-        <ModalMeChama
-          onClose={() => setModalRecontato(false)}
-          onSaved={fetchData}
-          instances={instances}
-        />
-      )}
+      {modalAgendamento && <ModalNovoAgendamento onClose={() => setModalAgendamento(false)} onSaved={fetchData} instances={instances} />}
+      {modalRecontato && <ModalMeChama onClose={() => setModalRecontato(false)} onSaved={fetchData} instances={instances} />}
     </div>
   )
 }
