@@ -27,6 +27,7 @@ import {
   parseDateFromText,
   type GoogleCalendarConfig,
 } from '@/lib/google-calendar'
+import { detectarMeChama } from './detect-me-chama'
 
 const DIAS_PT: Record<number, string> = {
   0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab',
@@ -548,13 +549,25 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   await sendTextMessage(payload.instanceName, payload.phone, resultado.content)
   await updateConversationTimestamp(supabase, conversa.id)
 
-  // 13. Registra uso de IA
-  await logAiUsage(supabase, {
-    tenantId: payload.tenantId,
-    conversationId: conversa.id,
-    tokensIn: resultado.tokensIn,
-    tokensOut: resultado.tokensOut,
-    motor: motorUsado,
-    custoReais: calcularCusto(motorUsado, resultado.tokensIn, resultado.tokensOut),
-  })
+// 13. Registra uso de IA
+await logAiUsage(supabase, {
+  tenantId: payload.tenantId,
+  conversationId: conversa.id,
+  tokensIn: resultado.tokensIn,
+  tokensOut: resultado.tokensOut,
+  motor: motorUsado,
+  custoReais: calcularCusto(motorUsado, resultado.tokensIn, resultado.tokensOut),
+})
+
+// 14. Detecta intenção "me chama depois" — fire-and-forget
+detectarMeChama({
+  mensagemCliente: conteudoProcessado,
+  conversationId: conversa.id,
+  tenantId: payload.tenantId,
+  instanceName: payload.instanceName,
+  contatoNome: conversa.contato_nome ?? payload.pushName ?? payload.phone,
+  contatoTelefone: payload.phone,
+}).catch((err) =>
+  console.error('[process-message] detectarMeChama falhou:', err)
+)
 }

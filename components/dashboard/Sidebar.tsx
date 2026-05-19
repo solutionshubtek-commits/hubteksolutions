@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight, RefreshCw, X } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight, RefreshCw, X, Calendar } from 'lucide-react'
 import { useSidebar } from '@/contexts/SidebarContext'
 
 const WHATSAPP_SUPORTE = 'https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+de+suporte+HubTek'
@@ -15,6 +15,7 @@ const ITEMS_BASE = [
   { href: '/visao-geral',        label: 'Visão Geral',        icon: LayoutDashboard },
   { href: '/conversas',          label: 'Conversas',          icon: MessageSquare },
   { href: '/historico',          label: 'Histórico',          icon: History },
+  { href: '/agendamentos',       label: 'Agendamentos',       icon: Calendar },
   { href: '/reconexao-whatsapp', label: 'Reconexão WhatsApp', icon: Smartphone },
 ]
 
