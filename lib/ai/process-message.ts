@@ -115,7 +115,14 @@ REGRAS DE COMPORTAMENTO — SIGA RIGOROSAMENTE:
     prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
   }
 
-  prompt += '\n\nResponda sempre em português brasileiro.'
+  // Injeta data/hora atual de Brasília
+const agora = new Date()
+const agoraBrasil = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
+const dataAtual = agoraBrasil.toISOString().slice(0, 10)
+const horaAtual = agoraBrasil.toISOString().slice(11, 16)
+prompt += `\n\nDATA E HORA ATUAL (Brasília): ${dataAtual} às ${horaAtual}. Use esta referência para interpretar "hoje", "amanhã", "próxima semana" e para gerar timestamps ISO 8601 com offset -03:00.`
+
+prompt += '\n\nResponda sempre em português brasileiro.'
   return prompt
 }
 
