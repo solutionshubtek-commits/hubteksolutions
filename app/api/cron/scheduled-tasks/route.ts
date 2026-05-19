@@ -53,12 +53,17 @@ export async function GET(request: Request) {
         continue
       }
 
-      // Verifica limite do plano
-      const limitok = await verificarLimitePlano(task.tenant_id, tenant.plano)
-      if (!limitok) {
-        await marcarFalhou(task.id, 'limite_plano_atingido')
-        falhas++
-        continue
+      // Resolve conversa (reutiliza aberta, reabre encerrada ou cria nova)
+      const { conversationId, nova } = await criarOuReabrirConversa(task)
+
+      // Verifica limite do plano apenas se for conversa nova ou reaberta
+      if (nova) {
+        const limitok = await verificarLimitePlano(task.tenant_id, tenant.plano)
+        if (!limitok) {
+          await marcarFalhou(task.id, 'limite_plano_atingido')
+          falhas++
+          continue
+        }
       }
 
       // Prepara mensagem com variáveis interpoladas
@@ -87,9 +92,6 @@ export async function GET(request: Request) {
         falhas++
         continue
       }
-
-      // Cria ou reabre conversa — sempre nova para contabilizar no plano
-      const conversationId = await criarNovaConversa(task)
 
       // Marca task como enviada
       await supabase
@@ -137,18 +139,50 @@ function interpolarMensagem(template: string, vars: Record<string, string>): str
 }
 
 function formatarNumero(telefone: string): string {
-  // Remove tudo que não for dígito e garante código do país
   const digits = telefone.replace(/\D/g, '')
   if (digits.startsWith('55')) return `${digits}@s.whatsapp.net`
   return `55${digits}@s.whatsapp.net`
 }
 
-async function criarNovaConversa(task: {
+async function criarOuReabrirConversa(task: {
   tenant_id: string
   instance_name: string
   contato_nome: string
   contato_telefone: string
-}): Promise<string> {
+}): Promise<{ conversationId: string; nova: boolean }> {
+  // Busca conversa mais recente para este contato
+  const { data: existente } = await supabase
+    .from('conversations')
+    .select('id, status')
+    .eq('tenant_id', task.tenant_id)
+    .eq('contato_telefone', task.contato_telefone)
+    .order('ultima_mensagem_em', { ascending: false })
+    .limit(1)
+    .single()
+
+  // Conversa aberta — reutiliza sem contabilizar no plano
+  if (existente && existente.status === 'aberta') {
+    await supabase
+      .from('conversations')
+      .update({ ultima_mensagem_em: new Date().toISOString() })
+      .eq('id', existente.id)
+    return { conversationId: existente.id, nova: false }
+  }
+
+  // Conversa encerrada — reabre e contabiliza no plano
+  if (existente && existente.status === 'encerrada') {
+    await supabase
+      .from('conversations')
+      .update({
+        status: 'aberta',
+        agente_pausado: false,
+        ultima_mensagem_em: new Date().toISOString(),
+      })
+      .eq('id', existente.id)
+    return { conversationId: existente.id, nova: true }
+  }
+
+  // Não existe — cria nova e contabiliza no plano
   const { data, error } = await supabase
     .from('conversations')
     .insert({
@@ -166,11 +200,10 @@ async function criarNovaConversa(task: {
   if (error || !data) {
     throw new Error(`Falha ao criar conversa: ${error?.message}`)
   }
-  return data.id
+  return { conversationId: data.id, nova: true }
 }
 
 async function verificarLimitePlano(tenantId: string, plano: string): Promise<boolean> {
-  // Importa limites do plano
   const LIMITES: Record<string, number> = {
     essencial: 50,
     acelerador: 100,
@@ -180,7 +213,6 @@ async function verificarLimitePlano(tenantId: string, plano: string): Promise<bo
 
   const limite = LIMITES[plano] ?? 50
 
-  // Conta conversas do mês atual
   const inicioMes = new Date()
   inicioMes.setDate(1)
   inicioMes.setHours(0, 0, 0, 0)
