@@ -106,8 +106,11 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
     }
     setSalvando(true); setErro('')
     const supabase = createClient()
-    const { data: slugExiste } = await supabase.from('tenants').select('id').eq('slug', form.slug).single()
+    const { data: slugExiste } = await supabase.from('tenants').select('id').eq('slug', form.slug).maybeSingle()
     if (slugExiste) { setErro('Esse slug já está em uso.'); setSalvando(false); return }
+
+    const { data: emailExiste } = await supabase.from('users').select('id').eq('email', form.email_admin).maybeSingle()
+    if (emailExiste) { setErro('Este e-mail já está cadastrado no sistema.'); setSalvando(false); return }
 
     const { data: tenant, error: tenantErr } = await supabase.from('tenants')
       .insert({ nome: form.nome, slug: form.slug, status: 'ativo', expira_em: form.expira_em, plano: form.plano })
@@ -283,6 +286,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   const [extrato, setExtrato] = useState<ExtratoMes[]>([])
   const [carregandoExtrato, setCarregandoExtrato] = useState(false)
   const [instancias, setInstancias] = useState<TenantInstance[]>([])
+  const [emailAdmin, setEmailAdmin] = useState<string | null>(null)
   const [carregandoInst, setCarregandoInst] = useState(false)
   const [novasInstancias, setNovasInstancias] = useState<{ apelido: string }[]>([])
   const [adicionandoInst, setAdicionandoInst] = useState(false)
@@ -298,6 +302,22 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
     if (aba === 'instancias') carregarInstancias()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aba])
+
+  useEffect(() => {
+  async function buscarEmailAdmin() {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('users')
+      .select('email')
+      .eq('tenant_id', tenant.id)
+      .in('role', ['admin_tenant', 'self_managed'])
+      .order('criado_em', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    setEmailAdmin(data?.email ?? null)
+  }
+  buscarEmailAdmin()
+}, [tenant.id])
 
   async function carregarInstancias() {
     setCarregandoInst(true)
@@ -485,12 +505,13 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
           {aba === 'detalhes' && (
             <div className="space-y-4">
               <div className="space-y-3">
-                {([
-                  ['Nome', tenant.nome],
-                  ['Slug', tenant.slug],
-                  ['Cadastrado em', new Date(tenant.criado_em).toLocaleDateString('pt-BR')],
-                  ['Expira em', tenant.expira_em ? new Date(tenant.expira_em).toLocaleDateString('pt-BR') : '—'],
-                ] as [string, string][]).map(([label, value]) => (
+{([
+  ['Nome', tenant.nome],
+  ['Slug', tenant.slug],
+  ['E-mail admin', emailAdmin ?? '—'],
+  ['Cadastrado em', new Date(tenant.criado_em).toLocaleDateString('pt-BR')],
+  ['Expira em', tenant.expira_em ? new Date(tenant.expira_em).toLocaleDateString('pt-BR') : '—'],
+] as [string, string][]).map(([label, value]) => (
                   <div key={label} className="flex justify-between items-center py-2" style={{ borderBottom: '1px solid var(--border)' }}>
                     <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</span>
                     <span className={`text-sm font-medium ${label === 'Slug' ? 'font-mono' : ''}`}
