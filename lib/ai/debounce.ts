@@ -51,8 +51,8 @@ function chaveLock(tenantId: string, phone: string): string {
 
 /**
  * Adiciona mensagem à fila do Redis.
- * Retorna { timestamp, isFirst } — isFirst=true apenas quando a fila estava vazia.
- * Somente a primeira mensagem deve disparar o process-webhook.
+ * Usa lock atômico separado para garantir que só UMA chamada dispare o process-webhook,
+ * independente da latência do Redis ao ler a fila.
  */
 export async function acumularMensagem(
   tenantId: string,
@@ -63,16 +63,19 @@ export async function acumularMensagem(
   if (!client) return { timestamp: Date.now(), isFirst: true }
 
   const chave = chaveDebounce(tenantId, phone)
+  const chaveDisparo = `debounce_dispatch:${tenantId}:${phone}`
 
   try {
+    // Acumula a mensagem na fila
     const atual = await client.get<FilaMensagens>(chave)
-    const isFirst = !atual || atual.mensagens.length === 0
     const fila: FilaMensagens = atual ?? { mensagens: [], processando: false }
-
     fila.mensagens.push(mensagem)
-    fila.processando = false
-
     await client.set(chave, fila, { ex: DEBOUNCE_TTL })
+
+    // Tenta adquirir lock de disparo — só quem conseguir dispara o process-webhook
+    // ex: 30s — tempo suficiente para o processamento completo
+    const lockDisparo = await client.set(chaveDisparo, '1', { ex: 30, nx: true })
+    const isFirst = !!lockDisparo
 
     return { timestamp: mensagem.timestamp, isFirst }
   } catch (err) {
@@ -127,6 +130,7 @@ export async function liberarLock(tenantId: string, phone: string): Promise<void
   if (!client) return
   try {
     await client.del(chaveLock(tenantId, phone))
+    await client.del(`debounce_dispatch:${tenantId}:${phone}`)
   } catch {
     // Silencioso
   }
