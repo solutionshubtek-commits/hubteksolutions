@@ -32,7 +32,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     tenantId: string
     phone: string
     instanceName: string
-    timestamp: number
   }
 
   try {
@@ -41,15 +40,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { tenantId, phone, instanceName, timestamp } = body
+  const { tenantId, phone, instanceName } = body
 
-  if (!tenantId || !phone || !instanceName || !timestamp) {
+  if (!tenantId || !phone || !instanceName) {
     return NextResponse.json({ error: 'Parâmetros inválidos' }, { status: 400 })
   }
 
   try {
-    // Aguarda janela de debounce (5s) e tenta obter lock
-    const mensagens = await aguardarEObterMensagens(tenantId, phone, timestamp)
+    // Aguarda janela de debounce e tenta obter lock
+    const mensagens = await aguardarEObterMensagens(tenantId, phone)
 
     // null = outra instância ganhou o lock ou chegou mensagem mais nova
     if (!mensagens || mensagens.length === 0) {

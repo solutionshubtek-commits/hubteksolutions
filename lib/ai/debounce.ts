@@ -50,53 +50,49 @@ function chaveLock(tenantId: string, phone: string): string {
 // ─── Acumula mensagem na fila ─────────────────────────────────────────────────
 
 /**
- * Adiciona mensagem à fila do Redis e reinicia o timer de debounce.
- * Retorna o timestamp atual para rastrear quando foi a última mensagem.
+ * Adiciona mensagem à fila do Redis.
+ * Retorna { timestamp, isFirst } — isFirst=true apenas quando a fila estava vazia.
+ * Somente a primeira mensagem deve disparar o process-webhook.
  */
 export async function acumularMensagem(
   tenantId: string,
   phone: string,
   mensagem: MensagemAcumulada
-): Promise<number> {
+): Promise<{ timestamp: number; isFirst: boolean }> {
   const client = getRedis()
-  if (!client) return Date.now()
+  if (!client) return { timestamp: Date.now(), isFirst: true }
 
   const chave = chaveDebounce(tenantId, phone)
 
   try {
-    // Busca fila atual
     const atual = await client.get<FilaMensagens>(chave)
+    const isFirst = !atual || atual.mensagens.length === 0
     const fila: FilaMensagens = atual ?? { mensagens: [], processando: false }
 
-    // Acumula a nova mensagem
     fila.mensagens.push(mensagem)
     fila.processando = false
 
-    // Salva com TTL
     await client.set(chave, fila, { ex: DEBOUNCE_TTL })
 
-    return mensagem.timestamp
+    return { timestamp: mensagem.timestamp, isFirst }
   } catch (err) {
     console.error('[debounce] acumularMensagem falhou:', err)
-    return Date.now()
+    return { timestamp: Date.now(), isFirst: true }
   }
 }
 
 // ─── Aguarda janela de debounce ───────────────────────────────────────────────
 
 /**
- * Aguarda DEBOUNCE_WINDOW_MS e verifica se chegou nova mensagem no intervalo.
- * Se chegou → descarta (outra instância vai processar).
- * Se não chegou → adquire lock e retorna as mensagens acumuladas.
- *
- * Retorna null se este worker não deve processar (outra instância ganhou o lock).
+ * Aguarda DEBOUNCE_WINDOW_MS e tenta adquirir lock exclusivo.
+ * Durante a espera, novas mensagens continuam sendo acumuladas no Redis.
+ * Retorna null se não conseguiu o lock (outro worker já está processando).
  */
 export async function aguardarEObterMensagens(
   tenantId: string,
-  phone: string,
-  timestampAtual: number
+  phone: string
 ): Promise<MensagemAcumulada[] | null> {
-  // Aguarda a janela de debounce
+  // Aguarda a janela de debounce — novas mensagens acumulam nesse tempo
   await new Promise(resolve => setTimeout(resolve, DEBOUNCE_WINDOW_MS))
 
   const client = getRedis()
@@ -106,27 +102,17 @@ export async function aguardarEObterMensagens(
   const chave_lock = chaveLock(tenantId, phone)
 
   try {
-    // Lê o estado atual da fila
+    // Tenta adquirir lock exclusivo
+    const lockObtido = await client.set(chave_lock, '1', { ex: 10, nx: true })
+    if (!lockObtido) return null
+
+    // Lê e remove a fila
     const atual = await client.get<FilaMensagens>(chave)
     if (!atual || atual.mensagens.length === 0) return null
 
-    // Verifica se chegou mensagem mais nova que a nossa
-    const ultimaMensagem = atual.mensagens[atual.mensagens.length - 1]
-    if (ultimaMensagem.timestamp > timestampAtual) {
-      // Chegou mensagem mais nova — deixa ela processar
-      return null
-    }
-
-    // Tenta adquirir lock exclusivo (NX = only set if not exists)
-    const lockObtido = await client.set(chave_lock, '1', { ex: 10, nx: true })
-    if (!lockObtido) {
-      // Outro worker já está processando
-      return null
-    }
-
-    // Marca como processando e remove da fila
     await client.del(chave)
 
+    console.log(`[debounce] Lock obtido para ${phone} — ${atual.mensagens.length} msg(s) acumuladas`)
     return atual.mensagens
   } catch (err) {
     console.error('[debounce] aguardarEObterMensagens falhou:', err)

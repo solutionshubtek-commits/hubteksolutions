@@ -116,7 +116,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!tenant) return response
 
     const phone = extractPhone(data.key.remoteJid)
-    const timestampAtual = Date.now()
 
     const mensagemEntrada: MensagemAcumulada = {
       conteudo: extractTextContent(data) ?? '',
@@ -125,27 +124,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       messageId: data.key.id,
       messageKey: data.key as unknown as Record<string, unknown>,
       pushName: data.pushName,
-      timestamp: timestampAtual,
+      timestamp: Date.now(),
     }
 
-    // Acumula no Redis
-    await acumularMensagem(tenant.id, phone, mensagemEntrada)
+    // Acumula no Redis — só dispara process-webhook na primeira mensagem
+    const { isFirst } = await acumularMensagem(tenant.id, phone, mensagemEntrada)
 
-    // Dispara rota de processamento — fire-and-forget (não aguarda resposta)
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.hubteksolutions.tech'
-    fetch(`${baseUrl}/api/agent/process-webhook`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-internal-secret': process.env.CRON_SECRET ?? '',
-      },
-      body: JSON.stringify({
-        tenantId: tenant.id,
-        phone,
-        instanceName: event.instance,
-        timestamp: timestampAtual,
-      }),
-    }).catch(err => console.error('[webhook] Erro ao disparar process-webhook:', err))
+    if (isFirst) {
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.hubteksolutions.tech'
+      fetch(`${baseUrl}/api/agent/process-webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-secret': process.env.CRON_SECRET ?? '',
+        },
+        body: JSON.stringify({
+          tenantId: tenant.id,
+          phone,
+          instanceName: event.instance,
+        }),
+      }).catch(err => console.error('[webhook] Erro ao disparar process-webhook:', err))
+    }
   }
 
   if (event.event === 'connection.update' && isConnectionUpdateData(event.data)) {
