@@ -1,4 +1,3 @@
-// ─── Cliente Redis (v2) ────────────────────────────────────────────────────────
 import { Redis } from '@upstash/redis'
 
 // ─── Cliente Redis ─────────────────────────────────────────────────────────────
@@ -67,9 +66,16 @@ export async function acumularMensagem(
   const chaveDisparo = `debounce_dispatch:${tenantId}:${phone}`
 
   try {
-    // Acumula a mensagem na fila
+    // Acumula a mensagem na fila — deduplica por messageId
     const atual = await client.get<FilaMensagens>(chave)
     const fila: FilaMensagens = atual ?? { mensagens: [], processando: false }
+
+    const jaExiste = fila.mensagens.some(m => m.messageId === mensagem.messageId)
+    if (jaExiste) {
+      console.log(`[debounce] Mensagem duplicada ignorada: ${mensagem.messageId}`)
+      return { timestamp: mensagem.timestamp, isFirst: false }
+    }
+
     fila.mensagens.push(mensagem)
     await client.set(chave, fila, { ex: DEBOUNCE_TTL })
 

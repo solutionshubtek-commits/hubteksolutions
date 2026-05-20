@@ -134,6 +134,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (isFirst) {
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.hubteksolutions.tech'
+      console.log(`[webhook] Disparando process-webhook para ${phone}`)
       fetch(`${baseUrl}/api/agent/process-webhook`, {
         method: 'POST',
         headers: {
@@ -145,6 +146,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           phone,
           instanceName: event.instance,
         }),
+      }).then(() => {
+        console.log(`[webhook] process-webhook disparado com sucesso para ${phone}`)
       }).catch(err => console.error('[webhook] Erro ao disparar process-webhook:', err))
     }
   }
