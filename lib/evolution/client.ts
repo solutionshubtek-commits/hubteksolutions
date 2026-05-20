@@ -16,12 +16,10 @@ async function evolutionRequest<T>(
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
-
   if (!response.ok) {
     const text = await response.text()
     throw new Error(`Evolution API ${response.status} em ${path}: ${text}`)
   }
-
   return response.json() as Promise<T>
 }
 
@@ -34,6 +32,27 @@ export async function sendTextMessage(
     number: phone,
     text,
   })
+}
+
+/**
+ * Envia indicador "digitando..." ao cliente antes da resposta.
+ * delay em ms — calculado dinamicamente com base no tamanho da resposta.
+ */
+export async function sendPresence(
+  instanceName: string,
+  phone: string,
+  delayMs: number
+): Promise<void> {
+  try {
+    await evolutionRequest('POST', `/chat/sendPresence/${instanceName}`, {
+      number: phone,
+      delay: delayMs,
+      presence: 'composing',
+    })
+  } catch (err) {
+    // Falha silenciosa — não bloqueia o envio da mensagem
+    console.warn('[evolution] sendPresence falhou (não crítico):', err)
+  }
 }
 
 export async function getConnectionStatus(
