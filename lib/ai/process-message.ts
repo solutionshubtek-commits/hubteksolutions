@@ -513,16 +513,21 @@ async function normalizarPergunta(pergunta: string): Promise<string> {
 
 /**
  * HyDE leve: expande com palavras-chave semânticas.
- * Mantém benefício de contextualização sem distorcer o embedding.
+ * Inclui contexto do histórico recente para perguntas curtas ou pronomes
+ * que dependem da mensagem anterior (ex: "Tem acréscimo?" após falar de glúten).
  */
-async function expandirPergunta(pergunta: string): Promise<string> {
+async function expandirPergunta(pergunta: string, contextoAnterior?: string): Promise<string> {
   try {
+    const contexto = contextoAnterior
+      ? `Contexto da conversa anterior: "${contextoAnterior}"\nPergunta atual: "${pergunta}"`
+      : pergunta
+
     const resposta = await openAIChatCompletion([
       {
         role: 'system',
-        content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema. Inclua sinônimos, termos do domínio e variações relevantes. Retorne apenas as palavras separadas por espaço, sem pontuação.',
+        content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema. Considere o contexto da conversa para enriquecer as palavras-chave quando a pergunta for curta ou ambígua. Inclua sinônimos, termos do domínio e variações relevantes. Retorne apenas as palavras separadas por espaço, sem pontuação.',
       },
-      { role: 'user', content: pergunta },
+      { role: 'user', content: contexto },
     ], { temperature: 0, maxTokens: 60 })
     const palavras = resposta.content.trim()
     return palavras ? `${pergunta} ${palavras}` : pergunta
@@ -830,13 +835,20 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   if (intencao !== 'saudacao') {
     try {
       const perguntaNormalizada = await normalizarPergunta(conteudoProcessado)
-      const textoParaEmbedding = await expandirPergunta(perguntaNormalizada)
+
+      // Pega a última mensagem do agente como contexto para perguntas curtas/ambíguas
+      const ultimaMsgAgente = historico
+        .filter(m => m.origem === 'agente')
+        .slice(-1)[0]
+      const contextoAnterior = ultimaMsgAgente?.conteudo ?? undefined
+
+      const textoParaEmbedding = await expandirPergunta(perguntaNormalizada, contextoAnterior)
       const embedding = await generateEmbedding(textoParaEmbedding)
 
       const { data: docs, error: ragError } = await supabase.rpc('match_knowledge', {
         query_embedding: embedding,
         match_tenant_id: payload.tenantId,
-        match_threshold: 0.45,
+        match_threshold: 0.35,
         match_count: 10,
       })
 
