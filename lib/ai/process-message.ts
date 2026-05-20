@@ -14,7 +14,7 @@ import { openAIChatCompletion, openAIChatCompletionWithTools } from './openai'
 import { anthropicChatCompletion } from './anthropic'
 import { transcribeAudio, interpretImage } from './openai'
 import { generateEmbedding } from './embeddings'
-import { sendTextMessage, downloadMediaAsBase64 } from '@/lib/evolution/client'
+import { sendTextMessage, sendPresence, downloadMediaAsBase64 } from '@/lib/evolution/client'
 import type { EvolutionMessageKey, WhatsAppMessageType } from '@/lib/evolution/webhook'
 import type { ChatMessage } from './openai'
 import {
@@ -29,6 +29,8 @@ import {
 } from '@/lib/google-calendar'
 import { detectarMeChama } from './detect-me-chama'
 
+// ─── Constantes ───────────────────────────────────────────────────────────────
+
 const DIAS_PT: Record<number, string> = {
   0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab',
 }
@@ -37,6 +39,14 @@ const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
   openai: { entrada: 0.025, saida: 0.1 },
   anthropic: { entrada: 0.015, saida: 0.075 },
 }
+
+// Saudações simples — não acionam RAG
+const SAUDACOES_REGEX = /^(oi|olá|ola|opa|hey|hello|bom dia|boa tarde|boa noite|e aí|eai|e ai|tudo bem|tudo bom|salve)[!?.,:]*$/i
+
+// Palavras de frustração — aumentam temperatura para resposta mais empática
+const FRUSTRACAO_REGEX = /insatisfeito|absurdo|ridículo|ridiculo|horrível|horrivel|péssimo|pessimo|lamentável|lamentavel|decepcionante|revoltante|inaceitável|inaceitavel|não funciona|nao funciona|não resolveu|nao resolveu|tô com raiva|to com raiva|que vergonha|me enganaram|fui lesado/i
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function calcularCusto(motor: string, tokensIn: number, tokensOut: number): number {
   const tabela = CUSTO_POR_1K[motor] ?? CUSTO_POR_1K.openai
@@ -58,6 +68,72 @@ function isWithinOperatingHours(
   return minutoAtual >= hI * 60 + mI && minutoAtual <= hF * 60 + mF
 }
 
+/**
+ * Retorna saudação baseada no horário atual de Brasília.
+ */
+function getSaudacao(): string {
+  const agora = new Date()
+  const hora = new Date(agora.getTime() - 3 * 60 * 60 * 1000).getUTCHours()
+  if (hora >= 5 && hora < 12) return 'Bom dia'
+  if (hora >= 12 && hora < 18) return 'Boa tarde'
+  return 'Boa noite'
+}
+
+/**
+ * Calcula delay de digitação em ms com base no tamanho da resposta.
+ * Mínimo 1s, máximo 4s — natural para WhatsApp.
+ */
+function calcularDelayDigitacao(texto: string): number {
+  const ms = texto.length * 30
+  return Math.min(Math.max(ms, 1000), 4000)
+}
+
+/**
+ * Quebra resposta longa em blocos menores para envio natural no WhatsApp.
+ * Divide em parágrafos; agrupa blocos curtos; máximo 3 mensagens.
+ */
+function quebrarEmBlocos(texto: string): string[] {
+  const paragrafos = texto.split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
+  if (paragrafos.length <= 1) return [texto]
+
+  const blocos: string[] = []
+  let acumulado = ''
+
+  for (const p of paragrafos) {
+    if (acumulado && (acumulado + '\n\n' + p).length > 600) {
+      blocos.push(acumulado.trim())
+      acumulado = p
+    } else {
+      acumulado = acumulado ? acumulado + '\n\n' + p : p
+    }
+    if (blocos.length === 2) {
+      const idx = paragrafos.indexOf(p)
+      const resto = paragrafos.slice(idx + 1).join('\n\n')
+      if (resto) blocos.push(resto.trim())
+      return blocos.slice(0, 3)
+    }
+  }
+  if (acumulado) blocos.push(acumulado.trim())
+  return blocos.slice(0, 3)
+}
+
+// ─── Tipagem de intenção ──────────────────────────────────────────────────────
+
+type Intencao = 'saudacao' | 'agendamento' | 'reclamacao' | 'duvida' | 'fora_escopo'
+
+function classificarIntencao(mensagem: string): Intencao {
+  const m = mensagem.toLowerCase().trim()
+  if (SAUDACOES_REGEX.test(m)) return 'saudacao'
+  if (FRUSTRACAO_REGEX.test(m)) return 'reclamacao'
+  if (/agendar|marcar|horário|horario|disponível|disponivel|encaixar|reagendar|cancelar|remarca|consulta|atendimento/.test(m))
+    return 'agendamento'
+  if (/não sei|nao sei|fora do assunto|outro assunto|não (é|e) sobre|piada|brincadeira/.test(m))
+    return 'fora_escopo'
+  return 'duvida'
+}
+
+// ─── System Prompt ────────────────────────────────────────────────────────────
+
 function buildSystemPrompt(
   promptPrincipal: string,
   knowledgeDocs: Array<{ conteudo_texto: string; criado_em: string }>,
@@ -65,9 +141,35 @@ function buildSystemPrompt(
   temAgendamentosHubtek: boolean,
   horarioInicio: string,
   horarioFim: string,
-  telefoneCliente: string
+  telefoneCliente: string,
+  intencao: Intencao,
+  perfilCliente: string,
+  historicoResumido: string
 ): string {
   let prompt = promptPrincipal || 'Você é um assistente de atendimento ao cliente prestativo e cordial.'
+
+  const saudacao = getSaudacao()
+  prompt += `\n\nSAUDAÇÃO ATUAL: Use "${saudacao}" quando for a primeira mensagem ou quando fizer sentido cumprimentar.`
+
+  prompt += `\n\nINTENÇÃO DETECTADA: ${intencao}.`
+  if (intencao === 'reclamacao') {
+    prompt += ' O cliente demonstra frustração. Seja mais empático, reconheça o problema antes de tentar resolver.'
+  }
+  if (intencao === 'saudacao') {
+    prompt += ' É uma saudação simples. Responda com cumprimento + pergunta aberta. Não busque dados na base para isso.'
+  }
+  if (intencao === 'fora_escopo') {
+    prompt += ' A mensagem parece fora do seu escopo. Redirecione gentilmente para o que você pode ajudar.'
+  }
+
+  if (perfilCliente) {
+    prompt += `\n\nPERFIL DO CLIENTE (conversas anteriores):\n${perfilCliente}`
+    prompt += '\nUse estas informações para personalizar a resposta sem precisar perguntar o que já sabe.'
+  }
+
+  if (historicoResumido) {
+    prompt += `\n\nRESUMO DO CONTEXTO DESTA CONVERSA:\n${historicoResumido}`
+  }
 
   prompt += `
 
@@ -88,7 +190,8 @@ REGRAS DE COMPORTAMENTO:
    - Não repita a pergunta do cliente na resposta.
    - Não use frases como "Claro!", "Com certeza!", "Ótima pergunta!" — vá direto ao ponto.
    - Finalize com uma pergunta curta de continuidade apenas quando fizer sentido.
-   - Nunca invente dados específicos da empresa para parecer mais prestativo.`
+   - Nunca invente dados específicos da empresa para parecer mais prestativo.
+   - Quebre respostas longas em parágrafos curtos — mais natural para WhatsApp.`
 
   if (knowledgeDocs.length > 0) {
     prompt += '\n\nBASE DE CONHECIMENTO (do mais recente para o mais antigo — priorize os primeiros em caso de conflito):\n'
@@ -111,21 +214,21 @@ REGRAS DE COMPORTAMENTO:
     prompt += '\nPara recontatos: use criar_recontato quando o cliente pedir para ser chamado depois.'
     prompt += '\nSempre confirme com o cliente após criar ou alterar um agendamento.'
     prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
-    prompt += `\n\nTELEFONE PARA AGENDAMENTOS: Ao registrar um telefone, siga esta ordem:`
-    prompt += `\n1. Se o cliente disser "este número", "meu número", "pode ligar aqui" ou similar → use ${telefoneCliente}`
-    prompt += `\n2. Se o cliente fornecer um número com DDD (10 ou 11 dígitos) → normalize e use`
-    prompt += `\n3. Se o cliente fornecer um número SEM DDD (8 ou 9 dígitos) → pergunte: "Qual o DDD? Aqui costumamos usar 51." e aguarde a resposta antes de criar o agendamento`
-    prompt += `\n4. NUNCA salve um número sem DDD completo`
+    prompt += `\n\nTELEFONE PARA AGENDAMENTOS:`
+    prompt += `\n1. "este número", "meu número" → use ${telefoneCliente}`
+    prompt += `\n2. Número com DDD (10 ou 11 dígitos) → normalize e use`
+    prompt += `\n3. Número SEM DDD (8 ou 9 dígitos) → pergunte: "Qual o DDD? Aqui costumamos usar 51."`
+    prompt += `\n4. NUNCA salve número sem DDD completo`
   }
 
-  // Injeta data/hora atual de Brasília
   const agora = new Date()
   const agoraBrasil = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
   const dataAtual = agoraBrasil.toISOString().slice(0, 10)
   const horaAtual = agoraBrasil.toISOString().slice(11, 16)
-  prompt += `\n\nDATA E HORA ATUAL (Brasília): ${dataAtual} às ${horaAtual}. Use esta referência para interpretar "hoje", "amanhã", "próxima semana" e para gerar timestamps ISO 8601 com offset -03:00.`
-  prompt += `\n\nTELEFONE DO CLIENTE NESTA CONVERSA: ${telefoneCliente}. Quando o cliente disser "meu número", "este número", "pode ligar aqui" ou similar, use este número automaticamente — não peça confirmação.`
+  prompt += `\n\nDATA E HORA ATUAL (Brasília): ${dataAtual} às ${horaAtual}.`
+  prompt += `\n\nTELEFONE DO CLIENTE NESTA CONVERSA: ${telefoneCliente}.`
   prompt += '\n\nResponda sempre em português brasileiro.'
+
   return prompt
 }
 
@@ -237,8 +340,8 @@ const APPOINTMENT_TOOLS: Tool[] = [
           contato_nome: { type: 'string', description: 'Nome do cliente' },
           contato_telefone: { type: 'string', description: 'Telefone do cliente com DDI (ex: 5551999999999)' },
           servico: { type: 'string', description: 'Serviço ou motivo do agendamento' },
-          data_hora: { type: 'string', description: 'Data e hora no formato ISO 8601. SEMPRE use offset -03:00 (horário de Brasília). Exemplo: para 20/05/2026 às 10:00 use "2026-05-20T10:00:00-03:00"' },
-          antecedencia_horas: { type: 'number', description: 'Horas de antecedência para enviar o lembrete. Padrão: 24' },
+          data_hora: { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00. Ex: "2026-05-20T10:00:00-03:00"' },
+          antecedencia_horas: { type: 'number', description: 'Horas de antecedência para o lembrete. Padrão: 24' },
         },
         required: ['contato_nome', 'contato_telefone', 'servico', 'data_hora'],
       },
@@ -297,7 +400,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
           contato_nome: { type: 'string', description: 'Nome do cliente' },
           contato_telefone: { type: 'string', description: 'Telefone do cliente com DDI' },
           mensagem_inicial: { type: 'string', description: 'Mensagem a enviar no recontato' },
-          agendado_para: { type: 'string', description: 'Data e hora do recontato no formato ISO 8601. SEMPRE use offset -03:00 (horário de Brasília). Exemplo: para 20/05/2026 às 10:00 use "2026-05-20T10:00:00-03:00"' },
+          agendado_para: { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00. Ex: "2026-05-20T10:00:00-03:00"' },
         },
         required: ['contato_nome', 'contato_telefone', 'mensagem_inicial', 'agendado_para'],
       },
@@ -305,27 +408,127 @@ const APPOINTMENT_TOOLS: Tool[] = [
   },
 ]
 
-// ─── Tipo para tool call retornado pela OpenAI ────────────────────────────────
-
 interface ToolCall {
   id: string
   type: string
-  function: {
-    name: string
-    arguments: string
-  }
+  function: { name: string; arguments: string }
 }
 
 // ─── Normalização de telefone ─────────────────────────────────────────────────
 
 function normalizarTelefone(tel: string, dddPadrao = '51'): string {
   const digits = tel.replace(/\D/g, '')
-  if (digits.startsWith('55') && digits.length >= 12) return digits  // já completo
-  if (digits.length === 11) return `55${digits}`                      // DDD + 9 dígitos
-  if (digits.length === 10) return `55${digits}`                      // DDD + 8 dígitos
-  if (digits.length === 9) return `55${dddPadrao}${digits}`           // sem DDD, 9 dígitos
-  if (digits.length === 8) return `55${dddPadrao}${digits}`           // sem DDD, 8 dígitos
-  return digits                                                        // não reconhecido, retorna como está
+  if (digits.startsWith('55') && digits.length >= 12) return digits
+  if (digits.length === 11) return `55${digits}`
+  if (digits.length === 10) return `55${digits}`
+  if (digits.length === 9) return `55${dddPadrao}${digits}`
+  if (digits.length === 8) return `55${dddPadrao}${digits}`
+  return digits
+}
+
+// ─── Perfil do cliente ────────────────────────────────────────────────────────
+
+interface ContactProfile {
+  contato_nome: string | null
+  cidade: string | null
+  preferencias: Record<string, unknown>
+  historico_resumido: string | null
+}
+
+async function buscarPerfilCliente(
+  supabase: ReturnType<typeof createServiceClient>,
+  tenantId: string,
+  telefone: string
+): Promise<ContactProfile | null> {
+  const { data } = await supabase
+    .from('contact_profiles')
+    .select('contato_nome, cidade, preferencias, historico_resumido')
+    .eq('tenant_id', tenantId)
+    .eq('contato_telefone', telefone)
+    .maybeSingle()
+  return data as ContactProfile | null
+}
+
+async function atualizarPerfilCliente(
+  supabase: ReturnType<typeof createServiceClient>,
+  tenantId: string,
+  telefone: string,
+  nome: string | null | undefined
+): Promise<void> {
+  try {
+    await supabase.from('contact_profiles').upsert({
+      tenant_id: tenantId,
+      contato_telefone: telefone,
+      contato_nome: nome ?? null,
+      ultima_atualizacao: new Date().toISOString(),
+    }, { onConflict: 'tenant_id,contato_telefone' })
+  } catch (err) {
+    console.error('[process-message] atualizarPerfilCliente falhou:', err)
+  }
+}
+
+/**
+ * Gera resumo compactado quando a conversa tem mais de 10 mensagens.
+ * As últimas 5 ficam no histórico normal; o restante vai como resumo.
+ */
+async function gerarResumoHistorico(
+  mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>
+): Promise<string> {
+  if (mensagens.length <= 10) return ''
+  try {
+    const texto = mensagens
+      .slice(0, mensagens.length - 5)
+      .map(m => `${m.origem === 'agente' ? 'Agente' : 'Cliente'}: ${m.transcricao || m.conteudo || ''}`)
+      .join('\n')
+
+    const resposta = await openAIChatCompletion([
+      {
+        role: 'system',
+        content: 'Resuma em até 5 linhas os pontos principais desta conversa de atendimento: o problema do cliente, informações fornecidas e o que já foi resolvido. Seja objetivo e em português.',
+      },
+      { role: 'user', content: texto },
+    ], { temperature: 0, maxTokens: 200 })
+    return resposta.content.trim()
+  } catch {
+    return ''
+  }
+}
+
+// ─── Helpers RAG ──────────────────────────────────────────────────────────────
+
+async function normalizarPergunta(pergunta: string): Promise<string> {
+  try {
+    const resposta = await openAIChatCompletion([
+      {
+        role: 'system',
+        content: 'Corrija erros ortográficos e expanda abreviações do texto abaixo. Retorne apenas o texto corrigido, sem explicações.',
+      },
+      { role: 'user', content: pergunta },
+    ], { temperature: 0, maxTokens: 100 })
+    return resposta.content.trim() || pergunta
+  } catch {
+    return pergunta
+  }
+}
+
+/**
+ * HyDE leve: expande com palavras-chave semânticas.
+ * Mantém benefício de contextualização sem distorcer o embedding.
+ */
+async function expandirPergunta(pergunta: string): Promise<string> {
+  try {
+    const resposta = await openAIChatCompletion([
+      {
+        role: 'system',
+        content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema. Inclua sinônimos, termos do domínio e variações relevantes. Retorne apenas as palavras separadas por espaço, sem pontuação.',
+      },
+      { role: 'user', content: pergunta },
+    ], { temperature: 0, maxTokens: 60 })
+    const palavras = resposta.content.trim()
+    return palavras ? `${pergunta} ${palavras}` : pergunta
+  } catch {
+    return pergunta
+  }
 }
 
 // ─── Executor de tool calls — Google Calendar ─────────────────────────────────
@@ -352,7 +555,6 @@ async function executarToolCall(
       }).join('\n')
       return `Horários disponíveis em ${data}:\n${lista}`
     }
-
     if (toolName === 'criar_agendamento') {
       const evento = await createEvent(calendarConfig, {
         summary: `Agendamento - ${args.nome_cliente}`,
@@ -365,13 +567,11 @@ async function executarToolCall(
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
       return `Agendamento criado com sucesso para ${args.nome_cliente} em ${dataFmt} às ${horaFmt}. ID: ${evento.id}`
     }
-
     if (toolName === 'reagendar') {
       const evento = await findEventByName(calendarConfig, String(args.nome_cliente))
       if (!evento) return `Não encontrei agendamento para "${args.nome_cliente}" nos próximos 30 dias.`
       const atualizado = await rescheduleEvent(
-        calendarConfig,
-        evento.id,
+        calendarConfig, evento.id,
         `${args.nova_data}T${args.nova_hora_inicio}:00-03:00`,
         `${args.nova_data}T${args.nova_hora_fim}:00-03:00`
       )
@@ -380,14 +580,12 @@ async function executarToolCall(
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
       return `Agendamento de ${args.nome_cliente} reagendado para ${dataFmt} às ${horaFmt}.`
     }
-
     if (toolName === 'cancelar_agendamento') {
       const evento = await findEventByName(calendarConfig, String(args.nome_cliente))
       if (!evento) return `Não encontrei agendamento para "${args.nome_cliente}" nos próximos 30 dias.`
       await deleteEvent(calendarConfig, evento.id)
       return `Agendamento de ${args.nome_cliente} cancelado com sucesso.`
     }
-
     if (toolName === 'ver_agenda_do_dia') {
       const dataRaw = String(args.data ?? 'hoje')
       const data = dataRaw.match(/^\d{4}-\d{2}-\d{2}$/) ? dataRaw : parseDateFromText(dataRaw)
@@ -401,7 +599,6 @@ async function executarToolCall(
       }).join('\n')
       return `Agenda de ${data}:\n${lista}`
     }
-
     return 'Ação não reconhecida.'
   } catch (err) {
     console.error(`[calendar tool] Erro em ${toolName}:`, err)
@@ -418,7 +615,6 @@ async function executarAppointmentToolCall(
   instanceName: string
 ): Promise<string> {
   const supabase = createServiceClient()
-
   try {
     if (toolName === 'criar_agendamento_hubtek') {
       const { data, error } = await supabase
@@ -435,18 +631,12 @@ async function executarAppointmentToolCall(
         })
         .select('id, data_hora')
         .single()
-
-      if (error) {
-        console.error('[appointment tool] criar_agendamento_hubtek:', error)
-        return 'Erro ao criar agendamento. Tente novamente.'
-      }
-
+      if (error) { console.error('[appointment tool] criar_agendamento_hubtek:', error); return 'Erro ao criar agendamento. Tente novamente.' }
       const d = new Date(data.data_hora)
       const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
       return `Agendamento criado para ${args.contato_nome} em ${dataFmt} às ${horaFmt}. ID: ${data.id}`
     }
-
     if (toolName === 'listar_agendamentos_cliente') {
       const { data, error } = await supabase
         .from('appointments')
@@ -456,80 +646,44 @@ async function executarAppointmentToolCall(
         .not('status', 'eq', 'cancelado')
         .order('data_hora', { ascending: true })
         .limit(5)
-
-      if (error) {
-        console.error('[appointment tool] listar_agendamentos_cliente:', error)
-        return 'Erro ao buscar agendamentos.'
-      }
-
+      if (error) { console.error('[appointment tool] listar_agendamentos_cliente:', error); return 'Erro ao buscar agendamentos.' }
       if (!data || data.length === 0) return 'Nenhum agendamento encontrado para este cliente.'
-
       const lista = data.map(a => {
         const d = new Date(a.data_hora)
         const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
         const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
         return `• ${dataFmt} às ${horaFmt} — ${a.servico} (${a.status}) — ID: ${a.id}`
       }).join('\n')
-
       return `Agendamentos encontrados:\n${lista}`
     }
-
     if (toolName === 'confirmar_agendamento') {
-      const { error } = await supabase
-        .from('appointments')
-        .update({ status: 'confirmado' })
-        .eq('id', String(args.appointment_id))
-        .eq('tenant_id', tenantId)
-
-      if (error) {
-        console.error('[appointment tool] confirmar_agendamento:', error)
-        return 'Erro ao confirmar agendamento.'
-      }
-
+      const { error } = await supabase.from('appointments').update({ status: 'confirmado' }).eq('id', String(args.appointment_id)).eq('tenant_id', tenantId)
+      if (error) { console.error('[appointment tool] confirmar_agendamento:', error); return 'Erro ao confirmar agendamento.' }
       return `Agendamento ${args.appointment_id} confirmado com sucesso.`
     }
-
     if (toolName === 'cancelar_agendamento_hubtek') {
-      const { error } = await supabase
-        .from('appointments')
-        .update({ status: 'cancelado' })
-        .eq('id', String(args.appointment_id))
-        .eq('tenant_id', tenantId)
-
-      if (error) {
-        console.error('[appointment tool] cancelar_agendamento_hubtek:', error)
-        return 'Erro ao cancelar agendamento.'
-      }
-
+      const { error } = await supabase.from('appointments').update({ status: 'cancelado' }).eq('id', String(args.appointment_id)).eq('tenant_id', tenantId)
+      if (error) { console.error('[appointment tool] cancelar_agendamento_hubtek:', error); return 'Erro ao cancelar agendamento.' }
       return `Agendamento ${args.appointment_id} cancelado com sucesso.`
     }
-
     if (toolName === 'criar_recontato') {
-      const { error } = await supabase
-        .from('scheduled_tasks')
-        .insert({
-          tenant_id: tenantId,
-          instance_name: instanceName,
-          contato_telefone: normalizarTelefone(String(args.contato_telefone)),
-          contato_nome: String(args.contato_nome),
-          tipo: 'me_chama_depois',
-          mensagem_inicial: String(args.mensagem_inicial),
-          agendado_para: String(args.agendado_para),
-          status: 'pendente',
-          criado_por: null,
-        })
-
-      if (error) {
-        console.error('[appointment tool] criar_recontato:', error)
-        return 'Erro ao criar recontato.'
-      }
-
+      const { error } = await supabase.from('scheduled_tasks').insert({
+        tenant_id: tenantId,
+        instance_name: instanceName,
+        contato_telefone: normalizarTelefone(String(args.contato_telefone)),
+        contato_nome: String(args.contato_nome),
+        tipo: 'me_chama_depois',
+        mensagem_inicial: String(args.mensagem_inicial),
+        agendado_para: String(args.agendado_para),
+        status: 'pendente',
+        criado_por: null,
+      })
+      if (error) { console.error('[appointment tool] criar_recontato:', error); return 'Erro ao criar recontato.' }
       const d = new Date(String(args.agendado_para))
       const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
       return `Recontato agendado para ${args.contato_nome} em ${dataFmt} às ${horaFmt}.`
     }
-
     return 'Ação não reconhecida.'
   } catch (err) {
     console.error(`[appointment tool] Erro em ${toolName}:`, err)
@@ -551,48 +705,23 @@ export interface ProcessMessagePayload {
   caption?: string
 }
 
-// ─── Helpers RAG ──────────────────────────────────────────────────────────────
+// ─── Envio com presença + múltiplos blocos ────────────────────────────────────
 
-/**
- * Normaliza erros ortográficos comuns no WhatsApp antes do embedding.
- */
-async function normalizarPergunta(pergunta: string): Promise<string> {
-  try {
-    const resposta = await openAIChatCompletion([
-      {
-        role: 'system',
-        content: 'Corrija erros ortográficos e expanda abreviações do texto abaixo. Retorne apenas o texto corrigido, sem explicações.',
-      },
-      { role: 'user', content: pergunta },
-    ], { temperature: 0, maxTokens: 100 })
-    return resposta.content.trim() || pergunta
-  } catch {
-    return pergunta
-  }
-}
-
-/**
- * HyDE leve: expande a pergunta com palavras-chave semânticas relacionadas
- * para melhorar o match vetorial sem distorcer o embedding com respostas inventadas.
- *
- * Exemplo:
- *   Entrada: "quando sua empresa foi fundada"
- *   Saída:   "fundação empresa história origem ano criação início quando"
- */
-async function expandirPergunta(pergunta: string): Promise<string> {
-  try {
-    const resposta = await openAIChatCompletion([
-      {
-        role: 'system',
-        content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema da pergunta. Inclua sinônimos, termos do domínio e variações relevantes. Retorne apenas as palavras separadas por espaço, sem pontuação, sem explicações.',
-      },
-      { role: 'user', content: pergunta },
-    ], { temperature: 0, maxTokens: 60 })
-    const palavras = resposta.content.trim()
-    // Combina a pergunta original + palavras-chave para o embedding
-    return palavras ? `${pergunta} ${palavras}` : pergunta
-  } catch {
-    return pergunta
+async function enviarResposta(
+  instanceName: string,
+  phone: string,
+  texto: string
+): Promise<void> {
+  const blocos = quebrarEmBlocos(texto)
+  for (let i = 0; i < blocos.length; i++) {
+    const bloco = blocos[i]
+    const delay = calcularDelayDigitacao(bloco)
+    await sendPresence(instanceName, phone, delay)
+    await new Promise(resolve => setTimeout(resolve, delay))
+    await sendTextMessage(instanceName, phone, bloco)
+    if (i < blocos.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
   }
 }
 
@@ -603,11 +732,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   // 1. Conversa
   const conversa = await reativarOuCriarConversa(
-    supabase,
-    payload.tenantId,
-    payload.phone,
-    payload.pushName,
-    payload.instanceName
+    supabase, payload.tenantId, payload.phone, payload.pushName, payload.instanceName
   )
 
   // 2. Persiste mensagem do cliente
@@ -642,9 +767,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   // 6. Fora do horário
   const dentroDoHorario = isWithinOperatingHours(
-    config.horario_inicio,
-    config.horario_fim,
-    config.dias_funcionamento
+    config.horario_inicio, config.horario_fim, config.dias_funcionamento
   )
   if (!dentroDoHorario) {
     await sendTextMessage(payload.instanceName, payload.phone, config.mensagem_ausencia)
@@ -679,43 +802,72 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!conteudoProcessado.trim()) return
 
-  // 8. Busca semântica — normalização ortográfica + HyDE leve (expansão de palavras-chave)
-  let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number; criado_em: string }> = []
-  try {
-    const perguntaNormalizada = await normalizarPergunta(conteudoProcessado)
-    const textoParaEmbedding = await expandirPergunta(perguntaNormalizada)
-    const embedding = await generateEmbedding(textoParaEmbedding)
+  // 8. Tipagem de intenção
+  const intencao = classificarIntencao(conteudoProcessado)
 
-    const { data: docs, error: ragError } = await supabase.rpc('match_knowledge', {
-      query_embedding: embedding,
-      match_tenant_id: payload.tenantId,
-      match_threshold: 0.45,
-      match_count: 10,
-    })
+  // 9. Perfil acumulado do cliente
+  const perfil = await buscarPerfilCliente(supabase, payload.tenantId, payload.phone)
+  const perfilTexto = perfil
+    ? [
+        perfil.contato_nome ? `Nome: ${perfil.contato_nome}` : '',
+        perfil.cidade ? `Cidade: ${perfil.cidade}` : '',
+        perfil.historico_resumido ? `Histórico: ${perfil.historico_resumido}` : '',
+      ].filter(Boolean).join('\n')
+    : ''
 
-    if (ragError) {
-      console.error('[RAG] Erro no match_knowledge:', ragError)
-    }
-
-    knowledgeDocs = ((docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>)
-      .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
-
-    // Log de debug — remover após confirmar funcionamento
-    console.log(`[RAG] ${knowledgeDocs.length} chunks retornados | similarities: ${knowledgeDocs.map(d => d.similarity.toFixed(3)).join(', ')}`)
-  } catch (err) {
-    console.error('[RAG] Falha na busca semântica:', err)
+  if (payload.pushName) {
+    atualizarPerfilCliente(supabase, payload.tenantId, payload.phone, payload.pushName).catch(() => {})
   }
 
-  // 9. Config extra (campos não tipados no AgentConfig)
+  // 10. Histórico + resumo para conversas longas
+  const historico = await getRecentMessages(supabase, conversa.id, 20)
+  const historicoResumido = await gerarResumoHistorico(historico)
+  const historicoRecente = historico.slice(-10)
+
+  // 11. Busca semântica — skip para saudações simples
+  let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number; criado_em: string }> = []
+
+  if (intencao !== 'saudacao') {
+    try {
+      const perguntaNormalizada = await normalizarPergunta(conteudoProcessado)
+      const textoParaEmbedding = await expandirPergunta(perguntaNormalizada)
+      const embedding = await generateEmbedding(textoParaEmbedding)
+
+      const { data: docs, error: ragError } = await supabase.rpc('match_knowledge', {
+        query_embedding: embedding,
+        match_tenant_id: payload.tenantId,
+        match_threshold: 0.45,
+        match_count: 10,
+      })
+
+      if (ragError) console.error('[RAG] Erro no match_knowledge:', ragError)
+
+      knowledgeDocs = ((docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>)
+        .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
+
+      console.log(`[RAG] ${knowledgeDocs.length} chunks | similarities: ${knowledgeDocs.map(d => d.similarity.toFixed(3)).join(', ')}`)
+    } catch (err) {
+      console.error('[RAG] Falha na busca semântica:', err)
+    }
+  }
+
+  // 12. Config extra
   const configExtra = config as unknown as Record<string, unknown>
   const calendarConfig = configExtra.google_calendar_config as GoogleCalendarConfig | null
   const funcoesAtivas = (configExtra.funcoes_ativas as string[]) ?? []
-
-  // 10. Histórico e system prompt
-  const historico = await getRecentMessages(supabase, conversa.id, 10)
   const temCalendar = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
   const temAgendamentosHubtek = funcoesAtivas.includes('agendamentos')
 
+  // 13. Primeira mensagem da conversa — boas-vindas antes de processar
+  const isPrimeiraMsg = historico.filter(m => m.origem === 'cliente').length === 1
+  if (isPrimeiraMsg && config.prompt_principal) {
+    const saudacao = getSaudacao()
+    const nomeCliente = payload.pushName ? `, ${payload.pushName.split(' ')[0]}` : ''
+    const boasVindas = `${saudacao}${nomeCliente}! 👋 Em que posso ajudar?`
+    await enviarResposta(payload.instanceName, payload.phone, boasVindas)
+  }
+
+  // 14. Monta mensagens para o modelo
   const chatMessages: ChatMessage[] = [
     {
       role: 'system',
@@ -726,29 +878,33 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         temAgendamentosHubtek,
         config.horario_inicio,
         config.horario_fim,
-        payload.phone
+        payload.phone,
+        intencao,
+        perfilTexto,
+        historicoResumido
       ),
     },
-    ...historico.slice(0, -1).map(m => ({
+    ...historicoRecente.slice(0, -1).map(m => ({
       role: (m.origem === 'agente' ? 'assistant' : 'user') as 'assistant' | 'user',
       content: m.transcricao || m.conteudo || '',
     })),
     { role: 'user', content: conteudoProcessado },
   ]
 
-  // Monta lista de tools ativas
   const toolsAtivas: Tool[] = []
   if (temCalendar) toolsAtivas.push(...CALENDAR_TOOLS)
   if (temAgendamentosHubtek) toolsAtivas.push(...APPOINTMENT_TOOLS)
 
   const usarTools = toolsAtivas.length > 0 && config.motor_ia_principal === 'openai'
 
-  // 11. Geração de resposta
+  // Temperatura maior para reclamações — resposta mais empática
+  const temperaturaBase = Number(config.temperatura)
+  const temperatura = intencao === 'reclamacao' ? Math.min(temperaturaBase + 0.2, 1.0) : temperaturaBase
+  const chatConfig = { temperature: temperatura, maxTokens: config.max_tokens }
+
+  // 15. Geração de resposta
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
   let motorUsado = config.motor_ia_principal
-  const chatConfig = { temperature: Number(config.temperatura), maxTokens: config.max_tokens }
-
-  // Flag: bloqueia detectarMeChama se a tool criar_recontato já foi usada
   let recontotoCriadoPorTool = false
 
   try {
@@ -766,14 +922,10 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         for (const tc of toolCallsTyped) {
           const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
           const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
-
-          // Marca flag se recontato foi criado via tool
           if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
-
           const toolResult = isAppointmentTool
             ? await executarAppointmentToolCall(tc.function.name, args, payload.tenantId, payload.instanceName)
             : await executarToolCall(tc.function.name, args, calendarConfig!, config.horario_inicio, config.horario_fim)
-
           toolResults.push({
             role: 'tool' as const,
             content: toolResult,
@@ -814,7 +966,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!resultado?.content) return
 
-  // 12. Salva resposta e envia
+  // 16. Salva resposta
   await saveMessage(supabase, {
     conversationId: conversa.id,
     tenantId: payload.tenantId,
@@ -824,10 +976,11 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     metadata: { motor: motorUsado },
   })
 
-  await sendTextMessage(payload.instanceName, payload.phone, resultado.content)
+  // 17. Envia com presença + quebra em blocos naturais
+  await enviarResposta(payload.instanceName, payload.phone, resultado.content)
   await updateConversationTimestamp(supabase, conversa.id)
 
-  // 13. Registra uso de IA
+  // 18. Registra uso de IA
   await logAiUsage(supabase, {
     tenantId: payload.tenantId,
     conversationId: conversa.id,
@@ -837,8 +990,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     custoReais: calcularCusto(motorUsado, resultado.tokensIn, resultado.tokensOut),
   })
 
-  // 14. Detecta intenção "me chama depois" — fire-and-forget
-  // Bloqueado se criar_recontato já foi executada via tool nesta mensagem
+  // 19. Detecta "me chama depois" — fire-and-forget
   if (!recontotoCriadoPorTool) {
     detectarMeChama({
       mensagemCliente: conteudoProcessado,
@@ -847,8 +999,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       instanceName: payload.instanceName,
       contatoNome: conversa.contato_nome ?? payload.pushName ?? payload.phone,
       contatoTelefone: payload.phone,
-    }).catch((err) =>
-      console.error('[process-message] detectarMeChama falhou:', err)
-    )
+    }).catch((err) => console.error('[process-message] detectarMeChama falhou:', err))
   }
 }
