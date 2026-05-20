@@ -10,6 +10,13 @@ import {
 import { processIncomingMessage } from '@/lib/ai/process-message'
 import { getTenantByInstanceName } from '@/lib/supabase/queries/conversations'
 import { PLANOS_MAP } from '@/lib/planos'
+import {
+  acumularMensagem,
+  aguardarEObterMensagens,
+  liberarLock,
+  juntarMensagens,
+  type MensagemAcumulada,
+} from '@/lib/ai/debounce'
 
 const WHATSAPP_STATUS: Record<string, string> = {
   open: 'conectado',
@@ -55,7 +62,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // ── Mensagens enviadas pelo operador via WhatsApp Web (fromMe) ─────────
     if (data.key.fromMe) {
-      // Ignora mídias — já salvas pela rota enviar-midia
       const isMidia = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'].includes(data.messageType)
       if (isMidia) return response
 
@@ -67,7 +73,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const conteudo = extractTextContent(data)
       if (!conteudo) return response
 
-      // Busca conversa ativa OU encerrada mais recente
       const { data: convAtiva } = await supabase
         .from('conversations')
         .select('id, contato_telefone, status')
@@ -79,7 +84,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .maybeSingle()
 
       if (convAtiva) {
-        // Conversa ativa — salva normalmente
         await supabase.from('messages').insert({
           conversation_id: convAtiva.id,
           origem: 'operador',
@@ -93,7 +97,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return response
       }
 
-      // Conversa encerrada — reabre antes de salvar
       const { data: convEncerrada } = await supabase
         .from('conversations')
         .select('id, contato_telefone, status')
@@ -105,7 +108,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .maybeSingle()
 
       if (convEncerrada) {
-        // Reabre a conversa existente
         await supabase.from('conversations')
           .update({
             status: 'ativa',
@@ -129,47 +131,79 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // ── Ignora grupos ──────────────────────────────────────────────────────
     if (data.key.remoteJid.includes('@g.us')) return response
 
-    // ── Mensagem do cliente ────────────────────────────────────────────────
+    // ── Mensagem do cliente — com debounce ────────────────────────────────
     const supabase = createServiceClient()
     const tenant = await getTenantByInstanceName(supabase, event.instance)
     if (!tenant) return response
 
     const phone = extractPhone(data.key.remoteJid)
+    const timestampAtual = Date.now()
 
-    try {
-      await processIncomingMessage({
-        tenantId: tenant.id,
-        instanceName: event.instance,
-        phone,
-        pushName: data.pushName,
-        messageId: data.key.id,
-        messageKey: data.key,
-        messageType: data.messageType,
-        conteudo: extractTextContent(data),
-        caption: data.message.imageMessage?.caption,
-      })
-
-      const planoAtual = (tenant as { plano?: string }).plano ?? 'essencial'
-      if (planoAtual !== 'elite') {
-        const agora3 = new Date(Date.now() - 3 * 60 * 60 * 1000)
-        const inicioMes = new Date(Date.UTC(agora3.getUTCFullYear(), agora3.getUTCMonth(), 1, 3, 0, 0))
-
-        const { count } = await supabase
-          .from('conversations')
-          .select('*', { count: 'exact', head: true })
-          .eq('tenant_id', tenant.id)
-          .gte('criado_em', inicioMes.toISOString())
-
-        const totalConversas = count ?? 0
-        const limiteAtual = PLANOS_MAP[planoAtual]?.limite ?? 50
-
-        if (totalConversas >= limiteAtual) {
-          verificarUpgradePlano(tenant.id)
-        }
-      }
-    } catch (err) {
-      console.error('[webhook/evolution] Erro no processamento:', err)
+    // Monta objeto da mensagem para acumular
+    const mensagemEntrada: MensagemAcumulada = {
+      conteudo: extractTextContent(data) ?? '',
+      tipo: data.messageType,
+      caption: data.message.imageMessage?.caption,
+      messageId: data.key.id,
+      messageKey: data.key as unknown as Record<string, unknown>,
+      pushName: data.pushName,
+      timestamp: timestampAtual,
     }
+
+    // Acumula no Redis e retorna imediatamente ao webhook
+    await acumularMensagem(tenant.id, phone, mensagemEntrada)
+
+    // Processa em background — não bloqueia o response do webhook
+    ;(async () => {
+      const mensagens = await aguardarEObterMensagens(tenant.id, phone, timestampAtual)
+
+      // null = outra instância ganhou o lock ou chegou mensagem mais nova
+      if (!mensagens || mensagens.length === 0) return
+
+      try {
+        // Junta todas as mensagens acumuladas em uma só
+        const mensagemUnificada = juntarMensagens(mensagens)
+        const pushName = mensagens.find(m => m.pushName)?.pushName
+
+        console.log(`[debounce] ${mensagens.length} msg(s) acumuladas para ${phone} → processando como 1`)
+
+        await processIncomingMessage({
+          tenantId: tenant.id,
+          instanceName: event.instance,
+          phone,
+          pushName,
+          messageId: mensagemUnificada.messageId,
+          messageKey: mensagemUnificada.messageKey as unknown as Parameters<typeof processIncomingMessage>[0]['messageKey'],
+          messageType: mensagemUnificada.tipo as Parameters<typeof processIncomingMessage>[0]['messageType'],
+          conteudo: mensagemUnificada.conteudo,
+          caption: mensagemUnificada.caption,
+        })
+
+        // Verifica upgrade de plano
+        const planoAtual = (tenant as { plano?: string }).plano ?? 'essencial'
+        if (planoAtual !== 'elite') {
+          const agora3 = new Date(Date.now() - 3 * 60 * 60 * 1000)
+          const inicioMes = new Date(Date.UTC(agora3.getUTCFullYear(), agora3.getUTCMonth(), 1, 3, 0, 0))
+
+          const { count } = await supabase
+            .from('conversations')
+            .select('*', { count: 'exact', head: true })
+            .eq('tenant_id', tenant.id)
+            .gte('criado_em', inicioMes.toISOString())
+
+          const totalConversas = count ?? 0
+          const limiteAtual = PLANOS_MAP[planoAtual]?.limite ?? 50
+
+          if (totalConversas >= limiteAtual) {
+            verificarUpgradePlano(tenant.id)
+          }
+        }
+      } catch (err) {
+        console.error('[webhook/evolution] Erro no processamento com debounce:', err)
+      } finally {
+        await liberarLock(tenant.id, phone)
+      }
+    })()
   }
 
   if (event.event === 'connection.update' && isConnectionUpdateData(event.data)) {
