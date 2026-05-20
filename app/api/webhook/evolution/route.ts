@@ -130,6 +130,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Acumula no Redis — só dispara process-webhook na primeira mensagem
     const { isFirst } = await acumularMensagem(tenant.id, phone, mensagemEntrada)
 
+    console.log(`[webhook] isFirst=${isFirst} para ${phone}`)
+
     if (isFirst) {
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.hubteksolutions.tech'
       fetch(`${baseUrl}/api/agent/process-webhook`, {
