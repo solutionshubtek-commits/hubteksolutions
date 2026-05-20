@@ -1,24 +1,14 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/verificar-expiracao",
-      "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron/encerrar-conversas",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/cron/scheduled-tasks",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/cron/gerar-lembretes",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/cron/sync-calendar",
-      "schedule": "0 * * * *"
+  "functions": {
+    "app/api/agent/process-webhook/route.ts": {
+      "maxDuration": 60
     }
+  },
+  "crons": [
+    { "path": "/api/cron/verificar-expiracao",  "schedule": "0 9 * * *"    },
+    { "path": "/api/cron/encerrar-conversas",   "schedule": "0 * * * *"    },
+    { "path": "/api/cron/scheduled-tasks",      "schedule": "* * * * *"    },
+    { "path": "/api/cron/gerar-lembretes",      "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/sync-calendar",        "schedule": "0 * * * *"    }
   ]
 }
