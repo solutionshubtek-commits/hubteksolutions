@@ -71,33 +71,30 @@ function buildSystemPrompt(
 
   prompt += `
 
-REGRAS DE COMPORTAMENTO — SIGA RIGOROSAMENTE:
+REGRAS DE COMPORTAMENTO:
 
-1. FIDELIDADE À BASE DE CONHECIMENTO
-   - Para qualquer informação factual (preços, valores, prazos, políticas, horários, endereços, promoções), use EXCLUSIVAMENTE o que estiver nos trechos da base de conhecimento abaixo.
-   - NUNCA complete, estime ou invente valores numéricos com base em suposições. Se o valor exato não estiver na base, diga: "Não tenho essa informação no momento, vou verificar para você."
-   - Não use conhecimento geral sobre o segmento para preencher lacunas. O que não está na base não existe para você.
+1. BASE DE CONHECIMENTO — PRIORIDADE MÁXIMA
+   - Para informações factuais específicas (preços, valores, prazos, políticas, endereços, promoções, dados da empresa), use PREFERENCIALMENTE o que estiver na base de conhecimento abaixo.
+   - Se a informação estiver na base, use-a com precisão. Não invente valores numéricos ou datas que não estejam lá.
+   - Se dois trechos trouxerem valores diferentes para a mesma informação, use o trecho de número menor (mais recente).
 
-2. CONFLITOS ENTRE DOCUMENTOS
-   - Se dois trechos trouxerem valores diferentes para a mesma informação, use sempre o trecho de número menor (mais recente).
-   - Nunca misture valores de trechos diferentes na mesma resposta.
+2. QUANDO A BASE NÃO TEM A RESPOSTA
+   - Para perguntas gerais, contextuais ou de conversação que não exigem dados específicos da empresa, responda naturalmente com base no seu conhecimento.
+   - Para perguntas que exigem dados específicos da empresa (preços, prazos, políticas) e que não estão na base, diga: "Não tenho essa informação no momento. Para mais detalhes, entre em contato diretamente conosco."
+   - Não diga "não sei" para perguntas simples de atendimento que você claramente consegue responder.
 
 3. RESPOSTAS
-   - Seja direto e objetivo. Responda o que foi perguntado sem enrolação.
+   - Seja direto e objetivo. Responda o que foi perguntado.
    - Não repita a pergunta do cliente na resposta.
    - Não use frases como "Claro!", "Com certeza!", "Ótima pergunta!" — vá direto ao ponto.
    - Finalize com uma pergunta curta de continuidade apenas quando fizer sentido.
-   - Nunca invente informações para parecer mais prestativo. Admitir que não sabe é sempre melhor do que errar.
-
-4. LIMITAÇÕES
-   - Se a pergunta não tiver resposta na base de conhecimento, responda: "Não tenho essa informação no momento. Para mais detalhes, entre em contato diretamente conosco."
-   - Não faça promessas operacionais (ex: "vou resolver agora") a menos que o prompt principal autorize.`
+   - Nunca invente dados específicos da empresa para parecer mais prestativo.`
 
   if (knowledgeDocs.length > 0) {
     prompt += '\n\nBASE DE CONHECIMENTO (do mais recente para o mais antigo — priorize os primeiros em caso de conflito):\n'
     prompt += knowledgeDocs.map((d, i) => `\n[Trecho ${i + 1}]\n${d.conteudo_texto}`).join('\n---')
   } else {
-    prompt += '\n\nBase de conhecimento: nenhum documento encontrado para esta consulta. Informe ao cliente que não tem a informação no momento.'
+    prompt += '\n\nBase de conhecimento: nenhum trecho relevante encontrado para esta consulta. Use seu conhecimento geral para responder perguntas simples de atendimento. Para informações específicas da empresa, informe que não tem o dado disponível no momento.'
   }
 
   if (temCalendar) {
@@ -554,23 +551,11 @@ export interface ProcessMessagePayload {
   caption?: string
 }
 
-// ─── Helpers HyDE ─────────────────────────────────────────────────────────────
+// ─── Helpers RAG ──────────────────────────────────────────────────────────────
 
-async function gerarRespostaHipotetica(pergunta: string): Promise<string> {
-  try {
-    const resposta = await openAIChatCompletion([
-      {
-        role: 'system',
-        content: 'Você é um assistente de atendimento. Gere uma resposta hipotética detalhada para a pergunta abaixo, como se soubesse a resposta completa. Use linguagem direta com fatos, valores e detalhes operacionais. Responda em português.',
-      },
-      { role: 'user', content: pergunta },
-    ], { temperature: 0, maxTokens: 300 })
-    return `${pergunta} ${resposta.content}`
-  } catch {
-    return pergunta
-  }
-}
-
+/**
+ * Normaliza erros ortográficos comuns no WhatsApp antes do embedding.
+ */
 async function normalizarPergunta(pergunta: string): Promise<string> {
   try {
     const resposta = await openAIChatCompletion([
@@ -581,6 +566,31 @@ async function normalizarPergunta(pergunta: string): Promise<string> {
       { role: 'user', content: pergunta },
     ], { temperature: 0, maxTokens: 100 })
     return resposta.content.trim() || pergunta
+  } catch {
+    return pergunta
+  }
+}
+
+/**
+ * HyDE leve: expande a pergunta com palavras-chave semânticas relacionadas
+ * para melhorar o match vetorial sem distorcer o embedding com respostas inventadas.
+ *
+ * Exemplo:
+ *   Entrada: "quando sua empresa foi fundada"
+ *   Saída:   "fundação empresa história origem ano criação início quando"
+ */
+async function expandirPergunta(pergunta: string): Promise<string> {
+  try {
+    const resposta = await openAIChatCompletion([
+      {
+        role: 'system',
+        content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema da pergunta. Inclua sinônimos, termos do domínio e variações relevantes. Retorne apenas as palavras separadas por espaço, sem pontuação, sem explicações.',
+      },
+      { role: 'user', content: pergunta },
+    ], { temperature: 0, maxTokens: 60 })
+    const palavras = resposta.content.trim()
+    // Combina a pergunta original + palavras-chave para o embedding
+    return palavras ? `${pergunta} ${palavras}` : pergunta
   } catch {
     return pergunta
   }
@@ -669,24 +679,31 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!conteudoProcessado.trim()) return
 
-  // 8. Busca semântica com HyDE + normalização
+  // 8. Busca semântica — normalização ortográfica + HyDE leve (expansão de palavras-chave)
   let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number; criado_em: string }> = []
   try {
     const perguntaNormalizada = await normalizarPergunta(conteudoProcessado)
-    const textoParaEmbedding = await gerarRespostaHipotetica(perguntaNormalizada)
+    const textoParaEmbedding = await expandirPergunta(perguntaNormalizada)
     const embedding = await generateEmbedding(textoParaEmbedding)
 
-    const { data: docs } = await supabase.rpc('match_knowledge', {
+    const { data: docs, error: ragError } = await supabase.rpc('match_knowledge', {
       query_embedding: embedding,
       match_tenant_id: payload.tenantId,
-      match_threshold: 0.6,
-      match_count: 8,
+      match_threshold: 0.45,
+      match_count: 10,
     })
+
+    if (ragError) {
+      console.error('[RAG] Erro no match_knowledge:', ragError)
+    }
 
     knowledgeDocs = ((docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>)
       .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
+
+    // Log de debug — remover após confirmar funcionamento
+    console.log(`[RAG] ${knowledgeDocs.length} chunks retornados | similarities: ${knowledgeDocs.map(d => d.similarity.toFixed(3)).join(', ')}`)
   } catch (err) {
-    console.error('[process-message] Falha na busca semântica:', err)
+    console.error('[RAG] Falha na busca semântica:', err)
   }
 
   // 9. Config extra (campos não tipados no AgentConfig)
