@@ -160,21 +160,22 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     const topLabelsPlugin = {
       id: 'topLabels',
       afterDatasetsDraw(chart: Chart) {
-        const { ctx, data, scales: { y } } = chart as any
+        const ctx = chart.ctx
+        const data = chart.data
+        const y = chart.scales['y']
         const meta = chart.getDatasetMeta(0)
         ctx.save()
         ctx.font = '500 10px sans-serif'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'bottom'
         ctx.fillStyle = labelColor
-        meta.data.forEach((bar: any, i: number) => {
+        meta.data.forEach((bar: { x: number }, i: number) => {
           const val = (data.datasets[0].data as number[])[i]
           if (val > 0) {
             const y0  = y.getPixelForValue(0)
             const yv  = y.getPixelForValue(val)
             const top = Math.min(yv, y0 - 14)
-            ctx.fillText(val, bar.x, top - 2)
-          }
+            ctx.fillText(String(val), bar.x, top - 2)          }
         })
         ctx.restore()
       },
@@ -222,7 +223,7 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     })
 
     return () => { chartRef.current?.destroy() }
-  }, [dados])
+  }, [dados, yMax])
 
   if (dados.length === 0) return (
     <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--text-label)' }}>
