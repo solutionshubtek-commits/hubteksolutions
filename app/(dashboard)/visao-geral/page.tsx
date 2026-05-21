@@ -152,8 +152,8 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     let cancelled = false
 
     async function initChart() {
-      const { Chart, BarElement, CategoryScale, LinearScale, Tooltip } = await import('chart.js')
-      Chart.register(BarElement, CategoryScale, LinearScale, Tooltip)
+      const { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } = await import('chart.js')
+      Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 
       if (cancelled || !canvasRef.current) return
       if (chartRef.current) { chartRef.current.destroy() }
@@ -235,8 +235,10 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
 
     return () => {
       cancelled = true
-      chartRef.current?.destroy()
-      chartRef.current = null
+      if (chartRef.current) {
+        chartRef.current.destroy()
+        chartRef.current = null
+      }
     }
   }, [dados, dadosValidos, yMax])
 
