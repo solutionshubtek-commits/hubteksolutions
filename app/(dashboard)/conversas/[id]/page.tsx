@@ -325,8 +325,71 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   }
 
   function renderConteudoMensagem(msg: Mensagem) {
-    if (!msg.arquivo_url) return <span>{msg.conteudo}</span>
     const tipo = msg.tipo?.toLowerCase() ?? ''
+
+    // Mídia recebida do cliente sem URL (processada pelo agente — mostra indicador)
+    if (!msg.arquivo_url && msg.origem === 'cliente') {
+      if (tipo === 'audio') return (
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ background: 'rgba(16,185,129,0.15)' }}>
+            <Mic size={13} style={{ color: '#10B981' }} />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Áudio</span>
+            {msg.conteudo && msg.conteudo !== 'undefined' && (
+              <span className="text-xs italic" style={{ color: 'var(--text-secondary)' }}>
+                &ldquo;{msg.conteudo}&rdquo;
+              </span>
+            )}
+          </div>
+        </div>
+      )
+      if (tipo === 'imagem') return (
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ background: 'rgba(59,130,246,0.15)' }}>
+            <span style={{ fontSize: 14 }}>🖼️</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Imagem</span>
+            {msg.conteudo && msg.conteudo !== 'undefined' && (
+              <span className="text-xs italic" style={{ color: 'var(--text-secondary)' }}>
+                &ldquo;{msg.conteudo}&rdquo;
+              </span>
+            )}
+          </div>
+        </div>
+      )
+      if (tipo === 'video') return (
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ background: 'rgba(139,92,246,0.15)' }}>
+            <span style={{ fontSize: 14 }}>🎥</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Vídeo</span>
+            {msg.conteudo && msg.conteudo !== 'undefined' && (
+              <span className="text-xs italic" style={{ color: 'var(--text-secondary)' }}>
+                &ldquo;{msg.conteudo}&rdquo;
+              </span>
+            )}
+          </div>
+        </div>
+      )
+      if (tipo === 'documento') return (
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ background: 'rgba(245,158,11,0.15)' }}>
+            <span style={{ fontSize: 14 }}>📎</span>
+          </div>
+          <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Documento</span>
+        </div>
+      )
+    }
+
+    if (!msg.arquivo_url) return <span>{msg.conteudo}</span>
+
     if (tipo === 'imagem') return (
       <div className="flex flex-col gap-1">
         {/* eslint-disable-next-line @next/next/no-img-element */}
