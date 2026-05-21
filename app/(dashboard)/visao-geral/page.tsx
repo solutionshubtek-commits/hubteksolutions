@@ -152,17 +152,22 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     let cancelled = false
 
     async function initChart() {
-      const { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } = await import('chart.js')
-      Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
+      const { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend } = await import('chart.js')
+      Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
       if (cancelled || !canvasRef.current) return
-      if (chartRef.current) { chartRef.current.destroy() }
+      if (chartRef.current) {
+        chartRef.current.destroy()
+        chartRef.current = null
+      }
 
       const isDark     = window.matchMedia('(prefers-color-scheme: dark)').matches
       const gridColor  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
       const textColor  = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'
       const barColor   = isDark ? 'rgba(16,185,129,0.85)'  : 'rgba(16,185,129,0.9)'
       const labelColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'
+
+      const maxTicks = dados.length <= 7 ? 7 : dados.length <= 30 ? 10 : 12
 
       const topLabelsPlugin = {
         id: 'topLabels',
@@ -201,7 +206,6 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
             data: dados.map(d => d.total),
             backgroundColor: barColor,
             borderRadius: 4,
-            borderSkipped: false,
           }],
         },
         options: {
@@ -219,7 +223,13 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
           scales: {
             x: {
               grid: { color: gridColor },
-              ticks: { color: textColor, font: { size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+              ticks: {
+                color: textColor,
+                font: { size: 9 },
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: maxTicks,
+              },
             },
             y: {
               display: false,
