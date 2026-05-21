@@ -160,6 +160,7 @@ function buildSystemPrompt(
   const diasLabel = diasFuncionamento.map(d => DIAS_LABEL[d] ?? d).join(', ')
   prompt += `\n\nHORÁRIO DE FUNCIONAMENTO OFICIAL: ${diasLabel}, das ${horarioInicio} às ${horarioFim} (horário de Brasília).`
   prompt += `\nEsta é a fonte ÚNICA e DEFINITIVA do horário de atendimento. IGNORE qualquer horário diferente que apareça nos documentos da base de conhecimento — eles podem estar desatualizados. Quando perguntarem sobre horário de funcionamento, use SEMPRE este.`
+  prompt += `\nSTATUS ATUAL: ESTAMOS ATENDENDO AGORA. Se o cliente perguntar se estão atendendo ou se está aberto, confirme que SIM — você só recebe mensagens dentro do horário de funcionamento.`
 
   prompt += `\n\nINTENÇÃO DETECTADA: ${intencao}.`
   if (intencao === 'reclamacao') {
