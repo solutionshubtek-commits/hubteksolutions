@@ -122,36 +122,47 @@ export default function ConfiguracoesPage() {
 
   useEffect(() => {
     async function fetchData() {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data: userData } = await supabase
-        .from('users').select('tenant_id, role').eq('id', user.id).single()
-      if (!userData?.tenant_id) return
-      setTenantId(userData.tenant_id)
-      setRole(userData.role || '')
-      const { data: tenantData } = await supabase
-        .from('tenants')
-        .select('id, nome, slug, prompt_agente, mensagem_fora_horario, horario_funcionamento, avatar_url, google_calendar_config')
-        .eq('id', userData.tenant_id)
-        .single()
-      if (tenantData) {
-        setTenant(tenantData as TenantData)
-        const h = tenantData.horario_funcionamento as HorarioFuncionamento | null
-        setHorario(h ?? HORARIO_PADRAO)
-        setFuncoes(h?.funcoes ?? [])
-        const gc = tenantData.google_calendar_config as GoogleCalendarConfig | null
-        setGcClientEmail(gc?.client_email ?? '')
-        setGcPrivateKey(gc?.private_key ?? '')
-        setGcCalendarId(gc?.calendar_id ?? '')
+      try {
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+        const { data: userData } = await supabase
+          .from('users').select('tenant_id, role').eq('id', user.id).single()
+        if (!userData?.tenant_id) return
+        setTenantId(userData.tenant_id)
+        setRole(userData.role || '')
+        const { data: tenantData } = await supabase
+          .from('tenants')
+          .select('id, nome, slug, prompt_agente, mensagem_fora_horario, horario_funcionamento, avatar_url, google_calendar_config')
+          .eq('id', userData.tenant_id)
+          .single()
+        if (tenantData) {
+          setTenant(tenantData as TenantData)
+          const h = tenantData.horario_funcionamento as HorarioFuncionamento | null
+          const horarioSeguro: HorarioFuncionamento = {
+            inicio: h?.inicio ?? HORARIO_PADRAO.inicio,
+            fim: h?.fim ?? HORARIO_PADRAO.fim,
+            dias: Array.isArray(h?.dias) ? h.dias : HORARIO_PADRAO.dias,
+            funcoes: Array.isArray(h?.funcoes) ? h.funcoes : [],
+          }
+          setHorario(horarioSeguro)
+          setFuncoes(horarioSeguro.funcoes)
+          const gc = tenantData.google_calendar_config as GoogleCalendarConfig | null
+          setGcClientEmail(gc?.client_email ?? '')
+          setGcPrivateKey(gc?.private_key ?? '')
+          setGcCalendarId(gc?.calendar_id ?? '')
+        }
+        if (userData.role === 'self_managed') {
+          const { data: files } = await supabase
+            .from('knowledge_base').select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
+            .eq('tenant_id', userData.tenant_id).order('criado_em', { ascending: false })
+          setArquivos(files || [])
+        }
+      } catch (err) {
+        console.error('[configuracoes] fetchData error:', err)
+      } finally {
+        setCarregando(false)
       }
-      if (userData.role === 'self_managed') {
-        const { data: files } = await supabase
-          .from('knowledge_base').select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
-          .eq('tenant_id', userData.tenant_id).order('criado_em', { ascending: false })
-        setArquivos(files || [])
-      }
-      setCarregando(false)
     }
     fetchData()
   }, [])

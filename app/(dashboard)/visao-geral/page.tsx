@@ -135,54 +135,149 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   )
 }
 
-function GraficoBarras({ dados }: { dados: DiaDado[] }) {
+function GraficoArea({ dados }: { dados: DiaDado[] }) {
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; dia: string; total: number } | null>(null)
+
   if (dados.length === 0) return (
     <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--text-label)' }}>
       Nenhum dado no período
     </div>
   )
-  const max = Math.max(...dados.map(d => d.total), 1)
+
   const total = dados.reduce((s, d) => s + d.total, 0)
-  const media = dados.length ? Math.round(total / dados.length) : 0
+  const media = +(total / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
   const pico = Math.max(...dados.map(d => d.total))
+  const max = Math.max(pico, 1)
+
+  // SVG dimensions
+  const W = 600, H = 160, padL = 28, padR = 12, padT = 12, padB = 24
+  const innerW = W - padL - padR
+  const innerH = H - padT - padB
+
+  // Y axis ticks
+  const yTicks = [0, Math.ceil(max * 0.25), Math.ceil(max * 0.5), Math.ceil(max * 0.75), max]
+    .filter((v, i, arr) => arr.indexOf(v) === i)
+
+  // Points
+  const pts = dados.map((d, i) => ({
+    x: padL + (i / Math.max(dados.length - 1, 1)) * innerW,
+    y: padT + innerH - (d.total / max) * innerH,
+    ...d,
+  }))
+
+  const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
+  const areaPath = `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${(padT + innerH).toFixed(1)} L${pts[0].x.toFixed(1)},${(padT + innerH).toFixed(1)} Z`
+
+  // X labels — mostra ~6 labels espaçados
+  const step = Math.max(1, Math.floor(dados.length / 6))
+  const xLabels = pts.filter((_, i) => i === 0 || i === pts.length - 1 || i % step === 0)
+
+  function formatDia(dia: string) {
+    const d = new Date(dia + 'T12:00:00')
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  }
 
   return (
     <div>
-      <div className="flex items-center gap-4 md:gap-8 mb-4 flex-wrap">
+      {/* Stats */}
+      <div className="flex items-center gap-6 md:gap-10 mb-4 flex-wrap">
         <div>
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Total</p>
-          <p className="text-base md:text-lg font-bold text-[#10B981]">{total.toLocaleString('pt-BR')}</p>
+          <p className="text-lg font-bold text-[#10B981]">{total.toLocaleString('pt-BR')}</p>
         </div>
         <div>
-          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Média diária</p>
-          <p className="text-base md:text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{media}</p>
+          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Média/dia ativo</p>
+          <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{media}</p>
         </div>
         <div>
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Pico</p>
-          <p className="text-base md:text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
+          <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
         </div>
       </div>
-      <div className="flex items-end gap-0.5 h-28 md:h-36">
-        {dados.map((d, i) => {
-          const pct = (d.total / max) * 100
-          const opacity = 0.4 + (0.6 * (i / dados.length))
-          const showLabel = dados.length <= 7 || i % Math.floor(dados.length / 6) === 0 || i === dados.length - 1
-          return (
-            <div key={i} className="flex flex-col items-center gap-0.5 flex-1 min-w-[4px] group relative">
-              <div className="absolute bottom-full mb-1 rounded px-2 py-1 text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 left-1/2 -translate-x-1/2"
-                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-2)', color: 'var(--text-primary)' }}>
-                {d.dia.slice(5)}: {d.total}
-              </div>
-              <div className="w-full rounded-sm hover:bg-[#34D399] transition-colors cursor-pointer"
-                style={{ height: `${Math.max(pct, 2)}%`, minHeight: 2, background: `rgba(16,185,129,${opacity})` }} />
-              {showLabel && (
-                <span className="text-[9px] whitespace-nowrap" style={{ color: 'var(--text-label)' }}>
-                  {d.dia.slice(8)}
-                </span>
+
+      {/* Chart */}
+      <div className="relative w-full" style={{ paddingBottom: '28%', minHeight: 120 }}>
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          className="absolute inset-0 w-full h-full"
+          style={{ overflow: 'visible' }}
+          onMouseLeave={() => setTooltip(null)}
+        >
+          <defs>
+            <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#10B981" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#10B981" stopOpacity="0.02" />
+            </linearGradient>
+            <clipPath id="chartClip">
+              <rect x={padL} y={padT} width={innerW} height={innerH + 1} />
+            </clipPath>
+          </defs>
+
+          {/* Grid Y */}
+          {yTicks.map(tick => {
+            const y = padT + innerH - (tick / max) * innerH
+            return (
+              <g key={tick}>
+                <line x1={padL} y1={y} x2={padL + innerW} y2={y}
+                  stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                <text x={padL - 4} y={y + 3.5} textAnchor="end" fontSize="8"
+                  fill="var(--text-muted)">{tick}</text>
+              </g>
+            )
+          })}
+
+          {/* Area */}
+          <path d={areaPath} fill="url(#areaGrad)" clipPath="url(#chartClip)" />
+
+          {/* Line */}
+          <path d={linePath} fill="none" stroke="#10B981" strokeWidth="1.8"
+            strokeLinejoin="round" strokeLinecap="round" clipPath="url(#chartClip)" />
+
+          {/* X labels */}
+          {xLabels.map((p, i) => (
+            <text key={i} x={p.x} y={H - 2} textAnchor="middle" fontSize="7.5"
+              fill="var(--text-muted)">{formatDia(p.dia)}</text>
+          ))}
+
+          {/* Hover targets + dots */}
+          {pts.map((p, i) => (
+            <g key={i}>
+              <rect
+                x={i === 0 ? p.x : (pts[i - 1].x + p.x) / 2}
+                width={i === 0 || i === pts.length - 1
+                  ? (pts[1]?.x - pts[0]?.x) / 2 || 10
+                  : ((p.x - (pts[i - 1]?.x ?? p.x)) + ((pts[i + 1]?.x ?? p.x) - p.x)) / 2}
+                y={padT} height={innerH}
+                fill="transparent"
+                style={{ cursor: 'crosshair' }}
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.closest('svg')!.getBoundingClientRect()
+                  setTooltip({ x: p.x, y: p.y, dia: p.dia, total: p.total })
+                }}
+              />
+              {tooltip?.dia === p.dia && (
+                <circle cx={p.x} cy={p.y} r="3.5" fill="#10B981" stroke="var(--bg-surface)" strokeWidth="2" />
               )}
-            </div>
-          )
-        })}
+            </g>
+          ))}
+
+          {/* Tooltip */}
+          {tooltip && (() => {
+            const tx = Math.min(Math.max(tooltip.x, padL + 25), W - padR - 25)
+            const ty = Math.max(tooltip.y - 28, padT + 2)
+            return (
+              <g>
+                <rect x={tx - 28} y={ty - 10} width={56} height={20} rx="4"
+                  fill="var(--bg-surface)" stroke="var(--border)" strokeWidth="0.8" />
+                <text x={tx} y={ty + 4} textAnchor="middle" fontSize="9" fontWeight="600"
+                  fill="var(--text-primary)">
+                  {new Date(tooltip.dia + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} · {tooltip.total}
+                </text>
+              </g>
+            )
+          })()}
+        </svg>
       </div>
     </div>
   )
@@ -484,7 +579,7 @@ export default function VisaoGeralPage() {
               <Download size={12} />
             </button>
           </div>
-          <GraficoBarras dados={grafico} />
+          <GraficoArea dados={grafico} />
         </div>
 
         <div className="rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
