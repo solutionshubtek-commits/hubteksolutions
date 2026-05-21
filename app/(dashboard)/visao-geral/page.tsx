@@ -252,7 +252,6 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
                 fill="transparent"
                 style={{ cursor: 'crosshair' }}
                 onMouseEnter={(e) => {
-                  const rect = e.currentTarget.closest('svg')!.getBoundingClientRect()
                   setTooltip({ x: p.x, y: p.y, dia: p.dia, total: p.total })
                 }}
               />
