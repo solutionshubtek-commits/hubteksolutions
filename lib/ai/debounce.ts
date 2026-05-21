@@ -37,7 +37,7 @@ export interface FilaMensagens {
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const DEBOUNCE_TTL = 30        // segundos — TTL da chave no Redis
-const DEBOUNCE_WINDOW_MS = 5000 // 5 segundos de espera após última mensagem
+const DEBOUNCE_WINDOW_MS = 10000 // 10 segundos de espera após última mensagem
 
 function chaveDebounce(tenantId: string, phone: string): string {
   return `debounce:${tenantId}:${phone}`
