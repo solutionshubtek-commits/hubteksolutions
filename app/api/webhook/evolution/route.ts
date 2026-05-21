@@ -135,7 +135,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (isFirst) {
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.hubteksolutions.tech'
       console.log(`[webhook] Disparando process-webhook para ${phone}`)
-      fetch(`${baseUrl}/api/agent/process-webhook`, {
+      // Aguarda o fetch iniciar antes de retornar — garante que o Vercel não cancele a chamada
+      await fetch(`${baseUrl}/api/agent/process-webhook`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

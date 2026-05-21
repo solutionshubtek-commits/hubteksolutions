@@ -14,6 +14,10 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
 export const maxDuration = 60
 
+// Status ativos — cobre variações históricas do banco
+const STATUS_ATIVOS = ['ativa', 'ativo', 'aberta', 'aberto']
+const STATUS_ENCERRADOS = ['encerrada', 'encerrado']
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -22,7 +26,6 @@ export async function GET(request: Request) {
 
   const now = new Date().toISOString()
 
-  // Busca tasks pendentes com agendado_para <= agora
   const { data: tasks, error } = await supabase
     .from('scheduled_tasks')
     .select('*, tenants!inner(id, plano, agente_ativo, pausado_por_admin)')
@@ -46,17 +49,14 @@ export async function GET(request: Request) {
     try {
       const tenant = task.tenants
 
-      // Verifica se agente está ativo
       if (!tenant.agente_ativo || tenant.pausado_por_admin) {
         await marcarFalhou(task.id, 'agente_inativo_ou_pausado')
         falhas++
         continue
       }
 
-      // Resolve conversa (reutiliza aberta, reabre encerrada ou cria nova)
       const { conversationId, nova } = await criarOuReabrirConversa(task)
 
-      // Verifica limite do plano apenas se for conversa nova ou reaberta
       if (nova) {
         const limitok = await verificarLimitePlano(task.tenant_id, tenant.plano)
         if (!limitok) {
@@ -66,11 +66,9 @@ export async function GET(request: Request) {
         }
       }
 
-      // Prepara mensagem com variáveis interpoladas
       const mensagem = interpolarMensagem(task.mensagem_inicial, task.variaveis || {})
-
-      // Envia via Evolution API
       const numero = formatarNumero(task.contato_telefone)
+
       const envioResp = await fetch(
         `${EVOLUTION_API_URL}/message/sendText/${task.instance_name}`,
         {
@@ -79,10 +77,7 @@ export async function GET(request: Request) {
             'Content-Type': 'application/json',
             apikey: EVOLUTION_API_KEY,
           },
-          body: JSON.stringify({
-            number: numero,
-            text: mensagem,
-          }),
+          body: JSON.stringify({ number: numero, text: mensagem }),
         }
       )
 
@@ -93,7 +88,16 @@ export async function GET(request: Request) {
         continue
       }
 
-      // Marca task como enviada
+      // Salva mensagem na conversa existente
+      await supabase.from('messages').insert({
+        conversation_id: conversationId,
+        tenant_id: task.tenant_id,
+        origem: 'agente',
+        tipo: 'texto',
+        conteudo: mensagem,
+        criado_em: new Date().toISOString(),
+      })
+
       await supabase
         .from('scheduled_tasks')
         .update({
@@ -103,7 +107,6 @@ export async function GET(request: Request) {
         })
         .eq('id', task.id)
 
-      // Se era lembrete de agendamento, marca lembrete_enviado
       if (task.appointment_id) {
         await supabase
           .from('appointments')
@@ -123,9 +126,7 @@ export async function GET(request: Request) {
   return NextResponse.json({ ok: true, enviadas, falhas })
 }
 
-// ----------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function marcarFalhou(taskId: string, erro: string) {
   await supabase
@@ -150,39 +151,51 @@ async function criarOuReabrirConversa(task: {
   contato_nome: string
   contato_telefone: string
 }): Promise<{ conversationId: string; nova: boolean }> {
-  // Busca conversa mais recente para este contato
-  const { data: existente } = await supabase
+
+  // 1. Busca conversa ativa (qualquer status não encerrado)
+  const { data: ativa } = await supabase
     .from('conversations')
     .select('id, status')
     .eq('tenant_id', task.tenant_id)
     .eq('contato_telefone', task.contato_telefone)
+    .not('status', 'in', `(${STATUS_ENCERRADOS.map(s => `"${s}"`).join(',')})`)
     .order('ultima_mensagem_em', { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
 
-  // Conversa aberta — reutiliza sem contabilizar no plano
-  if (existente && existente.status === 'aberta') {
+  if (ativa) {
     await supabase
       .from('conversations')
       .update({ ultima_mensagem_em: new Date().toISOString() })
-      .eq('id', existente.id)
-    return { conversationId: existente.id, nova: false }
+      .eq('id', ativa.id)
+    return { conversationId: ativa.id, nova: false }
   }
 
-  // Conversa encerrada — reabre e contabiliza no plano
-  if (existente && existente.status === 'encerrada') {
+  // 2. Busca conversa encerrada para reabrir
+  const { data: encerrada } = await supabase
+    .from('conversations')
+    .select('id, status')
+    .eq('tenant_id', task.tenant_id)
+    .eq('contato_telefone', task.contato_telefone)
+    .in('status', STATUS_ENCERRADOS)
+    .order('ultima_mensagem_em', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (encerrada) {
     await supabase
       .from('conversations')
       .update({
-        status: 'aberta',
+        status: 'ativa',
         agente_pausado: false,
         ultima_mensagem_em: new Date().toISOString(),
       })
-      .eq('id', existente.id)
-    return { conversationId: existente.id, nova: true }
+      .eq('id', encerrada.id)
+    console.log(`[cron:scheduled-tasks] Conversa reaberta: ${encerrada.id}`)
+    return { conversationId: encerrada.id, nova: true }
   }
 
-  // Não existe — cria nova e contabiliza no plano
+  // 3. Cria nova conversa
   const { data, error } = await supabase
     .from('conversations')
     .insert({
@@ -190,7 +203,7 @@ async function criarOuReabrirConversa(task: {
       instance_name: task.instance_name,
       contato_nome: task.contato_nome,
       contato_telefone: task.contato_telefone,
-      status: 'aberta',
+      status: 'ativa',
       agente_pausado: false,
       ultima_mensagem_em: new Date().toISOString(),
     })
@@ -200,6 +213,7 @@ async function criarOuReabrirConversa(task: {
   if (error || !data) {
     throw new Error(`Falha ao criar conversa: ${error?.message}`)
   }
+  console.log(`[cron:scheduled-tasks] Nova conversa criada: ${data.id}`)
   return { conversationId: data.id, nova: true }
 }
 
@@ -212,7 +226,6 @@ async function verificarLimitePlano(tenantId: string, plano: string): Promise<bo
   }
 
   const limite = LIMITES[plano] ?? 50
-
   const inicioMes = new Date()
   inicioMes.setDate(1)
   inicioMes.setHours(0, 0, 0, 0)

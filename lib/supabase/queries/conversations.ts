@@ -197,6 +197,11 @@ export async function logAiUsage(
     motor_utilizado: data.motor,
   })
 }
+
+// Status ativos válidos — cobre variações históricas do banco
+const STATUS_ATIVOS = ['ativa', 'ativo', 'aberta', 'aberto']
+const STATUS_ENCERRADOS = ['encerrada', 'encerrado']
+
 export async function reativarOuCriarConversa(
   supabase: SupabaseClient,
   tenantId: string,
@@ -204,21 +209,52 @@ export async function reativarOuCriarConversa(
   nome?: string,
   instanceName?: string
 ): Promise<Conversation> {
-  // Verifica se há conversa ativa (não encerrada)
+  // 1. Busca conversa ativa (qualquer status não encerrado)
   const { data: ativa } = await supabase
     .from('conversations')
     .select('*')
     .eq('tenant_id', tenantId)
     .eq('contato_telefone', phone)
     .eq('instance_name', instanceName ?? '')
-    .not('status', 'in', '("encerrada","encerrado")')
+    .not('status', 'in', `(${STATUS_ENCERRADOS.map(s => `"${s}"`).join(',')})`)
     .order('criado_em', { ascending: false })
     .limit(1)
     .maybeSingle()
 
   if (ativa) return ativa as Conversation
 
-  // Cria nova conversa (mesmo que exista encerrada — nova interação = nova conversa)
+  // 2. Busca conversa encerrada mais recente para reabrir
+  const { data: encerrada } = await supabase
+    .from('conversations')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('contato_telefone', phone)
+    .eq('instance_name', instanceName ?? '')
+    .in('status', STATUS_ENCERRADOS)
+    .order('criado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (encerrada) {
+    // Reabre a conversa existente
+    const { data: reaberta, error } = await supabase
+      .from('conversations')
+      .update({
+        status: 'ativa',
+        agente_pausado: false,
+        ultima_mensagem_em: new Date().toISOString(),
+      })
+      .eq('id', encerrada.id)
+      .select()
+      .single()
+
+    if (!error && reaberta) {
+      console.log(`[conversa] Reaberta conversa ${encerrada.id} para ${phone}`)
+      return reaberta as Conversation
+    }
+  }
+
+  // 3. Nenhuma conversa existe — cria nova
   const { data: created, error } = await supabase
     .from('conversations')
     .insert({
