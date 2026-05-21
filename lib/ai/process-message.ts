@@ -141,6 +141,7 @@ function buildSystemPrompt(
   temAgendamentosHubtek: boolean,
   horarioInicio: string,
   horarioFim: string,
+  diasFuncionamento: string[],
   telefoneCliente: string,
   intencao: Intencao,
   perfilCliente: string,
@@ -150,6 +151,15 @@ function buildSystemPrompt(
 
   const saudacao = getSaudacao()
   prompt += `\n\nSAUDAÇÃO ATUAL: Use "${saudacao}" quando for a primeira mensagem ou quando fizer sentido cumprimentar.`
+
+  // Horário oficial — prioridade absoluta sobre qualquer documento
+  const DIAS_LABEL: Record<string, string> = {
+    dom: 'domingo', seg: 'segunda', ter: 'terça', qua: 'quarta',
+    qui: 'quinta', sex: 'sexta', sab: 'sábado',
+  }
+  const diasLabel = diasFuncionamento.map(d => DIAS_LABEL[d] ?? d).join(', ')
+  prompt += `\n\nHORÁRIO DE FUNCIONAMENTO OFICIAL: ${diasLabel}, das ${horarioInicio} às ${horarioFim} (horário de Brasília).`
+  prompt += `\nEsta é a fonte ÚNICA e DEFINITIVA do horário de atendimento. IGNORE qualquer horário diferente que apareça nos documentos da base de conhecimento — eles podem estar desatualizados. Quando perguntarem sobre horário de funcionamento, use SEMPRE este.`
 
   prompt += `\n\nINTENÇÃO DETECTADA: ${intencao}.`
   if (intencao === 'reclamacao') {
@@ -890,6 +900,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         temAgendamentosHubtek,
         config.horario_inicio,
         config.horario_fim,
+        config.dias_funcionamento,
         payload.phone,
         intencao,
         perfilTexto,
