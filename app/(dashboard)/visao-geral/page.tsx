@@ -140,13 +140,14 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const chartRef  = useRef<ChartType | null>(null)
 
+  const dadosValidos = dados.length > 0
   const total = dados.reduce((s, d) => s + d.total, 0)
   const media = +(total / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
   const pico  = Math.max(...dados.map(d => d.total), 0)
   const yMax  = Math.max(pico + 1, 5)
 
   useEffect(() => {
-    if (!canvasRef.current) return
+    if (!dadosValidos || !canvasRef.current) return
 
     let cancelled = false
 
@@ -166,9 +167,9 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
       const topLabelsPlugin = {
         id: 'topLabels',
         afterDatasetsDraw(chart: ChartType) {
-          const ctx = chart.ctx
+          const ctx  = chart.ctx
           const data = chart.data
-          const y = chart.scales['y']
+          const y    = chart.scales['y']
           const meta = chart.getDatasetMeta(0)
           ctx.save()
           ctx.font = '500 10px sans-serif'
@@ -237,9 +238,9 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
       chartRef.current?.destroy()
       chartRef.current = null
     }
-  }, [dados, yMax])
+  }, [dados, dadosValidos, yMax])
 
-  if (dados.length === 0) return (
+  if (!dadosValidos) return (
     <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--text-label)' }}>
       Nenhum dado no período
     </div>
