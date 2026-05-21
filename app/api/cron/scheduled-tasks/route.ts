@@ -14,8 +14,7 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
 export const maxDuration = 60
 
-// Status ativos — cobre variações históricas do banco
-const STATUS_ATIVOS = ['ativa', 'ativo', 'aberta', 'aberto']
+// Status encerrados — cobre variações históricas do banco
 const STATUS_ENCERRADOS = ['encerrada', 'encerrado']
 
 export async function GET(request: Request) {

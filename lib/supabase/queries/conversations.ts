@@ -198,8 +198,7 @@ export async function logAiUsage(
   })
 }
 
-// Status ativos válidos — cobre variações históricas do banco
-const STATUS_ATIVOS = ['ativa', 'ativo', 'aberta', 'aberto']
+// Status encerrados — cobre variações históricas do banco
 const STATUS_ENCERRADOS = ['encerrada', 'encerrado']
 
 export async function reativarOuCriarConversa(
