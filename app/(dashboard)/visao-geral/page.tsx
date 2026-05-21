@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Chart, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js'
+import type { Chart as ChartType } from 'chart.js'
 import { createClient } from '@/lib/supabase/client'
 import {
   MessageSquare, Users, Clock, PauseCircle,
@@ -8,8 +8,6 @@ import {
   Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
-
-Chart.register(BarElement, CategoryScale, LinearScale, Tooltip)
 
 interface Metrics {
   conversasHoje: number
@@ -140,7 +138,7 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
 
 function GraficoBarras({ dados }: { dados: DiaDado[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const chartRef  = useRef<Chart | null>(null)
+  const chartRef  = useRef<ChartType | null>(null)
 
   const total = dados.reduce((s, d) => s + d.total, 0)
   const media = +(total / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
@@ -149,80 +147,96 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
 
   useEffect(() => {
     if (!canvasRef.current) return
-    if (chartRef.current) { chartRef.current.destroy() }
 
-    const isDark    = window.matchMedia('(prefers-color-scheme: dark)').matches
-    const gridColor  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
-    const textColor  = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'
-    const barColor   = isDark ? 'rgba(16,185,129,0.85)'  : 'rgba(16,185,129,0.9)'
-    const labelColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'
+    let cancelled = false
 
-    const topLabelsPlugin = {
-      id: 'topLabels',
-      afterDatasetsDraw(chart: Chart) {
-        const ctx = chart.ctx
-        const data = chart.data
-        const y = chart.scales['y']
-        const meta = chart.getDatasetMeta(0)
-        ctx.save()
-        ctx.font = '500 10px sans-serif'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'bottom'
-        ctx.fillStyle = labelColor
-        meta.data.forEach((bar: { x: number }, i: number) => {
-          const val = (data.datasets[0].data as number[])[i]
-          if (val > 0) {
-            const y0  = y.getPixelForValue(0)
-            const yv  = y.getPixelForValue(val)
-            const top = Math.min(yv, y0 - 14)
-            ctx.fillText(String(val), bar.x, top - 2)          }
-        })
-        ctx.restore()
-      },
-    }
+    async function initChart() {
+      const { Chart, BarElement, CategoryScale, LinearScale, Tooltip } = await import('chart.js')
+      Chart.register(BarElement, CategoryScale, LinearScale, Tooltip)
 
-    chartRef.current = new Chart(canvasRef.current, {
-      type: 'bar',
-      plugins: [topLabelsPlugin],
-      data: {
-        labels: dados.map(d => {
-          const dt = new Date(d.dia + 'T12:00:00')
-          return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-        }),
-        datasets: [{
-          data: dados.map(d => d.total),
-          backgroundColor: barColor,
-          borderRadius: 4,
-          borderSkipped: false,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => ` ${ctx.parsed.y} conversa${ctx.parsed.y !== 1 ? 's' : ''}`,
+      if (cancelled || !canvasRef.current) return
+      if (chartRef.current) { chartRef.current.destroy() }
+
+      const isDark     = window.matchMedia('(prefers-color-scheme: dark)').matches
+      const gridColor  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
+      const textColor  = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'
+      const barColor   = isDark ? 'rgba(16,185,129,0.85)'  : 'rgba(16,185,129,0.9)'
+      const labelColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'
+
+      const topLabelsPlugin = {
+        id: 'topLabels',
+        afterDatasetsDraw(chart: ChartType) {
+          const ctx = chart.ctx
+          const data = chart.data
+          const y = chart.scales['y']
+          const meta = chart.getDatasetMeta(0)
+          ctx.save()
+          ctx.font = '500 10px sans-serif'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'bottom'
+          ctx.fillStyle = labelColor
+          meta.data.forEach((bar: { x: number }, i: number) => {
+            const val = (data.datasets[0].data as number[])[i]
+            if (val > 0) {
+              const y0  = y.getPixelForValue(0)
+              const yv  = y.getPixelForValue(val)
+              const top = Math.min(yv, y0 - 14)
+              ctx.fillText(String(val), bar.x, top - 2)
+            }
+          })
+          ctx.restore()
+        },
+      }
+
+      chartRef.current = new Chart(canvasRef.current, {
+        type: 'bar',
+        plugins: [topLabelsPlugin],
+        data: {
+          labels: dados.map(d => {
+            const dt = new Date(d.dia + 'T12:00:00')
+            return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+          }),
+          datasets: [{
+            data: dados.map(d => d.total),
+            backgroundColor: barColor,
+            borderRadius: 4,
+            borderSkipped: false,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => ` ${ctx.parsed.y} conversa${ctx.parsed.y !== 1 ? 's' : ''}`,
+              },
+            },
+          },
+          layout: { padding: { top: 20 } },
+          scales: {
+            x: {
+              grid: { color: gridColor },
+              ticks: { color: textColor, font: { size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+            },
+            y: {
+              display: false,
+              beginAtZero: true,
+              max: yMax,
             },
           },
         },
-        layout: { padding: { top: 20 } },
-        scales: {
-          x: {
-            grid: { color: gridColor },
-            ticks: { color: textColor, font: { size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
-          },
-          y: {
-            display: false,
-            beginAtZero: true,
-            max: yMax,
-          },
-        },
-      },
-    })
+      })
+    }
 
-    return () => { chartRef.current?.destroy() }
+    initChart()
+
+    return () => {
+      cancelled = true
+      chartRef.current?.destroy()
+      chartRef.current = null
+    }
   }, [dados, yMax])
 
   if (dados.length === 0) return (
