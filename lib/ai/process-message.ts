@@ -799,22 +799,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       const transcricao = await transcribeAudio(base64, mimetype)
       await updateMessageTranscription(supabase, mensagemSalva.id, transcricao)
       conteudoProcessado = transcricao
-
-      // Upload para Storage — permite reprodução na dashboard
-      try {
-        const ext = mimetype.includes('ogg') ? 'ogg' : mimetype.includes('mp4') ? 'mp4' : 'webm'
-        const path = `${payload.tenantId}/${Date.now()}_audio.${ext}`
-        const buffer = Buffer.from(base64, 'base64')
-        const { error: uploadErr } = await supabase.storage
-          .from('mensagens-midia')
-          .upload(path, buffer, { contentType: mimetype })
-        if (!uploadErr) {
-          const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
-          await supabase.from('messages').update({ arquivo_url: urlData.publicUrl }).eq('id', mensagemSalva.id)
-        }
-      } catch (uploadErr) {
-        console.warn('[process-message] Upload áudio falhou (não crítico):', uploadErr)
-      }
     } catch (err) {
       console.error('[process-message] Falha ao transcrever áudio:', err)
       conteudoProcessado = '[Áudio recebido — não foi possível transcrever]'
@@ -826,22 +810,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       const { base64, mimetype } = await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
       const descricao = await interpretImage(base64, mimetype, payload.caption)
       conteudoProcessado = payload.caption ? `${payload.caption}\n[Imagem: ${descricao}]` : `[Imagem: ${descricao}]`
-
-      // Upload para Storage — permite visualização na dashboard
-      try {
-        const ext = mimetype.includes('png') ? 'png' : mimetype.includes('webp') ? 'webp' : 'jpg'
-        const path = `${payload.tenantId}/${Date.now()}_img.${ext}`
-        const buffer = Buffer.from(base64, 'base64')
-        const { error: uploadErr } = await supabase.storage
-          .from('mensagens-midia')
-          .upload(path, buffer, { contentType: mimetype })
-        if (!uploadErr) {
-          const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
-          await supabase.from('messages').update({ arquivo_url: urlData.publicUrl }).eq('id', mensagemSalva.id)
-        }
-      } catch (uploadErr) {
-        console.warn('[process-message] Upload imagem falhou (não crítico):', uploadErr)
-      }
     } catch (err) {
       console.error('[process-message] Falha ao interpretar imagem:', err)
       conteudoProcessado = payload.caption || '[Imagem recebida]'
