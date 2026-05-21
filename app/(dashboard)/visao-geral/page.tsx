@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { Chart, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js'
 import { createClient } from '@/lib/supabase/client'
 import {
   MessageSquare, Users, Clock, PauseCircle,
@@ -7,6 +8,8 @@ import {
   Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
+
+Chart.register(BarElement, CategoryScale, LinearScale, Tooltip)
 
 interface Metrics {
   conversasHoje: number
@@ -135,43 +138,97 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   )
 }
 
-function GraficoArea({ dados }: { dados: DiaDado[] }) {
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; dia: string; total: number } | null>(null)
+function GraficoBarras({ dados }: { dados: DiaDado[] }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const chartRef  = useRef<Chart | null>(null)
+
+  const total = dados.reduce((s, d) => s + d.total, 0)
+  const media = +(total / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
+  const pico  = Math.max(...dados.map(d => d.total), 0)
+  const yMax  = Math.max(pico + 1, 5)
+
+  useEffect(() => {
+    if (!canvasRef.current) return
+    if (chartRef.current) { chartRef.current.destroy() }
+
+    const isDark    = window.matchMedia('(prefers-color-scheme: dark)').matches
+    const gridColor  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
+    const textColor  = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'
+    const barColor   = isDark ? 'rgba(16,185,129,0.85)'  : 'rgba(16,185,129,0.9)'
+    const labelColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'
+
+    const topLabelsPlugin = {
+      id: 'topLabels',
+      afterDatasetsDraw(chart: Chart) {
+        const { ctx, data, scales: { y } } = chart as any
+        const meta = chart.getDatasetMeta(0)
+        ctx.save()
+        ctx.font = '500 10px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'bottom'
+        ctx.fillStyle = labelColor
+        meta.data.forEach((bar: any, i: number) => {
+          const val = (data.datasets[0].data as number[])[i]
+          if (val > 0) {
+            const y0  = y.getPixelForValue(0)
+            const yv  = y.getPixelForValue(val)
+            const top = Math.min(yv, y0 - 14)
+            ctx.fillText(val, bar.x, top - 2)
+          }
+        })
+        ctx.restore()
+      },
+    }
+
+    chartRef.current = new Chart(canvasRef.current, {
+      type: 'bar',
+      plugins: [topLabelsPlugin],
+      data: {
+        labels: dados.map(d => {
+          const dt = new Date(d.dia + 'T12:00:00')
+          return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+        }),
+        datasets: [{
+          data: dados.map(d => d.total),
+          backgroundColor: barColor,
+          borderRadius: 4,
+          borderSkipped: false,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => ` ${ctx.parsed.y} conversa${ctx.parsed.y !== 1 ? 's' : ''}`,
+            },
+          },
+        },
+        layout: { padding: { top: 20 } },
+        scales: {
+          x: {
+            grid: { color: gridColor },
+            ticks: { color: textColor, font: { size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+          },
+          y: {
+            display: false,
+            beginAtZero: true,
+            max: yMax,
+          },
+        },
+      },
+    })
+
+    return () => { chartRef.current?.destroy() }
+  }, [dados])
 
   if (dados.length === 0) return (
     <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--text-label)' }}>
       Nenhum dado no período
     </div>
   )
-
-  const total = dados.reduce((s, d) => s + d.total, 0)
-  const media = +(total / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
-  const pico = Math.max(...dados.map(d => d.total))
-  const max = Math.max(pico, 1)
-
-  const W = 600, H = 160, padL = 28, padR = 12, padT = 12, padB = 24
-  const innerW = W - padL - padR
-  const innerH = H - padT - padB
-
-  const yTicks = [0, Math.ceil(max * 0.25), Math.ceil(max * 0.5), Math.ceil(max * 0.75), max]
-    .filter((v, i, arr) => arr.indexOf(v) === i)
-
-  const pts = dados.map((d, i) => ({
-    x: padL + (i / Math.max(dados.length - 1, 1)) * innerW,
-    y: padT + innerH - (d.total / max) * innerH,
-    ...d,
-  }))
-
-  const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
-  const areaPath = `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${(padT + innerH).toFixed(1)} L${pts[0].x.toFixed(1)},${(padT + innerH).toFixed(1)} Z`
-
-  const step = Math.max(1, Math.floor(dados.length / 6))
-  const xLabels = pts.filter((_, i) => i === 0 || i === pts.length - 1 || i % step === 0)
-
-  function formatDia(dia: string) {
-    const d = new Date(dia + 'T12:00:00')
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-  }
 
   return (
     <div>
@@ -189,82 +246,8 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
           <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
         </div>
       </div>
-
-      <div className="relative w-full" style={{ paddingBottom: '28%', minHeight: 120 }}>
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          preserveAspectRatio="none"
-          className="absolute inset-0 w-full h-full"
-          style={{ overflow: 'visible' }}
-          onMouseLeave={() => setTooltip(null)}
-        >
-          <defs>
-            <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#10B981" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="#10B981" stopOpacity="0.02" />
-            </linearGradient>
-            <clipPath id="chartClip">
-              <rect x={padL} y={padT} width={innerW} height={innerH + 1} />
-            </clipPath>
-          </defs>
-
-          {yTicks.map(tick => {
-            const y = padT + innerH - (tick / max) * innerH
-            return (
-              <g key={tick}>
-                <line x1={padL} y1={y} x2={padL + innerW} y2={y}
-                  stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3,3" />
-                <text x={padL - 4} y={y + 3.5} textAnchor="end" fontSize="8"
-                  fill="var(--text-muted)">{tick}</text>
-              </g>
-            )
-          })}
-
-          <path d={areaPath} fill="url(#areaGrad)" clipPath="url(#chartClip)" />
-
-          <path d={linePath} fill="none" stroke="#10B981" strokeWidth="1.8"
-            strokeLinejoin="round" strokeLinecap="round" clipPath="url(#chartClip)" />
-
-          {xLabels.map((p, i) => (
-            <text key={i} x={p.x} y={H - 2} textAnchor="middle" fontSize="7.5"
-              fill="var(--text-muted)">{formatDia(p.dia)}</text>
-          ))}
-
-          {pts.map((p, i) => (
-            <g key={i}>
-              <rect
-                x={i === 0 ? p.x : (pts[i - 1].x + p.x) / 2}
-                width={i === 0 || i === pts.length - 1
-                  ? (pts[1]?.x - pts[0]?.x) / 2 || 10
-                  : ((p.x - (pts[i - 1]?.x ?? p.x)) + ((pts[i + 1]?.x ?? p.x) - p.x)) / 2}
-                y={padT} height={innerH}
-                fill="transparent"
-                style={{ cursor: 'crosshair' }}
-                onMouseEnter={() => {
-                  setTooltip({ x: p.x, y: p.y, dia: p.dia, total: p.total })
-                }}
-              />
-              {tooltip?.dia === p.dia && (
-                <circle cx={p.x} cy={p.y} r="3.5" fill="#10B981" stroke="var(--bg-surface)" strokeWidth="2" />
-              )}
-            </g>
-          ))}
-
-          {tooltip && (() => {
-            const tx = Math.min(Math.max(tooltip.x, padL + 25), W - padR - 25)
-            const ty = Math.max(tooltip.y - 28, padT + 2)
-            return (
-              <g>
-                <rect x={tx - 28} y={ty - 10} width={56} height={20} rx="4"
-                  fill="var(--bg-surface)" stroke="var(--border)" strokeWidth="0.8" />
-                <text x={tx} y={ty + 4} textAnchor="middle" fontSize="9" fontWeight="600"
-                  fill="var(--text-primary)">
-                  {new Date(tooltip.dia + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} · {tooltip.total}
-                </text>
-              </g>
-            )
-          })()}
-        </svg>
+      <div style={{ position: 'relative', height: 200 }}>
+        <canvas ref={canvasRef} role="img" aria-label="Volume de conversas por dia" />
       </div>
     </div>
   )
@@ -566,7 +549,7 @@ export default function VisaoGeralPage() {
               <Download size={12} />
             </button>
           </div>
-          <GraficoArea dados={grafico} />
+          <GraficoBarras dados={grafico} />
         </div>
 
         <div className="rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
@@ -644,7 +627,6 @@ export default function VisaoGeralPage() {
           </div>
         ) : (
           <>
-            {/* Tabela — desktop */}
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -708,7 +690,6 @@ export default function VisaoGeralPage() {
               </table>
             </div>
 
-            {/* Cards — mobile */}
             <div className="md:hidden divide-y" style={{ borderColor: 'var(--border)' }}>
               {conversasFiltradas.map(c => (
                 <div key={c.id} className="p-4 space-y-2">
