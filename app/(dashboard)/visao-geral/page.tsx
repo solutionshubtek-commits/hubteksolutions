@@ -152,7 +152,10 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     let cancelled = false
 
     async function initChart() {
-      const { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend } = await import('chart.js')
+      const {
+        Chart, BarController, BarElement,
+        CategoryScale, LinearScale, Tooltip, Legend,
+      } = await import('chart.js')
       Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
       if (cancelled || !canvasRef.current) return
@@ -162,10 +165,10 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
       }
 
       const isDark     = window.matchMedia('(prefers-color-scheme: dark)').matches
-      const gridColor  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
-      const textColor  = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'
+      const gridColor  = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)'
+      const textColor  = isDark ? 'rgba(255,255,255,0.5)'  : 'rgba(0,0,0,0.45)'
       const barColor   = isDark ? 'rgba(16,185,129,0.85)'  : 'rgba(16,185,129,0.9)'
-      const labelColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'
+      const labelColor = isDark ? 'rgba(255,255,255,0.6)'  : 'rgba(0,0,0,0.5)'
 
       const maxTicks = dados.length <= 7 ? 7 : dados.length <= 30 ? 10 : 12
 
@@ -177,7 +180,7 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
           const y    = chart.scales['y']
           const meta = chart.getDatasetMeta(0)
           ctx.save()
-          ctx.font = '500 10px sans-serif'
+          ctx.font = 'bold 11px sans-serif'
           ctx.textAlign = 'center'
           ctx.textBaseline = 'bottom'
           ctx.fillStyle = labelColor
@@ -186,8 +189,8 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
             if (val > 0) {
               const y0  = y.getPixelForValue(0)
               const yv  = y.getPixelForValue(val)
-              const top = Math.min(yv, y0 - 14)
-              ctx.fillText(String(val), bar.x, top - 2)
+              const top = Math.min(yv, y0 - 16)
+              ctx.fillText(String(val), bar.x, top - 3)
             }
           })
           ctx.restore()
@@ -219,22 +222,32 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
               },
             },
           },
-          layout: { padding: { top: 20 } },
+          layout: { padding: { top: 28, bottom: 4 } },
           scales: {
             x: {
-              grid: { color: gridColor },
+              display: true,
+              grid: { display: false },
+              border: { display: false },
               ticks: {
                 color: textColor,
-                font: { size: 9 },
+                font: { size: 10 },
                 maxRotation: 0,
                 autoSkip: true,
                 maxTicksLimit: maxTicks,
               },
             },
             y: {
-              display: false,
+              display: true,
               beginAtZero: true,
               max: yMax,
+              grid: { color: gridColor },
+              border: { display: false },
+              ticks: {
+                color: textColor,
+                font: { size: 10 },
+                stepSize: 1,
+                precision: 0,
+              },
             },
           },
         },
@@ -274,7 +287,7 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
           <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
         </div>
       </div>
-      <div style={{ position: 'relative', height: 200 }}>
+      <div style={{ position: 'relative', height: 240 }}>
         <canvas ref={canvasRef} role="img" aria-label="Volume de conversas por dia" />
       </div>
     </div>
@@ -478,7 +491,6 @@ export default function VisaoGeralPage() {
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6">
 
-      {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
@@ -498,7 +510,6 @@ export default function VisaoGeralPage() {
         </div>
       </div>
 
-      {/* Banner instâncias banidas */}
       {instanciasBanidas.length > 0 && (
         <div className="rounded-xl p-4 space-y-3" style={{ background: '#EF444408', border: '1px solid #EF444430' }}>
           <div className="flex items-center gap-2">
@@ -556,7 +567,6 @@ export default function VisaoGeralPage() {
         </div>
       )}
 
-      {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <KpiCard label="Hoje"      valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
         <KpiCard label="Na semana" valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
@@ -564,7 +574,6 @@ export default function VisaoGeralPage() {
         <KpiCard label="Pausadas"  valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
       </div>
 
-      {/* Gráfico + Atividades */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           <div className="flex items-start justify-between mb-4">
@@ -600,7 +609,6 @@ export default function VisaoGeralPage() {
         </div>
       </div>
 
-      {/* Tabela conversas recentes */}
       <div className="rounded-xl" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
         <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4 gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--border)' }}>
           <div>
