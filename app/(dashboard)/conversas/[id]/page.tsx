@@ -36,6 +36,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const [arquivo, setArquivo] = useState<File | null>(null)
   const [arquivoPreview, setArquivoPreview] = useState<string | null>(null)
   const [uploadando, setUploadando] = useState(false)
+  const [imagemExpandida, setImagemExpandida] = useState<string | null>(null)
 
   const [operadoresNome, setOperadoresNome] = useState<Record<string, string>>({})
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
@@ -103,9 +104,11 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   useEffect(() => {
     const supabase = createClient()
     let msgChannel: ReturnType<typeof supabase.channel>
+    let msgUpdateChannel: ReturnType<typeof supabase.channel>
     let convChannel: ReturnType<typeof supabase.channel>
 
     function subscribe() {
+      // INSERT — novas mensagens
       msgChannel = supabase
         .channel(`conv-messages-${params.id}-${Date.now()}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${params.id}` },
@@ -117,6 +120,16 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
           })
         .subscribe((status) => { if (status === 'CHANNEL_ERROR') setTimeout(subscribe, 3000) })
 
+      // UPDATE — atualiza mensagem existente (ex: arquivo_url populado após upload de mídia)
+      msgUpdateChannel = supabase
+        .channel(`conv-messages-update-${params.id}-${Date.now()}`)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${params.id}` },
+          (payload) => {
+            const atualizada = payload.new as Mensagem
+            setMensagens(prev => prev.map(m => m.id === atualizada.id ? { ...m, ...atualizada } : m))
+          })
+        .subscribe()
+
       convChannel = supabase
         .channel(`conv-status-${params.id}-${Date.now()}`)
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversations', filter: `id=eq.${params.id}` },
@@ -126,27 +139,61 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
 
     subscribe()
 
+    // Polling — detecta novas mensagens E atualizações de arquivo_url
     const polling = setInterval(async () => {
       const { data } = await supabase
         .from('messages').select('id, origem, tipo, conteudo, arquivo_url, criado_em, from_me, sent_by_user_id')
         .eq('conversation_id', params.id).order('criado_em', { ascending: true })
       if (data) {
         setMensagens(prev => {
-          const idsExistentes = new Set(prev.map(m => m.id))
-          const novas = data.filter((m: Mensagem) => !idsExistentes.has(m.id))
-          if (novas.length === 0) return prev
-          setTimeout(() => scrollToBottom('smooth'), 50)
-          resolverNomesOperadores(novas)
-          return [...prev, ...novas]
+          const prevMap = new Map(prev.map(m => [m.id, m]))
+          let mudou = false
+          const novas: Mensagem[] = []
+
+          for (const msg of data as Mensagem[]) {
+            const existente = prevMap.get(msg.id)
+            if (!existente) {
+              prevMap.set(msg.id, msg)
+              novas.push(msg)
+              mudou = true
+            } else if (existente.arquivo_url !== msg.arquivo_url || existente.conteudo !== msg.conteudo) {
+              // Atualiza mensagem existente (ex: arquivo_url populado)
+              prevMap.set(msg.id, { ...existente, ...msg })
+              mudou = true
+            }
+          }
+
+          if (!mudou) return prev
+
+          if (novas.length > 0) {
+            setTimeout(() => scrollToBottom('smooth'), 50)
+            resolverNomesOperadores(novas)
+          }
+
+          return Array.from(prevMap.values()).sort(
+            (a, b) => new Date(a.criado_em).getTime() - new Date(b.criado_em).getTime()
+          )
         })
       }
     }, 3000)
 
-    return () => { supabase.removeChannel(msgChannel); supabase.removeChannel(convChannel); clearInterval(polling) }
+    return () => {
+      supabase.removeChannel(msgChannel)
+      supabase.removeChannel(msgUpdateChannel)
+      supabase.removeChannel(convChannel)
+      clearInterval(polling)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id, scrollToBottom])
 
   useEffect(() => { return () => { if (timerRef.current) clearInterval(timerRef.current) } }, [])
+
+  // Fecha modal com ESC
+  useEffect(() => {
+    function handleEsc(e: KeyboardEvent) { if (e.key === 'Escape') setImagemExpandida(null) }
+    if (imagemExpandida) window.addEventListener('keydown', handleEsc)
+    return () => window.removeEventListener('keydown', handleEsc)
+  }, [imagemExpandida])
 
   function labelOperador(msg: Mensagem): string {
     if (msg.sent_by_user_id) {
@@ -393,7 +440,12 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     if (tipo === 'imagem') return (
       <div className="flex flex-col gap-1">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={msg.arquivo_url} alt="imagem" className="rounded-lg max-w-[200px] max-h-[200px] object-cover" />
+        <img
+          src={msg.arquivo_url}
+          alt="imagem"
+          className="rounded-lg max-w-[200px] max-h-[200px] object-cover cursor-pointer hover:opacity-90 transition-opacity"
+          onClick={() => setImagemExpandida(msg.arquivo_url)}
+        />
         {msg.conteudo && msg.conteudo !== 'undefined' && <span className="text-xs">{msg.conteudo}</span>}
       </div>
     )
@@ -429,8 +481,31 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   const estaEncerrada = conversa.status === 'encerrada' || conversa.status === 'encerrado'
 
   return (
-    /* Ocupa o espaço disponível abaixo do header — sem position fixed */
     <div className="flex flex-col" style={{ height: 'calc(100vh - 64px)', background: 'var(--bg-base)' }}>
+
+      {/* Modal de imagem expandida */}
+      {imagemExpandida && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.85)' }}
+          onClick={() => setImagemExpandida(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imagemExpandida}
+            alt="imagem expandida"
+            className="max-w-full max-h-full rounded-xl object-contain"
+            onClick={e => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setImagemExpandida(null)}
+            className="absolute top-4 right-4 w-9 h-9 rounded-full flex items-center justify-center"
+            style={{ background: 'rgba(255,255,255,0.15)', color: '#fff' }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       {/* Header da conversa */}
       <div className="flex items-center gap-2 md:gap-3 px-3 md:px-4 py-3 flex-shrink-0"
