@@ -149,16 +149,13 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
   const pico = Math.max(...dados.map(d => d.total))
   const max = Math.max(pico, 1)
 
-  // SVG dimensions
   const W = 600, H = 160, padL = 28, padR = 12, padT = 12, padB = 24
   const innerW = W - padL - padR
   const innerH = H - padT - padB
 
-  // Y axis ticks
   const yTicks = [0, Math.ceil(max * 0.25), Math.ceil(max * 0.5), Math.ceil(max * 0.75), max]
     .filter((v, i, arr) => arr.indexOf(v) === i)
 
-  // Points
   const pts = dados.map((d, i) => ({
     x: padL + (i / Math.max(dados.length - 1, 1)) * innerW,
     y: padT + innerH - (d.total / max) * innerH,
@@ -168,7 +165,6 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
   const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
   const areaPath = `${linePath} L${pts[pts.length - 1].x.toFixed(1)},${(padT + innerH).toFixed(1)} L${pts[0].x.toFixed(1)},${(padT + innerH).toFixed(1)} Z`
 
-  // X labels — mostra ~6 labels espaçados
   const step = Math.max(1, Math.floor(dados.length / 6))
   const xLabels = pts.filter((_, i) => i === 0 || i === pts.length - 1 || i % step === 0)
 
@@ -179,7 +175,6 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
 
   return (
     <div>
-      {/* Stats */}
       <div className="flex items-center gap-6 md:gap-10 mb-4 flex-wrap">
         <div>
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Total</p>
@@ -195,7 +190,6 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
         </div>
       </div>
 
-      {/* Chart */}
       <div className="relative w-full" style={{ paddingBottom: '28%', minHeight: 120 }}>
         <svg
           viewBox={`0 0 ${W} ${H}`}
@@ -214,7 +208,6 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
             </clipPath>
           </defs>
 
-          {/* Grid Y */}
           {yTicks.map(tick => {
             const y = padT + innerH - (tick / max) * innerH
             return (
@@ -227,20 +220,16 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
             )
           })}
 
-          {/* Area */}
           <path d={areaPath} fill="url(#areaGrad)" clipPath="url(#chartClip)" />
 
-          {/* Line */}
           <path d={linePath} fill="none" stroke="#10B981" strokeWidth="1.8"
             strokeLinejoin="round" strokeLinecap="round" clipPath="url(#chartClip)" />
 
-          {/* X labels */}
           {xLabels.map((p, i) => (
             <text key={i} x={p.x} y={H - 2} textAnchor="middle" fontSize="7.5"
               fill="var(--text-muted)">{formatDia(p.dia)}</text>
           ))}
 
-          {/* Hover targets + dots */}
           {pts.map((p, i) => (
             <g key={i}>
               <rect
@@ -251,7 +240,7 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
                 y={padT} height={innerH}
                 fill="transparent"
                 style={{ cursor: 'crosshair' }}
-                onMouseEnter={(e) => {
+                onMouseEnter={() => {
                   setTooltip({ x: p.x, y: p.y, dia: p.dia, total: p.total })
                 }}
               />
@@ -261,7 +250,6 @@ function GraficoArea({ dados }: { dados: DiaDado[] }) {
             </g>
           ))}
 
-          {/* Tooltip */}
           {tooltip && (() => {
             const tx = Math.min(Math.max(tooltip.x, padL + 25), W - padR - 25)
             const ty = Math.max(tooltip.y - 28, padT + 2)
@@ -332,13 +320,13 @@ export default function VisaoGeralPage() {
     setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
     const agora = new Date()
     const tid   = userData.tenant_id
-    const hojeInicio    = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
-    const ontemInicio   = new Date(hojeInicio); ontemInicio.setDate(ontemInicio.getDate() - 1)
-    const semanaInicio  = new Date(agora); semanaInicio.setDate(semanaInicio.getDate() - 7)
+    const hojeInicio      = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
+    const ontemInicio     = new Date(hojeInicio); ontemInicio.setDate(ontemInicio.getDate() - 1)
+    const semanaInicio    = new Date(agora); semanaInicio.setDate(semanaInicio.getDate() - 7)
     const semanaAntInicio = new Date(agora); semanaAntInicio.setDate(semanaAntInicio.getDate() - 14)
-    const mesInicio     = new Date(agora.getFullYear(), agora.getMonth(), 1)
-    const mesAntInicio  = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
-    const mesAntFim     = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
+    const mesInicio       = new Date(agora.getFullYear(), agora.getMonth(), 1)
+    const mesAntInicio    = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
+    const mesAntFim       = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
 
     const [hojeRes, ontemRes, semRes, semAntRes, mesRes, mesAntRes, pausadasRes, pausadasAntRes, convRes, bandasRes] =
       await Promise.all([
@@ -557,12 +545,12 @@ export default function VisaoGeralPage() {
         </div>
       )}
 
-      {/* KPIs — 2 cols mobile, 4 cols desktop */}
+      {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <KpiCard label="Hoje"        valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
-        <KpiCard label="Na semana"   valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
-        <KpiCard label="No mês"      valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
-        <KpiCard label="Pausadas"    valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
+        <KpiCard label="Hoje"      valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
+        <KpiCard label="Na semana" valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
+        <KpiCard label="No mês"    valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
+        <KpiCard label="Pausadas"  valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
       </div>
 
       {/* Gráfico + Atividades */}
