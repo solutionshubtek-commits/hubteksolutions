@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   MessageSquare, Users, Clock, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
-  Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut,
+  Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut, ChevronDown,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 
@@ -109,6 +109,26 @@ function exportarConversasPDF(conversas: ConversaRecente[]) {
   })
 }
 
+function exportarGraficoPDF(dados: DiaDado[], periodo: string) {
+  exportPDF({
+    titulo: `Volume de Conversas — últimos ${periodo} dias`,
+    subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
+    colunas: [
+      { label: 'Data',        key: 'data',  align: 'left' },
+      { label: 'Conversas',   key: 'total', align: 'right' },
+    ],
+    linhas: dados.map(d => ({
+      data:  new Date(d.dia + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+      total: d.total,
+    })),
+    totais: {
+      data:  'Total',
+      total: dados.reduce((s, d) => s + d.total, 0),
+    },
+    nomeArquivo: `grafico_conversas_${periodo}d_${new Date().toISOString().slice(0, 10)}`,
+  })
+}
+
 function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   label: string; valor: number; d: number | null; icon: React.ElementType; cor: string; alt?: boolean
 }) {
@@ -126,7 +146,7 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
       {d != null ? (
         <span className={`flex items-center gap-0.5 text-xs font-medium ${d >= 0 ? 'text-[#10B981]' : 'text-red-400'}`}>
           {d >= 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />}
-          {d >= 0 ? '+' : ''}{d}% vs. semana anterior
+          {d >= 0 ? '+' : ''}{d}% vs. período anterior
         </span>
       ) : (
         <span className="text-xs" style={{ color: 'var(--text-label)' }}>sem dados anteriores</span>
@@ -135,14 +155,13 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   )
 }
 
-function GraficoBarras({ dados }: { dados: DiaDado[] }) {
+function GraficoBarras({ dados, periodo, onExport }: { dados: DiaDado[]; periodo: string; onExport: () => void }) {
   const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
   const [isDark, setIsDark] = useState(true)
 
   useEffect(() => {
     function detectTheme() {
-      const theme = document.documentElement.getAttribute('data-theme')
-      setIsDark(theme !== 'light')
+      setIsDark(document.documentElement.getAttribute('data-theme') !== 'light')
     }
     detectTheme()
     const observer = new MutationObserver(detectTheme)
@@ -167,9 +186,7 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
   const innerH = H - padT - padB
   const barW = Math.max(2, (innerW / dados.length) * 0.6)
   const gap   = innerW / dados.length
-
   const yTicks = [0, Math.round(yMax * 0.5), yMax]
-
   const step = Math.max(1, Math.floor(dados.length / 8))
   const xLabelIdxs = new Set(
     dados.map((_, i) => i).filter(i => i === 0 || i === dados.length - 1 || i % step === 0)
@@ -182,13 +199,12 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
 
-  const textColor  = isDark ? '#6B6B6B' : '#71717A'
-  const gridColor  = isDark ? '#1F1F1F' : '#D4D4D8'
-  const barColor   = '#10B981'
-  const labelColor = isDark ? '#A3A3A3' : '#3F3F46'
-  const tooltipBg  = isDark ? '#111111' : '#FFFFFF'
+  const textColor    = isDark ? '#6B6B6B' : '#71717A'
+  const gridColor    = isDark ? '#1F1F1F' : '#D4D4D8'
+  const labelColor   = isDark ? '#A3A3A3' : '#3F3F46'
+  const tooltipBg    = isDark ? '#111111' : '#FFFFFF'
   const tooltipBorder = isDark ? '#2A2A2A' : '#D4D4D8'
-  const tooltipText   = isDark ? '#FFFFFF' : '#09090B'
+  const tooltipText  = isDark ? '#FFFFFF' : '#09090B'
 
   return (
     <div>
@@ -205,31 +221,30 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Pico</p>
           <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
         </div>
+        <button
+          onClick={onExport}
+          className="ml-auto flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5 transition-colors"
+          style={{ color: 'var(--text-muted)', border: '1px solid var(--border)', background: 'var(--bg-surface-2)' }}
+          title={`Exportar gráfico ${periodo}d como PDF`}
+        >
+          <Download size={12} /> PDF
+        </button>
       </div>
 
       <div style={{ position: 'relative', width: '100%' }}>
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          width="100%"
-          height="100%"
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%"
           style={{ display: 'block', overflow: 'visible' }}
-          onMouseLeave={() => setTooltip(null)}
-        >
+          onMouseLeave={() => setTooltip(null)}>
           {yTicks.map(tick => {
             const y = padT + innerH - (tick / yMax) * innerH
             return (
               <g key={tick}>
-                <line x1={padL} y1={y} x2={padL + innerW} y2={y}
-                  stroke={gridColor} strokeWidth="1" strokeDasharray="3,3" />
-                <text x={padL - 4} y={y + 4} textAnchor="end"
-                  fontSize="10" fill={textColor}>{tick}</text>
+                <line x1={padL} y1={y} x2={padL + innerW} y2={y} stroke={gridColor} strokeWidth="1" strokeDasharray="3,3" />
+                <text x={padL - 4} y={y + 4} textAnchor="end" fontSize="10" fill={textColor}>{tick}</text>
               </g>
             )
           })}
-
-          <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH}
-            stroke={gridColor} strokeWidth="1" />
-
+          <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke={gridColor} strokeWidth="1" />
           {dados.map((d, i) => {
             const x = barX(i)
             const h = Math.max(barHeight(d.total), d.total > 0 ? 3 : 0)
@@ -237,50 +252,31 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
             const isHover = tooltip?.i === i
             return (
               <g key={i}>
-                <rect
-                  x={x - barW / 2} y={y}
-                  width={barW} height={h}
-                  fill={barColor}
-                  opacity={isHover ? 1 : 0.85}
-                  rx="3"
-                />
+                <rect x={x - barW / 2} y={y} width={barW} height={h} fill="#10B981" opacity={isHover ? 1 : 0.85} rx="3" />
                 {d.total > 0 && (
-                  <text x={x} y={y - 4} textAnchor="middle"
-                    fontSize="10" fontWeight="600" fill={labelColor}>
-                    {d.total}
-                  </text>
+                  <text x={x} y={y - 4} textAnchor="middle" fontSize="10" fontWeight="600" fill={labelColor}>{d.total}</text>
                 )}
-                <rect
-                  x={x - gap / 2} y={padT}
-                  width={gap} height={innerH}
-                  fill="transparent"
-                  style={{ cursor: 'crosshair' }}
-                  onMouseEnter={() => setTooltip({ i, x, y })}
-                />
+                <rect x={x - gap / 2} y={padT} width={gap} height={innerH} fill="transparent"
+                  style={{ cursor: 'crosshair' }} onMouseEnter={() => setTooltip({ i, x, y })} />
               </g>
             )
           })}
-
           {dados.map((d, i) => {
             if (!xLabelIdxs.has(i)) return null
             return (
-              <text key={i} x={barX(i)} y={padT + innerH + 18}
-                textAnchor="middle" fontSize="10" fill={textColor}>
+              <text key={i} x={barX(i)} y={padT + innerH + 18} textAnchor="middle" fontSize="10" fill={textColor}>
                 {fmtDia(d.dia)}
               </text>
             )
           })}
-
           {tooltip && (() => {
             const d = dados[tooltip.i]
             const tx = Math.min(Math.max(barX(tooltip.i), padL + 36), W - padR - 36)
             const ty = Math.max(tooltip.y - 10, padT + 2)
             return (
               <g>
-                <rect x={tx - 38} y={ty - 14} width={76} height={20} rx="4"
-                  fill={tooltipBg} stroke={tooltipBorder} strokeWidth="1" />
-                <text x={tx} y={ty + 2} textAnchor="middle"
-                  fontSize="10" fontWeight="600" fill={tooltipText}>
+                <rect x={tx - 38} y={ty - 14} width={76} height={20} rx="4" fill={tooltipBg} stroke={tooltipBorder} strokeWidth="1" />
+                <text x={tx} y={ty + 2} textAnchor="middle" fontSize="10" fontWeight="600" fill={tooltipText}>
                   {fmtDia(d.dia)}: {d.total} conv.
                 </text>
               </g>
@@ -294,36 +290,38 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
 
 function logParaAtividade(log: { id: string; acao: string; descricao: string; criado_em: string }): AtividadeItem {
   const corMap: Record<string, string> = {
-    pausou_ia:       '#F59E0B',
-    retomou_ia:      '#10B981',
-    enviou_mensagem: '#818CF8',
-    enviou_midia:    '#818CF8',
+    pausou_ia: '#F59E0B', retomou_ia: '#10B981',
+    enviou_mensagem: '#818CF8', enviou_midia: '#818CF8',
   }
-  return {
-    id: `log_${log.id}`,
-    tipo: 'log',
-    texto: log.descricao,
-    cor: corMap[log.acao] ?? 'var(--text-muted)',
-    criado_em: log.criado_em,
-  }
+  return { id: `log_${log.id}`, tipo: 'log', texto: log.descricao, cor: corMap[log.acao] ?? 'var(--text-muted)', criado_em: log.criado_em }
 }
 
+const CONV_LIMIT_STEP = 20
+
 export default function VisaoGeralPage() {
-  const [metrics, setMetrics] = useState<Metrics | null>(null)
-  const [conversas, setConversas] = useState<ConversaRecente[]>([])
+  const [metrics, setMetrics]               = useState<Metrics | null>(null)
+  const [conversas, setConversas]           = useState<ConversaRecente[]>([])
   const [conversasFiltradas, setConversasFiltradas] = useState<ConversaRecente[]>([])
-  const [grafico, setGrafico] = useState<DiaDado[]>([])
-  const [periodo, setPeriodo] = useState<'7' | '30' | '90'>('30')
-  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'pausado'>('todos')
-  const [carregando, setCarregando] = useState(true)
-  const [nomeUsuario, setNomeUsuario] = useState('')
-  const [pausando, setPausando] = useState<string | null>(null)
+  const [grafico, setGrafico]               = useState<DiaDado[]>([])
+  const [periodo, setPeriodo]               = useState<'7' | '30' | '90'>('30')
+  const [filtroStatus, setFiltroStatus]     = useState<'todos' | 'ativo' | 'pausado'>('todos')
+  const [carregando, setCarregando]         = useState(true)
+  const [carregandoMais, setCarregandoMais] = useState(false)
+  const [convLimit, setConvLimit]           = useState(CONV_LIMIT_STEP)
+  const [totalConvAtivas, setTotalConvAtivas] = useState(0)
+  const [nomeUsuario, setNomeUsuario]       = useState('')
+  const [tenantId, setTenantId]             = useState<string | null>(null)
+  const [userRole, setUserRole]             = useState<string | null>(null)
+  const [pausando, setPausando]             = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
   const [instanciasBanidas, setInstanciasBanidas] = useState<InstanciaBanida[]>([])
-  const [desconectando, setDesconectando] = useState<Record<string, boolean>>({})
+  const [desconectando, setDesconectando]   = useState<Record<string, boolean>>({})
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
-  const [atividades, setAtividades] = useState<AtividadeItem[]>([])
+  const [atividades, setAtividades]         = useState<AtividadeItem[]>([])
   const exportRef = useRef<HTMLDivElement>(null)
+
+  // Cache de gráfico por período — evita rebuscar ao trocar de volta
+  const graficoCache = useRef<Partial<Record<'7' | '30' | '90', DiaDado[]>>>({})
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -333,99 +331,227 @@ export default function VisaoGeralPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const fetchTudo = useCallback(async () => {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: userData } = await supabase.from('users').select('nome, tenant_id, role').eq('id', user.id).single()
-    if (!userData?.tenant_id) return
-    setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
-    const agora = new Date()
-    const tid   = userData.tenant_id
-    const hojeInicio      = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
-    const ontemInicio     = new Date(hojeInicio); ontemInicio.setDate(ontemInicio.getDate() - 1)
-    const semanaInicio    = new Date(agora); semanaInicio.setDate(semanaInicio.getDate() - 7)
-    const semanaAntInicio = new Date(agora); semanaAntInicio.setDate(semanaAntInicio.getDate() - 14)
-    const mesInicio       = new Date(agora.getFullYear(), agora.getMonth(), 1)
-    const mesAntInicio    = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
-    const mesAntFim       = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
+  // ── Inicialização: dados do usuário + métricas + conversas ─────────────────
+  useEffect(() => {
+    async function fetchInicial() {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: userData } = await supabase.from('users').select('nome, tenant_id, role').eq('id', user.id).single()
+      if (!userData?.tenant_id) return
 
-    const [hojeRes, ontemRes, semRes, semAntRes, mesRes, mesAntRes, pausadasRes, pausadasAntRes, convRes, bandasRes] =
-      await Promise.all([
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', hojeInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', ontemInicio.toISOString()).lt('criado_em', hojeInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', semanaInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', semanaAntInicio.toISOString()).lt('criado_em', semanaInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', mesInicio.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('criado_em', mesAntInicio.toISOString()).lte('criado_em', mesAntFim.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('agente_pausado', true),
-        supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('agente_pausado', true).lt('pausado_em', hojeInicio.toISOString()),
-        supabase.from('conversations').select('id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em').eq('tenant_id', tid).eq('status', 'ativa').order('ultima_mensagem_em', { ascending: false }).limit(20),
-        supabase.from('tenant_instances').select('id, instance_name, apelido').eq('tenant_id', tid).eq('status', 'banido'),
+      setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
+      setTenantId(userData.tenant_id)
+      setUserRole(userData.role)
+      const tid = userData.tenant_id
+
+      const agora    = new Date()
+      const hoje     = new Date(agora); hoje.setHours(0, 0, 0, 0)
+      const ontem    = new Date(hoje);  ontem.setDate(ontem.getDate() - 1)
+      const semana   = new Date(agora); semana.setDate(semana.getDate() - 7)
+      const semAnt   = new Date(agora); semAnt.setDate(semAnt.getDate() - 14)
+      const mesIni   = new Date(agora.getFullYear(), agora.getMonth(), 1)
+      const mesAntIni = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
+      const mesAntFim = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
+
+      // ── 5 queries consolidadas (era 10) ───────────────────────────────────
+      const [
+        hojeOntemRes,   // conversas hoje + ontem em uma query
+        semanaRes,
+        semAntRes,
+        mesRes,
+        mesAntRes,
+        pausadasRes,
+        convRes,
+        bandasRes,
+      ] = await Promise.all([
+        // Hoje e ontem: busca os dois dias e conta no front (1 query no lugar de 2)
+        supabase.from('conversations')
+          .select('criado_em', { count: 'exact' })
+          .eq('tenant_id', tid)
+          .gte('criado_em', ontem.toISOString())
+          .limit(10000),
+
+        supabase.from('conversations').select('id', { count: 'exact', head: true })
+          .eq('tenant_id', tid).gte('criado_em', semana.toISOString()),
+
+        supabase.from('conversations').select('id', { count: 'exact', head: true })
+          .eq('tenant_id', tid)
+          .gte('criado_em', semAnt.toISOString())
+          .lt('criado_em', semana.toISOString()),
+
+        supabase.from('conversations').select('id', { count: 'exact', head: true })
+          .eq('tenant_id', tid).gte('criado_em', mesIni.toISOString()),
+
+        supabase.from('conversations').select('id', { count: 'exact', head: true })
+          .eq('tenant_id', tid)
+          .gte('criado_em', mesAntIni.toISOString())
+          .lte('criado_em', mesAntFim.toISOString()),
+
+        // Pausadas: uma query com count + dados para calcular "pausadas antes de hoje"
+        supabase.from('conversations')
+          .select('pausado_em')
+          .eq('tenant_id', tid)
+          .eq('agente_pausado', true)
+          .limit(10000),
+
+        // Conversas recentes — sem N+1: última mensagem via messages ordenado
+        supabase.from('conversations')
+          .select(`
+            id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em,
+            messages(conteudo, criado_em)
+          `)
+          .eq('tenant_id', tid)
+          .eq('status', 'ativa')
+          .order('ultima_mensagem_em', { ascending: false })
+          .limit(CONV_LIMIT_STEP),
+
+        supabase.from('tenant_instances')
+          .select('id, instance_name, apelido')
+          .eq('tenant_id', tid)
+          .eq('status', 'banido'),
       ])
 
-    setMetrics({
-      conversasHoje: hojeRes.count ?? 0, conversasHojeAnterior: ontemRes.count ?? 0,
-      conversasSemana: semRes.count ?? 0, conversasSemanaAnterior: semAntRes.count ?? 0,
-      conversasMes: mesRes.count ?? 0, conversasMesAnterior: mesAntRes.count ?? 0,
-      pausadas: pausadasRes.count ?? 0, pausadasAnterior: pausadasAntRes.count ?? 0,
-    })
-    setInstanciasBanidas((bandasRes.data ?? []) as InstanciaBanida[])
+      // Conta hoje e ontem a partir dos dados retornados
+      const hojeIsoStr = hoje.toISOString()
+      const convHojeOntem = hojeOntemRes.data ?? []
+      const convHoje  = convHojeOntem.filter(c => c.criado_em >= hojeIsoStr).length
+      const convOntem = convHojeOntem.filter(c => c.criado_em < hojeIsoStr).length
 
-    const convComMsg: ConversaRecente[] = await Promise.all(
-      (convRes.data ?? []).map(async (c) => {
-        const { data: msg } = await supabase
-          .from('messages').select('conteudo').eq('conversation_id', c.id)
-          .order('criado_em', { ascending: false }).limit(1).single()
-        return { ...c, ultima_mensagem: msg?.conteudo ?? '—' }
+      // Pausadas hoje vs antes de hoje
+      const pausadasData  = pausadasRes.data ?? []
+      const totalPausadas = pausadasData.length
+      const pausadasAnt   = pausadasData.filter(c => c.pausado_em && c.pausado_em < hojeIsoStr).length
+
+      setMetrics({
+        conversasHoje: convHoje,           conversasHojeAnterior: convOntem,
+        conversasSemana: semanaRes.count ?? 0,    conversasSemanaAnterior: semAntRes.count ?? 0,
+        conversasMes: mesRes.count ?? 0,          conversasMesAnterior: mesAntRes.count ?? 0,
+        pausadas: totalPausadas,           pausadasAnterior: pausadasAnt,
       })
-    )
-    setConversas(convComMsg)
-    setConversasFiltradas(convComMsg)
 
-    const itensConversas: AtividadeItem[] = convComMsg.slice(0, 4).map(c => ({
-      id: `conv_${c.id}`,
-      tipo: 'conversa' as const,
-      texto: `${c.contato_nome || c.contato_telefone} ${c.agente_pausado ? 'solicitou atendimento humano.' : 'está em conversa com o agente.'}`,
-      cor: c.agente_pausado ? '#F59E0B' : '#10B981',
-      criado_em: c.ultima_mensagem_em,
-    }))
+      setInstanciasBanidas((bandasRes.data ?? []) as InstanciaBanida[])
+      setTotalConvAtivas(semanaRes.count ?? 0)
 
-    let itensLogs: AtividadeItem[] = []
-    if (['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userData.role)) {
-      const { data: logsData } = await supabase
-        .from('conversation_logs').select('id, acao, descricao, criado_em')
-        .eq('tenant_id', tid).order('criado_em', { ascending: false }).limit(6)
-      itensLogs = (logsData ?? []).map(logParaAtividade)
+      // ── Sem N+1: última mensagem já vem junto ─────────────────────────────
+      type ConvRaw = {
+        id: string
+        contato_nome: string
+        contato_telefone: string
+        status: string
+        agente_pausado: boolean
+        ultima_mensagem_em: string
+        messages: Array<{ conteudo: string; criado_em: string }>
+      }
+      const convComMsg: ConversaRecente[] = ((convRes.data ?? []) as unknown as ConvRaw[]).map(c => {
+        const msgs = (c.messages ?? []).sort((a, b) =>
+          new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime()
+        )
+        return { ...c, ultima_mensagem: msgs[0]?.conteudo ?? '—' }
+      })
+
+      setConversas(convComMsg)
+      setConversasFiltradas(convComMsg)
+      setConvLimit(CONV_LIMIT_STEP)
+
+      // Atividades
+      const itensConversas: AtividadeItem[] = convComMsg.slice(0, 4).map(c => ({
+        id: `conv_${c.id}`, tipo: 'conversa' as const,
+        texto: `${c.contato_nome || c.contato_telefone} ${c.agente_pausado ? 'solicitou atendimento humano.' : 'está em conversa com o agente.'}`,
+        cor: c.agente_pausado ? '#F59E0B' : '#10B981',
+        criado_em: c.ultima_mensagem_em,
+      }))
+
+      let itensLogs: AtividadeItem[] = []
+      if (['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userData.role)) {
+        const supabaseInner = createClient()
+        const { data: logsData } = await supabaseInner
+          .from('conversation_logs').select('id, acao, descricao, criado_em')
+          .eq('tenant_id', tid).order('criado_em', { ascending: false }).limit(6)
+        itensLogs = (logsData ?? []).map(logParaAtividade)
+      }
+
+      const todos = [...itensConversas, ...itensLogs]
+        .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
+        .slice(0, 8)
+      setAtividades(todos)
+      setCarregando(false)
     }
-
-    const todos = [...itensConversas, ...itensLogs]
-      .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
-      .slice(0, 8)
-    setAtividades(todos)
-    setCarregando(false)
+    fetchInicial()
   }, [])
 
+  // ── Gráfico com cache ──────────────────────────────────────────────────────
   const fetchGrafico = useCallback(async (p: '7' | '30' | '90') => {
+    // Retorna do cache se já foi carregado
+    if (graficoCache.current[p]) {
+      setGrafico(graficoCache.current[p]!)
+      return
+    }
+
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
     if (!userData?.tenant_id) return
+
     const dias   = parseInt(p)
     const inicio = new Date(); inicio.setDate(inicio.getDate() - dias); inicio.setHours(0, 0, 0, 0)
     const { data } = await supabase.from('conversations').select('criado_em')
       .eq('tenant_id', userData.tenant_id).gte('criado_em', inicio.toISOString())
+
     const porDia: Record<string, number> = {}
     const curr = new Date(inicio)
     const hoje = new Date(); hoje.setHours(23, 59, 59, 999)
     while (curr <= hoje) { porDia[curr.toISOString().slice(0, 10)] = 0; curr.setDate(curr.getDate() + 1) }
     ;(data ?? []).forEach(c => { const dia = c.criado_em.slice(0, 10); if (porDia[dia] !== undefined) porDia[dia]++ })
-    setGrafico(Object.entries(porDia).map(([dia, total]) => ({ dia, total })))
+
+    const resultado = Object.entries(porDia).map(([dia, total]) => ({ dia, total }))
+    graficoCache.current[p] = resultado
+    setGrafico(resultado)
   }, [])
 
-  useEffect(() => { fetchTudo() }, [fetchTudo])
   useEffect(() => { fetchGrafico(periodo) }, [periodo, fetchGrafico])
+
+  // ── Carregar mais conversas ────────────────────────────────────────────────
+  const handleCarregarMais = useCallback(async () => {
+    if (!tenantId) return
+    setCarregandoMais(true)
+    const novoLimit = convLimit + CONV_LIMIT_STEP
+    const supabase = createClient()
+
+    type ConvRaw = {
+      id: string
+      contato_nome: string
+      contato_telefone: string
+      status: string
+      agente_pausado: boolean
+      ultima_mensagem_em: string
+      messages: Array<{ conteudo: string; criado_em: string }>
+    }
+
+    const { data } = await supabase
+      .from('conversations')
+      .select(`
+        id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em,
+        messages(conteudo, criado_em)
+      `)
+      .eq('tenant_id', tenantId)
+      .eq('status', 'ativa')
+      .order('ultima_mensagem_em', { ascending: false })
+      .limit(novoLimit)
+
+    const convComMsg: ConversaRecente[] = ((data ?? []) as unknown as ConvRaw[]).map(c => {
+      const msgs = (c.messages ?? []).sort((a, b) =>
+        new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime()
+      )
+      return { ...c, ultima_mensagem: msgs[0]?.conteudo ?? '—' }
+    })
+
+    setConversas(convComMsg)
+    setConvLimit(novoLimit)
+    setCarregandoMais(false)
+  }, [tenantId, convLimit])
+
   useEffect(() => {
     if (filtroStatus === 'todos') setConversasFiltradas(conversas)
     else if (filtroStatus === 'ativo') setConversasFiltradas(conversas.filter(c => !c.agente_pausado))
@@ -450,7 +576,8 @@ export default function VisaoGeralPage() {
         body: JSON.stringify({
           conversation_id: conversa.id, tenant_id: ud?.tenant_id,
           acao: novoPausado ? 'pausou_ia' : 'retomou_ia',
-          contato_nome: conversa.contato_nome || conversa.contato_telefone, operador_nome: ud?.nome,
+          contato_nome: conversa.contato_nome || conversa.contato_telefone,
+          operador_nome: ud?.nome,
         }),
       })
     }
@@ -470,6 +597,8 @@ export default function VisaoGeralPage() {
       setDesconectando(prev => ({ ...prev, [instanceName]: false }))
     }
   }
+
+  const temMaisConversas = conversas.length >= convLimit
 
   if (carregando) {
     return (
@@ -579,12 +708,12 @@ export default function VisaoGeralPage() {
               <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Volume de conversas — {periodo} dias</h2>
               <p className="text-xs mt-0.5 hidden sm:block" style={{ color: 'var(--text-muted)' }}>Total agregado por dia.</p>
             </div>
-            <button className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5"
-              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-              <Download size={12} />
-            </button>
           </div>
-          <GraficoBarras dados={grafico} />
+          <GraficoBarras
+            dados={grafico}
+            periodo={periodo}
+            onExport={() => exportarGraficoPDF(grafico, periodo)}
+          />
         </div>
 
         <div className="rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
@@ -661,6 +790,7 @@ export default function VisaoGeralPage() {
           </div>
         ) : (
           <>
+            {/* Desktop */}
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -724,6 +854,7 @@ export default function VisaoGeralPage() {
               </table>
             </div>
 
+            {/* Mobile */}
             <div className="md:hidden divide-y" style={{ borderColor: 'var(--border)' }}>
               {conversasFiltradas.map(c => (
                 <div key={c.id} className="p-4 space-y-2">
@@ -739,13 +870,9 @@ export default function VisaoGeralPage() {
                       </div>
                     </div>
                     {c.agente_pausado ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">
-                        Pausado
-                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">Pausado</span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981]">
-                        Ativo
-                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981]">Ativo</span>
                     )}
                   </div>
                   <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
@@ -763,6 +890,20 @@ export default function VisaoGeralPage() {
                 </div>
               ))}
             </div>
+
+            {/* Carregar mais */}
+            {temMaisConversas && (
+              <div className="flex justify-center px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
+                <button
+                  onClick={handleCarregarMais}
+                  disabled={carregandoMais}
+                  className="flex items-center gap-2 text-xs font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                  style={{ border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
+                  <ChevronDown size={14} className={carregandoMais ? 'animate-bounce' : ''} />
+                  {carregandoMais ? 'Carregando...' : `Ver mais conversas`}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
