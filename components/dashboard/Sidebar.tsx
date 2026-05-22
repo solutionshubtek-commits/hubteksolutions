@@ -52,7 +52,6 @@ export function Sidebar() {
     })
   }, [])
 
-  // Fecha drawer ao navegar
   useEffect(() => { setOpen(false) }, [pathname, setOpen])
 
   const mostrarPlano  = role !== null && ROLES_PLANO.includes(role)
@@ -94,7 +93,6 @@ export function Sidebar() {
           priority
           style={{ filter: 'var(--logo-filter)' }}
         />
-        {/* Botão fechar — só aparece quando é drawer mobile */}
         <button
           onClick={() => setOpen(false)}
           className="md:hidden p-1 rounded-lg"
@@ -134,8 +132,8 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
         {ITEMS_BASE.map(item => <NavLink key={item.href} {...item} />)}
-        {mostrarConfig && <NavLink href="/configuracoes"  label="Configurações" icon={Settings}   />}
-        {mostrarPlano  && <NavLink href="/renovar-plano"  label="Renovar Plano" icon={RefreshCw}  />}
+        {mostrarConfig && <NavLink href="/configuracoes"  label="Configurações" icon={Settings}  />}
+        {mostrarPlano  && <NavLink href="/renovar-plano"  label="Renovar Plano" icon={RefreshCw} />}
       </nav>
 
       {/* Suporte */}
@@ -150,6 +148,38 @@ export function Sidebar() {
             Abrir suporte <ArrowRight size={11} />
           </a>
         </div>
+
+        {/* Termos e Privacidade */}
+        <div className="flex items-center gap-3 mt-3 px-1 flex-wrap">
+          <Link
+            href="/termos"
+            className="text-[11px] transition-colors"
+            style={{
+              color: pathname === '/termos' ? '#10B981' : 'var(--text-label)',
+            }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#10B981'}
+            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = pathname === '/termos' ? '#10B981' : 'var(--text-label)'}
+          >
+            Termos de Uso
+          </Link>
+          <span className="text-[11px]" style={{ color: 'var(--text-label)' }}>·</span>
+          <Link
+            href="/privacidade"
+            className="text-[11px] transition-colors"
+            style={{
+              color: pathname === '/privacidade' ? '#10B981' : 'var(--text-label)',
+            }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#10B981'}
+            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = pathname === '/privacidade' ? '#10B981' : 'var(--text-label)'}
+          >
+            Privacidade
+          </Link>
+        </div>
+
+        {/* Copyright */}
+        <p className="text-[10px] mt-2 px-1" style={{ color: 'var(--text-label)' }}>
+          © {new Date().getFullYear()} Hubtek Solutions
+        </p>
       </div>
     </aside>
   )
@@ -164,12 +194,10 @@ export function Sidebar() {
       {/* Mobile: drawer + overlay */}
       {open && (
         <>
-          {/* Overlay */}
           <div
             className="fixed inset-0 z-40 bg-black/50 md:hidden"
             onClick={() => setOpen(false)}
           />
-          {/* Drawer */}
           <div className="fixed left-0 top-0 h-full z-50 md:hidden" style={{ width: 240 }}>
             {sidebarContent}
           </div>
