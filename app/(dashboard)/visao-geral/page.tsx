@@ -171,11 +171,7 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     return padL + i * gap + gap / 2
   }
 
-  function barY(val: number) {
-    return padT + innerH - barHeight(val)
-  }
-
-  function fmtDia(dia: string) {
+   function fmtDia(dia: string) {
     const d = new Date(dia + 'T12:00:00')
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
