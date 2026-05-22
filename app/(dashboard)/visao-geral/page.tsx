@@ -1,6 +1,5 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { Chart as ChartType } from 'chart.js'
 import { createClient } from '@/lib/supabase/client'
 import {
   MessageSquare, Users, Clock, PauseCircle,
@@ -137,139 +136,58 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
 }
 
 function GraficoBarras({ dados }: { dados: DiaDado[] }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const chartRef  = useRef<ChartType | null>(null)
+  const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
 
-  const dadosValidos = dados.length > 0
   const total = dados.reduce((s, d) => s + d.total, 0)
   const media = +(total / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
   const pico  = Math.max(...dados.map(d => d.total), 0)
   const yMax  = Math.max(pico + 1, 5)
 
-  useEffect(() => {
-    if (!dadosValidos || !canvasRef.current) return
-
-    let cancelled = false
-
-    async function initChart() {
-      const {
-        Chart, BarController, BarElement,
-        CategoryScale, LinearScale, Tooltip, Legend,
-      } = await import('chart.js')
-      Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
-
-      if (cancelled || !canvasRef.current) return
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-
-      const isDark     = window.matchMedia('(prefers-color-scheme: dark)').matches
-      const gridColor  = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)'
-      const textColor  = isDark ? 'rgba(255,255,255,0.5)'  : 'rgba(0,0,0,0.45)'
-      const barColor   = isDark ? 'rgba(16,185,129,0.85)'  : 'rgba(16,185,129,0.9)'
-      const labelColor = isDark ? 'rgba(255,255,255,0.6)'  : 'rgba(0,0,0,0.5)'
-
-      const maxTicks = dados.length <= 7 ? 7 : dados.length <= 30 ? 10 : 12
-
-      const topLabelsPlugin = {
-        id: 'topLabels',
-        afterDatasetsDraw(chart: ChartType) {
-          const ctx  = chart.ctx
-          const data = chart.data
-          const y    = chart.scales['y']
-          const meta = chart.getDatasetMeta(0)
-          ctx.save()
-          ctx.font = 'bold 11px sans-serif'
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'bottom'
-          ctx.fillStyle = labelColor
-          meta.data.forEach((bar: { x: number }, i: number) => {
-            const val = (data.datasets[0].data as number[])[i]
-            if (val > 0) {
-              const y0  = y.getPixelForValue(0)
-              const yv  = y.getPixelForValue(val)
-              const top = Math.min(yv, y0 - 16)
-              ctx.fillText(String(val), bar.x, top - 3)
-            }
-          })
-          ctx.restore()
-        },
-      }
-
-      chartRef.current = new Chart(canvasRef.current, {
-        type: 'bar',
-        plugins: [topLabelsPlugin],
-        data: {
-          labels: dados.map(d => {
-            const dt = new Date(d.dia + 'T12:00:00')
-            return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-          }),
-          datasets: [{
-            data: dados.map(d => d.total),
-            backgroundColor: barColor,
-            borderRadius: 4,
-          }],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: (ctx) => ` ${ctx.parsed.y} conversa${ctx.parsed.y !== 1 ? 's' : ''}`,
-              },
-            },
-          },
-          layout: { padding: { top: 28, bottom: 4 } },
-          scales: {
-            x: {
-              display: true,
-              grid: { display: false },
-              border: { display: false },
-              ticks: {
-                color: textColor,
-                font: { size: 10 },
-                maxRotation: 0,
-                autoSkip: true,
-                maxTicksLimit: maxTicks,
-              },
-            },
-            y: {
-              display: true,
-              beginAtZero: true,
-              max: yMax,
-              grid: { color: gridColor },
-              border: { display: false },
-              ticks: {
-                color: textColor,
-                font: { size: 10 },
-                stepSize: 1,
-                precision: 0,
-              },
-            },
-          },
-        },
-      })
-    }
-
-    initChart()
-
-    return () => {
-      cancelled = true
-      if (chartRef.current) {
-        chartRef.current.destroy()
-        chartRef.current = null
-      }
-    }
-  }, [dados, dadosValidos, yMax])
-
-  if (!dadosValidos) return (
+  if (dados.length === 0) return (
     <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--text-label)' }}>
       Nenhum dado no período
     </div>
   )
+
+  const W = 800, H = 200
+  const padL = 32, padR = 8, padT = 28, padB = 32
+  const innerW = W - padL - padR
+  const innerH = H - padT - padB
+  const barW = Math.max(2, (innerW / dados.length) * 0.6)
+  const gap   = innerW / dados.length
+
+  const yTicks = [0, Math.round(yMax * 0.5), yMax]
+
+  const step = Math.max(1, Math.floor(dados.length / 8))
+  const xLabelIdxs = new Set(
+    dados.map((_, i) => i).filter(i => i === 0 || i === dados.length - 1 || i % step === 0)
+  )
+
+  function barHeight(val: number) {
+    return (val / yMax) * innerH
+  }
+
+  function barX(i: number) {
+    return padL + i * gap + gap / 2
+  }
+
+  function barY(val: number) {
+    return padT + innerH - barHeight(val)
+  }
+
+  function fmtDia(dia: string) {
+    const d = new Date(dia + 'T12:00:00')
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  }
+
+  const isDark = typeof window !== 'undefined'
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : true
+
+  const textColor  = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'
+  const gridColor  = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)'
+  const barColor   = '#10B981'
+  const labelColor = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)'
 
   return (
     <div>
@@ -287,8 +205,96 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
           <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
         </div>
       </div>
-      <div style={{ position: 'relative', height: 240 }}>
-        <canvas ref={canvasRef} role="img" aria-label="Volume de conversas por dia" />
+
+      <div style={{ position: 'relative', width: '100%' }}>
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          width="100%"
+          height="100%"
+          style={{ display: 'block', overflow: 'visible' }}
+          onMouseLeave={() => setTooltip(null)}
+        >
+          {/* Grid Y */}
+          {yTicks.map(tick => {
+            const y = padT + innerH - (tick / yMax) * innerH
+            return (
+              <g key={tick}>
+                <line x1={padL} y1={y} x2={padL + innerW} y2={y}
+                  stroke={gridColor} strokeWidth="1" strokeDasharray="3,3" />
+                <text x={padL - 4} y={y + 4} textAnchor="end"
+                  fontSize="10" fill={textColor}>{tick}</text>
+              </g>
+            )
+          })}
+
+          {/* Linha base */}
+          <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH}
+            stroke={gridColor} strokeWidth="1" />
+
+          {/* Barras */}
+          {dados.map((d, i) => {
+            const x = barX(i)
+            const h = Math.max(barHeight(d.total), d.total > 0 ? 3 : 0)
+            const y = padT + innerH - h
+            const isHover = tooltip?.i === i
+            return (
+              <g key={i}>
+                <rect
+                  x={x - barW / 2} y={y}
+                  width={barW} height={h}
+                  fill={barColor}
+                  opacity={isHover ? 1 : 0.8}
+                  rx="3"
+                />
+                {d.total > 0 && (
+                  <text x={x} y={y - 4} textAnchor="middle"
+                    fontSize="10" fontWeight="600" fill={labelColor}>
+                    {d.total}
+                  </text>
+                )}
+                {/* Hover target */}
+                <rect
+                  x={x - gap / 2} y={padT}
+                  width={gap} height={innerH}
+                  fill="transparent"
+                  style={{ cursor: 'crosshair' }}
+                  onMouseEnter={() => setTooltip({ i, x, y })}
+                />
+              </g>
+            )
+          })}
+
+          {/* Labels eixo X */}
+          {dados.map((d, i) => {
+            if (!xLabelIdxs.has(i)) return null
+            return (
+              <text key={i} x={barX(i)} y={padT + innerH + 18}
+                textAnchor="middle" fontSize="10" fill={textColor}>
+                {fmtDia(d.dia)}
+              </text>
+            )
+          })}
+
+          {/* Tooltip */}
+          {tooltip && (() => {
+            const d = dados[tooltip.i]
+            const tx = Math.min(Math.max(barX(tooltip.i), padL + 30), W - padR - 30)
+            const ty = Math.max(tooltip.y - 10, padT + 2)
+            return (
+              <g>
+                <rect x={tx - 36} y={ty - 14} width={72} height={20} rx="4"
+                  fill={isDark ? '#1f2937' : '#fff'}
+                  stroke={isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}
+                  strokeWidth="1" />
+                <text x={tx} y={ty + 2} textAnchor="middle"
+                  fontSize="10" fontWeight="600"
+                  fill={isDark ? '#fff' : '#111'}>
+                  {fmtDia(d.dia)}: {d.total} conv.
+                </text>
+              </g>
+            )
+          })()}
+        </svg>
       </div>
     </div>
   )
