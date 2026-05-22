@@ -40,6 +40,12 @@ const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
   anthropic: { entrada: 0.015, saida: 0.075 },
 }
 
+// Extração de perfil — motor leve, barato
+const MOTOR_PERFIL = 'gpt-4o-mini'
+
+// Dispara extração de perfil a cada N mensagens do cliente
+const PERFIL_EXTRACTION_INTERVAL = 5
+
 // Saudações simples — não acionam RAG
 const SAUDACOES_REGEX = /^(oi|olá|ola|opa|hey|hello|bom dia|boa tarde|boa noite|e aí|eai|e ai|tudo bem|tudo bom|salve)[!?.,:]*$/i
 
@@ -68,9 +74,6 @@ function isWithinOperatingHours(
   return minutoAtual >= hI * 60 + mI && minutoAtual <= hF * 60 + mF
 }
 
-/**
- * Retorna saudação baseada no horário atual de Brasília.
- */
 function getSaudacao(): string {
   const agora = new Date()
   const hora = new Date(agora.getTime() - 3 * 60 * 60 * 1000).getUTCHours()
@@ -79,26 +82,16 @@ function getSaudacao(): string {
   return 'Boa noite'
 }
 
-/**
- * Calcula delay de digitação em ms com base no tamanho da resposta.
- * Mínimo 1s, máximo 4s — natural para WhatsApp.
- */
 function calcularDelayDigitacao(texto: string): number {
   const ms = texto.length * 30
   return Math.min(Math.max(ms, 1000), 4000)
 }
 
-/**
- * Quebra resposta longa em blocos menores para envio natural no WhatsApp.
- * Divide em parágrafos; agrupa blocos curtos; máximo 3 mensagens.
- */
 function quebrarEmBlocos(texto: string): string[] {
   const paragrafos = texto.split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
   if (paragrafos.length <= 1) return [texto]
-
   const blocos: string[] = []
   let acumulado = ''
-
   for (const p of paragrafos) {
     if (acumulado && (acumulado + '\n\n' + p).length > 600) {
       blocos.push(acumulado.trim())
@@ -132,6 +125,148 @@ function classificarIntencao(mensagem: string): Intencao {
   return 'duvida'
 }
 
+// ─── Perfil do cliente ────────────────────────────────────────────────────────
+
+interface ContactProfile {
+  contato_nome: string | null
+  cidade: string | null
+  preferencias: Record<string, unknown>
+  historico_resumido: string | null
+}
+
+// Resultado da extração de perfil pelo modelo leve
+interface PerfilExtraido {
+  nome: string | null
+  cidade: string | null
+  preferencias: Record<string, string>
+  resumo_conversa: string | null
+}
+
+async function buscarPerfilCliente(
+  supabase: ReturnType<typeof createServiceClient>,
+  tenantId: string,
+  telefone: string
+): Promise<ContactProfile | null> {
+  const { data } = await supabase
+    .from('contact_profiles')
+    .select('contato_nome, cidade, preferencias, historico_resumido')
+    .eq('tenant_id', tenantId)
+    .eq('contato_telefone', telefone)
+    .maybeSingle()
+  return data as ContactProfile | null
+}
+
+/**
+ * Atualiza perfil fazendo MERGE com dados existentes.
+ * Nunca sobrescreve campos já preenchidos com null.
+ * Preferências são acumuladas (merge de objetos).
+ */
+async function salvarPerfilCliente(
+  supabase: ReturnType<typeof createServiceClient>,
+  tenantId: string,
+  telefone: string,
+  perfilAtual: ContactProfile | null,
+  novosDados: Partial<PerfilExtraido> & { nome?: string | null }
+): Promise<void> {
+  try {
+    const prefAtual = (perfilAtual?.preferencias ?? {}) as Record<string, unknown>
+    const prefNovo  = (novosDados.preferencias ?? {}) as Record<string, unknown>
+
+    await supabase.from('contact_profiles').upsert({
+      tenant_id:          tenantId,
+      contato_telefone:   telefone,
+      // Nome: usa o novo se vier preenchido, senão mantém o atual
+      contato_nome:       novosDados.nome || perfilAtual?.contato_nome || null,
+      // Cidade: idem
+      cidade:             novosDados.cidade || perfilAtual?.cidade || null,
+      // Preferências: merge — mantém o que já existia + adiciona o novo
+      preferencias:       { ...prefAtual, ...prefNovo },
+      // Resumo: substitui sempre (representa o estado mais recente)
+      historico_resumido: novosDados.resumo_conversa || perfilAtual?.historico_resumido || null,
+      ultima_atualizacao: new Date().toISOString(),
+    }, { onConflict: 'tenant_id,contato_telefone' })
+  } catch (err) {
+    console.error('[process-message] salvarPerfilCliente falhou:', err)
+  }
+}
+
+/**
+ * Extrai passivamente informações do cliente a partir do histórico.
+ * Usa GPT-4o mini — nunca pergunta ao cliente, só captura o que foi dito.
+ * Retorna null se não encontrar nada relevante.
+ */
+async function extrairPerfilDaConversa(
+  mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>
+): Promise<PerfilExtraido | null> {
+  if (mensagens.length === 0) return null
+
+  // Usa apenas mensagens do cliente para extração
+  const apenasCliente = mensagens
+    .filter(m => m.origem === 'cliente')
+    .map(m => m.transcricao || m.conteudo || '')
+    .filter(Boolean)
+    .join('\n')
+
+  if (!apenasCliente.trim()) return null
+
+  try {
+    const OpenAI = (await import('openai')).default
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+
+    const response = await openai.chat.completions.create({
+      model: MOTOR_PERFIL,
+      temperature: 0,
+      max_tokens: 300,
+      messages: [
+        {
+          role: 'system',
+          content: `Analise as mensagens abaixo enviadas por um cliente em um atendimento via WhatsApp.
+Extraia SOMENTE informações que o cliente mencionou espontaneamente — nunca invente ou suponha.
+Retorne um JSON válido com esta estrutura exata (sem markdown, sem explicações):
+{
+  "nome": "nome mencionado pelo cliente ou null",
+  "cidade": "cidade ou região mencionada ou null",
+  "preferencias": {
+    "chave_descritiva": "valor observado"
+  },
+  "resumo_conversa": "resumo em 1-2 frases do que o cliente precisava nesta conversa ou null"
+}
+
+Exemplos de preferências válidas (só capture se mencionado):
+- "servico_preferido": "corte masculino"
+- "horario_preferido": "manhã"
+- "produto_interesse": "plano mensal"
+- "forma_pagamento": "pix"
+- "reclamacao_recorrente": "demora no atendimento"
+
+Se não houver nada relevante para um campo, use null ou {} para preferencias.`,
+        },
+        {
+          role: 'user',
+          content: apenasCliente,
+        },
+      ],
+    })
+
+    const raw = response.choices[0]?.message?.content?.trim() ?? ''
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw) as PerfilExtraido
+    return parsed
+  } catch (err) {
+    console.error('[perfil] Falha na extração de perfil:', err)
+    return null
+  }
+}
+
+/**
+ * Verifica se deve rodar a extração de perfil nesta mensagem.
+ * Dispara a cada PERFIL_EXTRACTION_INTERVAL mensagens do cliente.
+ */
+function deveExtrairPerfil(totalMensagensCliente: number): boolean {
+  return totalMensagensCliente > 0 && totalMensagensCliente % PERFIL_EXTRACTION_INTERVAL === 0
+}
+
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
 function buildSystemPrompt(
@@ -152,7 +287,6 @@ function buildSystemPrompt(
   const saudacao = getSaudacao()
   prompt += `\n\nSAUDAÇÃO ATUAL: Use "${saudacao}" quando for a primeira mensagem ou quando fizer sentido cumprimentar.`
 
-  // Horário oficial — prioridade absoluta sobre qualquer documento
   const DIAS_LABEL: Record<string, string> = {
     dom: 'domingo', seg: 'segunda', ter: 'terça', qua: 'quarta',
     qui: 'quinta', sex: 'sexta', sab: 'sábado',
@@ -174,8 +308,7 @@ function buildSystemPrompt(
   }
 
   if (perfilCliente) {
-    prompt += `\n\nPERFIL DO CLIENTE (conversas anteriores):\n${perfilCliente}`
-    prompt += '\nUse estas informações para personalizar a resposta sem precisar perguntar o que já sabe.'
+    prompt += `\n\nPERFIL DO CLIENTE (informações de conversas anteriores — use para personalizar sem perguntar o que já sabe):\n${perfilCliente}`
   }
 
   if (historicoResumido) {
@@ -438,74 +571,6 @@ function normalizarTelefone(tel: string, dddPadrao = '51'): string {
   return digits
 }
 
-// ─── Perfil do cliente ────────────────────────────────────────────────────────
-
-interface ContactProfile {
-  contato_nome: string | null
-  cidade: string | null
-  preferencias: Record<string, unknown>
-  historico_resumido: string | null
-}
-
-async function buscarPerfilCliente(
-  supabase: ReturnType<typeof createServiceClient>,
-  tenantId: string,
-  telefone: string
-): Promise<ContactProfile | null> {
-  const { data } = await supabase
-    .from('contact_profiles')
-    .select('contato_nome, cidade, preferencias, historico_resumido')
-    .eq('tenant_id', tenantId)
-    .eq('contato_telefone', telefone)
-    .maybeSingle()
-  return data as ContactProfile | null
-}
-
-async function atualizarPerfilCliente(
-  supabase: ReturnType<typeof createServiceClient>,
-  tenantId: string,
-  telefone: string,
-  nome: string | null | undefined
-): Promise<void> {
-  try {
-    await supabase.from('contact_profiles').upsert({
-      tenant_id: tenantId,
-      contato_telefone: telefone,
-      contato_nome: nome ?? null,
-      ultima_atualizacao: new Date().toISOString(),
-    }, { onConflict: 'tenant_id,contato_telefone' })
-  } catch (err) {
-    console.error('[process-message] atualizarPerfilCliente falhou:', err)
-  }
-}
-
-/**
- * Gera resumo compactado quando a conversa tem mais de 10 mensagens.
- * As últimas 5 ficam no histórico normal; o restante vai como resumo.
- */
-async function gerarResumoHistorico(
-  mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>
-): Promise<string> {
-  if (mensagens.length <= 10) return ''
-  try {
-    const texto = mensagens
-      .slice(0, mensagens.length - 5)
-      .map(m => `${m.origem === 'agente' ? 'Agente' : 'Cliente'}: ${m.transcricao || m.conteudo || ''}`)
-      .join('\n')
-
-    const resposta = await openAIChatCompletion([
-      {
-        role: 'system',
-        content: 'Resuma em até 5 linhas os pontos principais desta conversa de atendimento: o problema do cliente, informações fornecidas e o que já foi resolvido. Seja objetivo e em português.',
-      },
-      { role: 'user', content: texto },
-    ], { temperature: 0, maxTokens: 200 })
-    return resposta.content.trim()
-  } catch {
-    return ''
-  }
-}
-
 // ─── Helpers RAG ──────────────────────────────────────────────────────────────
 
 async function normalizarPergunta(pergunta: string): Promise<string> {
@@ -523,17 +588,11 @@ async function normalizarPergunta(pergunta: string): Promise<string> {
   }
 }
 
-/**
- * HyDE leve: expande com palavras-chave semânticas.
- * Inclui contexto do histórico recente para perguntas curtas ou pronomes
- * que dependem da mensagem anterior (ex: "Tem acréscimo?" após falar de glúten).
- */
 async function expandirPergunta(pergunta: string, contextoAnterior?: string): Promise<string> {
   try {
     const contexto = contextoAnterior
       ? `Contexto da conversa anterior: "${contextoAnterior}"\nPergunta atual: "${pergunta}"`
       : pergunta
-
     const resposta = await openAIChatCompletion([
       {
         role: 'system',
@@ -545,6 +604,28 @@ async function expandirPergunta(pergunta: string, contextoAnterior?: string): Pr
     return palavras ? `${pergunta} ${palavras}` : pergunta
   } catch {
     return pergunta
+  }
+}
+
+async function gerarResumoHistorico(
+  mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>
+): Promise<string> {
+  if (mensagens.length <= 10) return ''
+  try {
+    const texto = mensagens
+      .slice(0, mensagens.length - 5)
+      .map(m => `${m.origem === 'agente' ? 'Agente' : 'Cliente'}: ${m.transcricao || m.conteudo || ''}`)
+      .join('\n')
+    const resposta = await openAIChatCompletion([
+      {
+        role: 'system',
+        content: 'Resuma em até 5 linhas os pontos principais desta conversa de atendimento: o problema do cliente, informações fornecidas e o que já foi resolvido. Seja objetivo e em português.',
+      },
+      { role: 'user', content: texto },
+    ], { temperature: 0, maxTokens: 200 })
+    return resposta.content.trim()
+  } catch {
+    return ''
   }
 }
 
@@ -800,8 +881,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       const transcricao = await transcribeAudio(base64, mimetype)
       await updateMessageTranscription(supabase, mensagemSalva.id, transcricao)
       conteudoProcessado = transcricao
-
-      // Upload para Storage — permite reprodução na dashboard
       try {
         const ext = mimetype.includes('ogg') ? 'ogg' : mimetype.includes('mp4') ? 'mp4' : 'webm'
         const path = `${payload.tenantId}/${Date.now()}_audio.${ext}`
@@ -827,8 +906,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       const { base64, mimetype } = await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
       const descricao = await interpretImage(base64, mimetype, payload.caption)
       conteudoProcessado = payload.caption ? `${payload.caption}\n[Imagem: ${descricao}]` : `[Imagem: ${descricao}]`
-
-      // Upload para Storage — permite visualização na dashboard
       try {
         const ext = mimetype.includes('png') ? 'png' : mimetype.includes('webp') ? 'webp' : 'jpg'
         const path = `${payload.tenantId}/${Date.now()}_img.${ext}`
@@ -860,12 +937,18 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     ? [
         perfil.contato_nome ? `Nome: ${perfil.contato_nome}` : '',
         perfil.cidade ? `Cidade: ${perfil.cidade}` : '',
-        perfil.historico_resumido ? `Histórico: ${perfil.historico_resumido}` : '',
+        perfil.preferencias && Object.keys(perfil.preferencias).length > 0
+          ? `Preferências: ${Object.entries(perfil.preferencias).map(([k, v]) => `${k}: ${v}`).join(', ')}`
+          : '',
+        perfil.historico_resumido ? `Histórico anterior: ${perfil.historico_resumido}` : '',
       ].filter(Boolean).join('\n')
     : ''
 
+  // Atualiza nome pelo pushName — sempre que disponível (fire-and-forget)
   if (payload.pushName) {
-    atualizarPerfilCliente(supabase, payload.tenantId, payload.phone, payload.pushName).catch(() => {})
+    salvarPerfilCliente(supabase, payload.tenantId, payload.phone, perfil, {
+      nome: payload.pushName,
+    }).catch(() => {})
   }
 
   // 10. Histórico + resumo para conversas longas
@@ -873,34 +956,47 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   const historicoResumido = await gerarResumoHistorico(historico)
   const historicoRecente = historico.slice(-10)
 
+  // ── Extração de perfil a cada 5 mensagens do cliente — fire-and-forget ──
+  const totalMensagensCliente = historico.filter(m => m.origem === 'cliente').length
+  if (deveExtrairPerfil(totalMensagensCliente)) {
+    extrairPerfilDaConversa(historico)
+      .then(async (extraido) => {
+        if (!extraido) return
+        // Só persiste se extraiu algo relevante
+        const temDados = extraido.nome || extraido.cidade ||
+          Object.keys(extraido.preferencias ?? {}).length > 0 ||
+          extraido.resumo_conversa
+        if (!temDados) return
+        await salvarPerfilCliente(supabase, payload.tenantId, payload.phone, perfil, {
+          nome: extraido.nome ?? undefined,
+          cidade: extraido.cidade ?? undefined,
+          preferencias: extraido.preferencias ?? {},
+          resumo_conversa: extraido.resumo_conversa ?? undefined,
+        })
+        console.log(`[perfil] Atualizado para ${payload.phone} | msgs cliente: ${totalMensagensCliente}`)
+      })
+      .catch((err) => console.error('[perfil] Extração falhou (não crítico):', err))
+  }
+
   // 11. Busca semântica — skip para saudações simples
   let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number; criado_em: string }> = []
 
   if (intencao !== 'saudacao') {
     try {
       const perguntaNormalizada = await normalizarPergunta(conteudoProcessado)
-
-      // Pega a última mensagem do agente como contexto para perguntas curtas/ambíguas
-      const ultimaMsgAgente = historico
-        .filter(m => m.origem === 'agente')
-        .slice(-1)[0]
+      const ultimaMsgAgente = historico.filter(m => m.origem === 'agente').slice(-1)[0]
       const contextoAnterior = ultimaMsgAgente?.conteudo ?? undefined
-
       const textoParaEmbedding = await expandirPergunta(perguntaNormalizada, contextoAnterior)
       const embedding = await generateEmbedding(textoParaEmbedding)
-
       const { data: docs, error: ragError } = await supabase.rpc('match_knowledge', {
         query_embedding: embedding,
         match_tenant_id: payload.tenantId,
         match_threshold: 0.35,
         match_count: 10,
       })
-
       if (ragError) console.error('[RAG] Erro no match_knowledge:', ragError)
-
       knowledgeDocs = ((docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>)
         .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
-
       console.log(`[RAG] ${knowledgeDocs.length} chunks | similarities: ${knowledgeDocs.map(d => d.similarity.toFixed(3)).join(', ')}`)
     } catch (err) {
       console.error('[RAG] Falha na busca semântica:', err)
@@ -954,7 +1050,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   const usarTools = toolsAtivas.length > 0 && config.motor_ia_principal === 'openai'
 
-  // Temperatura maior para reclamações — resposta mais empática
   const temperaturaBase = Number(config.temperatura)
   const temperatura = intencao === 'reclamacao' ? Math.min(temperaturaBase + 0.2, 1.0) : temperaturaBase
   const chatConfig = { temperature: temperatura, maxTokens: config.max_tokens }
@@ -971,11 +1066,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         toolsAtivas as Parameters<typeof openAIChatCompletionWithTools>[1],
         chatConfig
       )
-
       if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
         const toolResults: ChatMessage[] = []
         const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
-
         for (const tc of toolCallsTyped) {
           const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
           const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
@@ -989,7 +1082,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
             tool_call_id: tc.id,
           } as ChatMessage)
         }
-
         const messagesComTools: ChatMessage[] = [
           ...chatMessages,
           { role: 'assistant', content: '', tool_calls: respostaComTools.toolCalls } as unknown as ChatMessage,
