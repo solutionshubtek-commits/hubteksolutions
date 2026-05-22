@@ -29,7 +29,7 @@ const ACAO_CONFIG: Record<string, { icon: React.ElementType; cor: string; label:
   enviou_midia:    { icon: Paperclip,     cor: '#818CF8', label: 'Enviou mídia' },
 }
 
-const LOGS_POR_PAGINA = 10
+const POR_PAGINA = 10
 
 function tempoRelativo(data: string) {
   const diff = Math.floor((Date.now() - new Date(data).getTime()) / 1000)
@@ -49,54 +49,109 @@ function iniciais(nome: string) {
   return nome.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase()
 }
 
+function Paginacao({ pagina, total, onChange }: { pagina: number; total: number; onChange: (p: number) => void }) {
+  if (total <= 1) return null
+  return (
+    <div className="flex items-center justify-between px-4 md:px-5 py-3" style={{ borderTop: '1px solid var(--border)' }}>
+      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+        Página {pagina} de {total}
+      </span>
+      <div className="flex gap-2">
+        <button onClick={() => onChange(Math.max(1, pagina - 1))} disabled={pagina === 1}
+          className="flex items-center justify-center rounded-lg"
+          style={{ width: 32, height: 32, border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)', cursor: pagina === 1 ? 'not-allowed' : 'pointer', opacity: pagina === 1 ? 0.4 : 1 }}>
+          <ChevronLeft size={15} />
+        </button>
+        <button onClick={() => onChange(Math.min(total, pagina + 1))} disabled={pagina === total}
+          className="flex items-center justify-center rounded-lg"
+          style={{ width: 32, height: 32, border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)', cursor: pagina === total ? 'not-allowed' : 'pointer', opacity: pagina === total ? 0.4 : 1 }}>
+          <ChevronRight size={15} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function HistoricoPage() {
+  const [tenantId, setTenantId]   = useState<string | null>(null)
+  const [userRole, setUserRole]   = useState<string | null>(null)
+
+  // Conversas
   const [conversas, setConversas]         = useState<Conversa[]>([])
-  const [logs, setLogs]                   = useState<ConversationLog[]>([])
-  const [totalLogs, setTotalLogs]         = useState(0)
-  const [paginaLog, setPaginaLog]         = useState(1)
-  const [carregando, setCarregando]       = useState(true)
-  const [carregandoLogs, setCarregandoLogs] = useState(false)
+  const [totalConversas, setTotalConversas] = useState(0)
+  const [paginaConv, setPaginaConv]       = useState(1)
+  const [carregandoConv, setCarregandoConv] = useState(true)
   const [busca, setBusca]                 = useState('')
   const [dataInicio, setDataInicio]       = useState('')
   const [dataFim, setDataFim]             = useState('')
+
+  // Logs
+  const [logs, setLogs]                   = useState<ConversationLog[]>([])
+  const [totalLogs, setTotalLogs]         = useState(0)
+  const [paginaLog, setPaginaLog]         = useState(1)
+  const [carregandoLogs, setCarregandoLogs] = useState(false)
   const [buscarLog, setBuscarLog]         = useState('')
-  const [userRole, setUserRole]           = useState<string | null>(null)
-  const [tenantId, setTenantId]           = useState<string | null>(null)
 
-  const totalPaginasLog = Math.ceil(totalLogs / LOGS_POR_PAGINA)
+  const totalPaginasConv = Math.ceil(totalConversas / POR_PAGINA)
+  const totalPaginasLog  = Math.ceil(totalLogs / POR_PAGINA)
 
-  // Busca conversas + dados do usuário (uma só vez)
+  // Dados do usuário (uma só vez)
   useEffect(() => {
-    async function fetchInicial() {
+    async function fetchUsuario() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       const { data: userData } = await supabase.from('users').select('tenant_id, role').eq('id', user.id).single()
       if (!userData?.tenant_id) return
-      setUserRole(userData.role)
       setTenantId(userData.tenant_id)
-
-      const { data: convData } = await supabase
-        .from('conversations')
-        .select('id, contato_nome, contato_telefone, status, criado_em, ultima_mensagem_em')
-        .eq('tenant_id', userData.tenant_id)
-        .eq('status', 'encerrada')
-        .order('ultima_mensagem_em', { ascending: false })
-      setConversas(convData || [])
-      setCarregando(false)
+      setUserRole(userData.role)
     }
-    fetchInicial()
+    fetchUsuario()
   }, [])
 
-  // Busca logs paginada (server-side) — reexecuta ao mudar página, busca ou tenant
+  // Conversas — server-side
+  const fetchConversas = useCallback(async () => {
+    if (!tenantId) return
+    setCarregandoConv(true)
+    const supabase = createClient()
+    const from = (paginaConv - 1) * POR_PAGINA
+    const to   = from + POR_PAGINA - 1
+
+    let query = supabase
+      .from('conversations')
+      .select('id, contato_nome, contato_telefone, status, criado_em, ultima_mensagem_em', { count: 'exact' })
+      .eq('tenant_id', tenantId)
+      .eq('status', 'encerrada')
+      .order('ultima_mensagem_em', { ascending: false })
+      .range(from, to)
+
+    if (busca.trim()) {
+      query = query.or(`contato_nome.ilike.%${busca}%,contato_telefone.ilike.%${busca}%`)
+    }
+    if (dataInicio) {
+      query = query.gte('criado_em', dataInicio)
+    }
+    if (dataFim) {
+      query = query.lte('criado_em', dataFim + 'T23:59:59')
+    }
+
+    const { data, count } = await query
+    setConversas((data as Conversa[]) || [])
+    setTotalConversas(count ?? 0)
+    setCarregandoConv(false)
+  }, [tenantId, paginaConv, busca, dataInicio, dataFim])
+
+  useEffect(() => { fetchConversas() }, [fetchConversas])
+  useEffect(() => { setPaginaConv(1) }, [busca, dataInicio, dataFim])
+
+  // Logs — server-side
   const fetchLogs = useCallback(async () => {
     if (!tenantId || !userRole) return
     if (!['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userRole)) return
-
     setCarregandoLogs(true)
     const supabase = createClient()
-    const from = (paginaLog - 1) * LOGS_POR_PAGINA
-    const to   = from + LOGS_POR_PAGINA - 1
+    const from = (paginaLog - 1) * POR_PAGINA
+    const to   = from + POR_PAGINA - 1
 
     let query = supabase
       .from('conversation_logs')
@@ -106,9 +161,7 @@ export default function HistoricoPage() {
       .range(from, to)
 
     if (buscarLog.trim()) {
-      query = query.or(
-        `descricao.ilike.%${buscarLog}%,contato_nome.ilike.%${buscarLog}%`
-      )
+      query = query.or(`descricao.ilike.%${buscarLog}%,contato_nome.ilike.%${buscarLog}%`)
     }
 
     const { data, count } = await query
@@ -118,16 +171,7 @@ export default function HistoricoPage() {
   }, [tenantId, userRole, paginaLog, buscarLog])
 
   useEffect(() => { fetchLogs() }, [fetchLogs])
-
-  // Ao mudar busca, volta para página 1
   useEffect(() => { setPaginaLog(1) }, [buscarLog])
-
-  const conversasFiltradas = conversas.filter((c) => {
-    const matchBusca  = c.contato_nome?.toLowerCase().includes(busca.toLowerCase()) || c.contato_telefone?.includes(busca)
-    const matchInicio = dataInicio ? new Date(c.criado_em) >= new Date(dataInicio) : true
-    const matchFim    = dataFim    ? new Date(c.criado_em) <= new Date(dataFim + 'T23:59:59') : true
-    return matchBusca && matchInicio && matchFim
-  })
 
   const inputStyle = { background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
   const podeVerLogs = userRole && ['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userRole)
@@ -154,11 +198,11 @@ export default function HistoricoPage() {
         </div>
 
         <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-          {carregando ? (
+          {carregandoConv ? (
             <div className="p-6 space-y-4">
               {[...Array(5)].map((_, i) => <div key={i} className="h-12 rounded animate-pulse" style={{ background: 'var(--bg-hover)' }} />)}
             </div>
-          ) : conversasFiltradas.length === 0 ? (
+          ) : conversas.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16" style={{ color: 'var(--text-muted)' }}>
               <History size={40} className="mb-3" />
               <p className="text-sm">Nenhum histórico encontrado</p>
@@ -177,9 +221,9 @@ export default function HistoricoPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {conversasFiltradas.map((c, i) => (
+                    {conversas.map((c, i) => (
                       <tr key={c.id} className="transition-colors"
-                        style={{ borderBottom: i === conversasFiltradas.length - 1 ? 'none' : '1px solid var(--border)' }}
+                        style={{ borderBottom: i === conversas.length - 1 ? 'none' : '1px solid var(--border)' }}
                         onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
                         onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                         <td className="px-6 py-4">
@@ -202,7 +246,7 @@ export default function HistoricoPage() {
 
               {/* Cards — mobile */}
               <div className="md:hidden divide-y" style={{ borderColor: 'var(--border)' }}>
-                {conversasFiltradas.map(c => (
+                {conversas.map(c => (
                   <div key={c.id} className="p-4">
                     <div className="flex items-center gap-3 mb-2">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
@@ -221,6 +265,8 @@ export default function HistoricoPage() {
                   </div>
                 ))}
               </div>
+
+              <Paginacao pagina={paginaConv} total={totalPaginasConv} onChange={setPaginaConv} />
             </>
           )}
         </div>
@@ -287,45 +333,7 @@ export default function HistoricoPage() {
                     )
                   })}
                 </div>
-
-                {/* Paginação */}
-                {totalPaginasLog > 1 && (
-                  <div className="flex items-center justify-between px-4 md:px-5 py-3" style={{ borderTop: '1px solid var(--border)' }}>
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      Página {paginaLog} de {totalPaginasLog}
-                    </span>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setPaginaLog(p => Math.max(1, p - 1))}
-                        disabled={paginaLog === 1}
-                        className="flex items-center justify-center rounded-lg transition-colors"
-                        style={{
-                          width: 32, height: 32,
-                          border: '1px solid var(--border)',
-                          background: 'var(--bg-surface-2)',
-                          color: 'var(--text-secondary)',
-                          cursor: paginaLog === 1 ? 'not-allowed' : 'pointer',
-                          opacity: paginaLog === 1 ? 0.4 : 1,
-                        }}>
-                        <ChevronLeft size={15} />
-                      </button>
-                      <button
-                        onClick={() => setPaginaLog(p => Math.min(totalPaginasLog, p + 1))}
-                        disabled={paginaLog === totalPaginasLog}
-                        className="flex items-center justify-center rounded-lg transition-colors"
-                        style={{
-                          width: 32, height: 32,
-                          border: '1px solid var(--border)',
-                          background: 'var(--bg-surface-2)',
-                          color: 'var(--text-secondary)',
-                          cursor: paginaLog === totalPaginasLog ? 'not-allowed' : 'pointer',
-                          opacity: paginaLog === totalPaginasLog ? 0.4 : 1,
-                        }}>
-                        <ChevronRight size={15} />
-                      </button>
-                    </div>
-                  </div>
-                )}
+                <Paginacao pagina={paginaLog} total={totalPaginasLog} onChange={setPaginaLog} />
               </>
             )}
           </div>
