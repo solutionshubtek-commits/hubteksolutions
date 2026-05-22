@@ -1,7 +1,7 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { History, Search, ClipboardList, Bot, Pause, Play, MessageSquare, Paperclip } from 'lucide-react'
+import { History, Search, ClipboardList, Bot, Pause, Play, MessageSquare, Paperclip, ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface Conversa {
   id: string
@@ -29,6 +29,8 @@ const ACAO_CONFIG: Record<string, { icon: React.ElementType; cor: string; label:
   enviou_midia:    { icon: Paperclip,     cor: '#818CF8', label: 'Enviou mídia' },
 }
 
+const LOGS_POR_PAGINA = 10
+
 function tempoRelativo(data: string) {
   const diff = Math.floor((Date.now() - new Date(data).getTime()) / 1000)
   if (diff < 60) return 'agora'
@@ -37,46 +39,88 @@ function tempoRelativo(data: string) {
   return new Date(data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-export default function HistoricoPage() {
-  const [conversas, setConversas] = useState<Conversa[]>([])
-  const [logs, setLogs] = useState<ConversationLog[]>([])
-  const [carregando, setCarregando] = useState(true)
-  const [carregandoLogs, setCarregandoLogs] = useState(true)
-  const [busca, setBusca] = useState('')
-  const [dataInicio, setDataInicio] = useState('')
-  const [dataFim, setDataFim] = useState('')
-  const [buscarLog, setBuscarLog] = useState('')
-  const [userRole, setUserRole] = useState<string | null>(null)
+function formatarData(data: string) {
+  if (!data) return '-'
+  return new Date(data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
 
+function iniciais(nome: string) {
+  if (!nome) return '?'
+  return nome.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase()
+}
+
+export default function HistoricoPage() {
+  const [conversas, setConversas]         = useState<Conversa[]>([])
+  const [logs, setLogs]                   = useState<ConversationLog[]>([])
+  const [totalLogs, setTotalLogs]         = useState(0)
+  const [paginaLog, setPaginaLog]         = useState(1)
+  const [carregando, setCarregando]       = useState(true)
+  const [carregandoLogs, setCarregandoLogs] = useState(false)
+  const [busca, setBusca]                 = useState('')
+  const [dataInicio, setDataInicio]       = useState('')
+  const [dataFim, setDataFim]             = useState('')
+  const [buscarLog, setBuscarLog]         = useState('')
+  const [userRole, setUserRole]           = useState<string | null>(null)
+  const [tenantId, setTenantId]           = useState<string | null>(null)
+
+  const totalPaginasLog = Math.ceil(totalLogs / LOGS_POR_PAGINA)
+
+  // Busca conversas + dados do usuário (uma só vez)
   useEffect(() => {
-    async function fetchTudo() {
+    async function fetchInicial() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       const { data: userData } = await supabase.from('users').select('tenant_id, role').eq('id', user.id).single()
       if (!userData?.tenant_id) return
       setUserRole(userData.role)
+      setTenantId(userData.tenant_id)
 
       const { data: convData } = await supabase
         .from('conversations')
         .select('id, contato_nome, contato_telefone, status, criado_em, ultima_mensagem_em')
-        .eq('tenant_id', userData.tenant_id).eq('status', 'encerrada')
+        .eq('tenant_id', userData.tenant_id)
+        .eq('status', 'encerrada')
         .order('ultima_mensagem_em', { ascending: false })
       setConversas(convData || [])
       setCarregando(false)
-
-      if (['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userData.role)) {
-        const { data: logsData } = await supabase
-          .from('conversation_logs')
-          .select('id, acao, descricao, contato_nome, criado_em, user_id, users:user_id(nome)')
-          .eq('tenant_id', userData.tenant_id)
-          .order('criado_em', { ascending: false }).limit(100)
-        setLogs((logsData as unknown as ConversationLog[]) || [])
-      }
-      setCarregandoLogs(false)
     }
-    fetchTudo()
+    fetchInicial()
   }, [])
+
+  // Busca logs paginada (server-side) — reexecuta ao mudar página, busca ou tenant
+  const fetchLogs = useCallback(async () => {
+    if (!tenantId || !userRole) return
+    if (!['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userRole)) return
+
+    setCarregandoLogs(true)
+    const supabase = createClient()
+    const from = (paginaLog - 1) * LOGS_POR_PAGINA
+    const to   = from + LOGS_POR_PAGINA - 1
+
+    let query = supabase
+      .from('conversation_logs')
+      .select('id, acao, descricao, contato_nome, criado_em, user_id, users:user_id(nome)', { count: 'exact' })
+      .eq('tenant_id', tenantId)
+      .order('criado_em', { ascending: false })
+      .range(from, to)
+
+    if (buscarLog.trim()) {
+      query = query.or(
+        `descricao.ilike.%${buscarLog}%,contato_nome.ilike.%${buscarLog}%`
+      )
+    }
+
+    const { data, count } = await query
+    setLogs((data as unknown as ConversationLog[]) || [])
+    setTotalLogs(count ?? 0)
+    setCarregandoLogs(false)
+  }, [tenantId, userRole, paginaLog, buscarLog])
+
+  useEffect(() => { fetchLogs() }, [fetchLogs])
+
+  // Ao mudar busca, volta para página 1
+  useEffect(() => { setPaginaLog(1) }, [buscarLog])
 
   const conversasFiltradas = conversas.filter((c) => {
     const matchBusca  = c.contato_nome?.toLowerCase().includes(busca.toLowerCase()) || c.contato_telefone?.includes(busca)
@@ -85,22 +129,6 @@ export default function HistoricoPage() {
     return matchBusca && matchInicio && matchFim
   })
 
-  const logsFiltrados = logs.filter(l => {
-    if (!buscarLog) return true
-    const termo = buscarLog.toLowerCase()
-    return l.descricao?.toLowerCase().includes(termo) || l.contato_nome?.toLowerCase().includes(termo) || l.users?.nome?.toLowerCase().includes(termo)
-  })
-
-  function formatarData(data: string) {
-    if (!data) return '-'
-    return new Date(data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
-  }
-
-  function iniciais(nome: string) {
-    if (!nome) return '?'
-    return nome.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase()
-  }
-
   const inputStyle = { background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
   const podeVerLogs = userRole && ['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userRole)
 
@@ -108,7 +136,7 @@ export default function HistoricoPage() {
     <div className="p-4 md:p-8 space-y-6 md:space-y-8">
       <h1 className="text-xl md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Histórico</h1>
 
-      {/* Filtros */}
+      {/* Filtros conversas */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
           <div className="relative flex-1">
@@ -205,6 +233,11 @@ export default function HistoricoPage() {
             <div className="flex items-center gap-2">
               <ClipboardList size={18} style={{ color: 'var(--text-secondary)' }} />
               <h2 className="text-base md:text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Log de ações</h2>
+              {totalLogs > 0 && (
+                <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)' }}>
+                  {totalLogs} registro{totalLogs !== 1 ? 's' : ''}
+                </span>
+              )}
             </div>
             <div className="relative w-full sm:w-64">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -219,40 +252,81 @@ export default function HistoricoPage() {
               <div className="p-6 space-y-3">
                 {[...Array(4)].map((_, i) => <div key={i} className="h-10 rounded animate-pulse" style={{ background: 'var(--bg-hover)' }} />)}
               </div>
-            ) : logsFiltrados.length === 0 ? (
+            ) : logs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12" style={{ color: 'var(--text-muted)' }}>
                 <Bot size={32} className="mb-2" />
                 <p className="text-sm">Nenhuma ação registrada</p>
               </div>
             ) : (
-              <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                {logsFiltrados.map(log => {
-                  const cfg = ACAO_CONFIG[log.acao] ?? { icon: ClipboardList, cor: 'var(--text-muted)', label: log.acao }
-                  const Icon = cfg.icon
-                  const nomeOperador = (log.users as { nome: string } | null)?.nome ?? 'Operador'
-                  return (
-                    <div key={log.id} className="flex items-start gap-3 px-4 md:px-5 py-3 transition-colors"
-                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                        style={{ background: `${cfg.cor}18` }}>
-                        <Icon size={13} color={cfg.cor} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm leading-snug" style={{ color: 'var(--text-primary)' }}>{log.descricao}</p>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          <span className="text-xs font-medium" style={{ color: cfg.cor }}>{cfg.label}</span>
-                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>·</span>
-                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{nomeOperador}</span>
+              <>
+                <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                  {logs.map(log => {
+                    const cfg = ACAO_CONFIG[log.acao] ?? { icon: ClipboardList, cor: 'var(--text-muted)', label: log.acao }
+                    const Icon = cfg.icon
+                    const nomeOperador = (log.users as { nome: string } | null)?.nome ?? 'Operador'
+                    return (
+                      <div key={log.id} className="flex items-start gap-3 px-4 md:px-5 py-3 transition-colors"
+                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                          style={{ background: `${cfg.cor}18` }}>
+                          <Icon size={13} color={cfg.cor} />
                         </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm leading-snug" style={{ color: 'var(--text-primary)' }}>{log.descricao}</p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <span className="text-xs font-medium" style={{ color: cfg.cor }}>{cfg.label}</span>
+                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>·</span>
+                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{nomeOperador}</span>
+                          </div>
+                        </div>
+                        <span className="text-xs flex-shrink-0 mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          {tempoRelativo(log.criado_em)}
+                        </span>
                       </div>
-                      <span className="text-xs flex-shrink-0 mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        {tempoRelativo(log.criado_em)}
-                      </span>
+                    )
+                  })}
+                </div>
+
+                {/* Paginação */}
+                {totalPaginasLog > 1 && (
+                  <div className="flex items-center justify-between px-4 md:px-5 py-3" style={{ borderTop: '1px solid var(--border)' }}>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      Página {paginaLog} de {totalPaginasLog}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setPaginaLog(p => Math.max(1, p - 1))}
+                        disabled={paginaLog === 1}
+                        className="flex items-center justify-center rounded-lg transition-colors"
+                        style={{
+                          width: 32, height: 32,
+                          border: '1px solid var(--border)',
+                          background: 'var(--bg-surface-2)',
+                          color: 'var(--text-secondary)',
+                          cursor: paginaLog === 1 ? 'not-allowed' : 'pointer',
+                          opacity: paginaLog === 1 ? 0.4 : 1,
+                        }}>
+                        <ChevronLeft size={15} />
+                      </button>
+                      <button
+                        onClick={() => setPaginaLog(p => Math.min(totalPaginasLog, p + 1))}
+                        disabled={paginaLog === totalPaginasLog}
+                        className="flex items-center justify-center rounded-lg transition-colors"
+                        style={{
+                          width: 32, height: 32,
+                          border: '1px solid var(--border)',
+                          background: 'var(--bg-surface-2)',
+                          color: 'var(--text-secondary)',
+                          cursor: paginaLog === totalPaginasLog ? 'not-allowed' : 'pointer',
+                          opacity: paginaLog === totalPaginasLog ? 0.4 : 1,
+                        }}>
+                        <ChevronRight size={15} />
+                      </button>
                     </div>
-                  )
-                })}
-              </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
