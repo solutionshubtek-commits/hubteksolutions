@@ -137,6 +137,18 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
 
 function GraficoBarras({ dados }: { dados: DiaDado[] }) {
   const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
+  const [isDark, setIsDark] = useState(true)
+
+  useEffect(() => {
+    function detectTheme() {
+      const theme = document.documentElement.getAttribute('data-theme')
+      setIsDark(theme !== 'light')
+    }
+    detectTheme()
+    const observer = new MutationObserver(detectTheme)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  }, [])
 
   const total = dados.reduce((s, d) => s + d.total, 0)
   const media = +(total / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
@@ -163,27 +175,20 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
     dados.map((_, i) => i).filter(i => i === 0 || i === dados.length - 1 || i % step === 0)
   )
 
-  function barHeight(val: number) {
-    return (val / yMax) * innerH
-  }
-
-  function barX(i: number) {
-    return padL + i * gap + gap / 2
-  }
-
-   function fmtDia(dia: string) {
+  function barHeight(val: number) { return (val / yMax) * innerH }
+  function barX(i: number) { return padL + i * gap + gap / 2 }
+  function fmtDia(dia: string) {
     const d = new Date(dia + 'T12:00:00')
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
 
-  const isDark = typeof window !== 'undefined'
-    ? window.matchMedia('(prefers-color-scheme: dark)').matches
-    : true
-
-  const textColor  = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'
-  const gridColor  = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)'
+  const textColor  = isDark ? '#6B6B6B' : '#71717A'
+  const gridColor  = isDark ? '#1F1F1F' : '#D4D4D8'
   const barColor   = '#10B981'
-  const labelColor = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)'
+  const labelColor = isDark ? '#A3A3A3' : '#3F3F46'
+  const tooltipBg  = isDark ? '#111111' : '#FFFFFF'
+  const tooltipBorder = isDark ? '#2A2A2A' : '#D4D4D8'
+  const tooltipText   = isDark ? '#FFFFFF' : '#09090B'
 
   return (
     <div>
@@ -210,7 +215,6 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
           style={{ display: 'block', overflow: 'visible' }}
           onMouseLeave={() => setTooltip(null)}
         >
-          {/* Grid Y */}
           {yTicks.map(tick => {
             const y = padT + innerH - (tick / yMax) * innerH
             return (
@@ -223,11 +227,9 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
             )
           })}
 
-          {/* Linha base */}
           <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH}
             stroke={gridColor} strokeWidth="1" />
 
-          {/* Barras */}
           {dados.map((d, i) => {
             const x = barX(i)
             const h = Math.max(barHeight(d.total), d.total > 0 ? 3 : 0)
@@ -239,7 +241,7 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
                   x={x - barW / 2} y={y}
                   width={barW} height={h}
                   fill={barColor}
-                  opacity={isHover ? 1 : 0.8}
+                  opacity={isHover ? 1 : 0.85}
                   rx="3"
                 />
                 {d.total > 0 && (
@@ -248,7 +250,6 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
                     {d.total}
                   </text>
                 )}
-                {/* Hover target */}
                 <rect
                   x={x - gap / 2} y={padT}
                   width={gap} height={innerH}
@@ -260,7 +261,6 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
             )
           })}
 
-          {/* Labels eixo X */}
           {dados.map((d, i) => {
             if (!xLabelIdxs.has(i)) return null
             return (
@@ -271,20 +271,16 @@ function GraficoBarras({ dados }: { dados: DiaDado[] }) {
             )
           })}
 
-          {/* Tooltip */}
           {tooltip && (() => {
             const d = dados[tooltip.i]
-            const tx = Math.min(Math.max(barX(tooltip.i), padL + 30), W - padR - 30)
+            const tx = Math.min(Math.max(barX(tooltip.i), padL + 36), W - padR - 36)
             const ty = Math.max(tooltip.y - 10, padT + 2)
             return (
               <g>
-                <rect x={tx - 36} y={ty - 14} width={72} height={20} rx="4"
-                  fill={isDark ? '#1f2937' : '#fff'}
-                  stroke={isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}
-                  strokeWidth="1" />
+                <rect x={tx - 38} y={ty - 14} width={76} height={20} rx="4"
+                  fill={tooltipBg} stroke={tooltipBorder} strokeWidth="1" />
                 <text x={tx} y={ty + 2} textAnchor="middle"
-                  fontSize="10" fontWeight="600"
-                  fill={isDark ? '#fff' : '#111'}>
+                  fontSize="10" fontWeight="600" fill={tooltipText}>
                   {fmtDia(d.dia)}: {d.total} conv.
                 </text>
               </g>
