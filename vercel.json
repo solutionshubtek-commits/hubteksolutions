@@ -10,6 +10,7 @@
     { "path": "/api/cron/scheduled-tasks",      "schedule": "* * * * *"    },
     { "path": "/api/cron/gerar-lembretes",      "schedule": "*/15 * * * *" },
     { "path": "/api/cron/sync-calendar",        "schedule": "0 * * * *"    },
-    { "path": "/api/cron/arquivar-logs", "schedule": "0 0 * * *" }
+    { "path": "/api/cron/arquivar-logs", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/arquivar-conversas", "schedule": "0 1 * * *" }
   ]
 }
