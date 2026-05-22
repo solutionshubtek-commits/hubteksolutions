@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { Smartphone, CheckCircle, XCircle, RefreshCw, Wifi, LogOut, ShieldAlert, MessageCircle, Trash2 } from 'lucide-react'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
@@ -13,16 +13,21 @@ interface Instancia {
   nome: string
 }
 
+const POLL_INTERVAL = 3000 // 3 segundos
+
 export default function ReconexaoWhatsAppPage() {
-  const [instancias, setInstancias] = useState<Instancia[]>([])
-  const [carregando, setCarregando] = useState(true)
-  const [tenantId, setTenantId] = useState<string | null>(null)
-  const [qrCodes, setQrCodes] = useState<Record<string, string | null>>({})
-  const [gerandoQR, setGerandoQR] = useState<Record<string, boolean>>({})
-  const [desconectando, setDesconectando] = useState<Record<string, boolean>>({})
+  const [instancias, setInstancias]           = useState<Instancia[]>([])
+  const [carregando, setCarregando]           = useState(true)
+  const [tenantId, setTenantId]               = useState<string | null>(null)
+  const [qrCodes, setQrCodes]                 = useState<Record<string, string | null>>({})
+  const [gerandoQR, setGerandoQR]             = useState<Record<string, boolean>>({})
+  const [desconectando, setDesconectando]     = useState<Record<string, boolean>>({})
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
-  const [excluindo, setExcluindo] = useState<Record<string, boolean>>({})
-  const [confirmExcluir, setConfirmExcluir] = useState<string | null>(null)
+  const [excluindo, setExcluindo]             = useState<Record<string, boolean>>({})
+  const [confirmExcluir, setConfirmExcluir]   = useState<string | null>(null)
+
+  // Guarda os intervalos de polling por instância
+  const pollingRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({})
 
   useEffect(() => {
     async function carregar() {
@@ -35,42 +40,102 @@ export default function ReconexaoWhatsAppPage() {
       await fetchInstancias(userData.tenant_id)
     }
     carregar()
+
+    // Limpa todos os intervalos ao desmontar
+    return () => {
+      Object.values(pollingRefs.current).forEach(clearInterval)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function fetchInstancias(tid: string) {
+  const fetchInstancias = useCallback(async (tid: string) => {
     setCarregando(true)
     try {
       const res = await fetch(`/api/whatsapp/status?tenant_id=${tid}`)
       const data = await res.json()
       setInstancias(data.instancias ?? [])
-    } catch { setInstancias([]) }
-    finally { setCarregando(false) }
+    } catch {
+      setInstancias([])
+    } finally {
+      setCarregando(false)
+    }
+  }, [])
+
+  /**
+   * Inicia polling para uma instância específica.
+   * Para automaticamente quando detecta status conectado.
+   */
+  function iniciarPolling(instanceName: string, tid: string) {
+    // Evita duplicar intervalos
+    if (pollingRefs.current[instanceName]) return
+
+    pollingRefs.current[instanceName] = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/whatsapp/status?tenant_id=${tid}`)
+        const data = await res.json()
+        const instanciasAtualizadas: Instancia[] = data.instancias ?? []
+
+        const instancia = instanciasAtualizadas.find(i => i.instance_name === instanceName)
+        const conectado = instancia?.status === 'open' || instancia?.status === 'conectado'
+
+        setInstancias(instanciasAtualizadas)
+
+        if (conectado) {
+          // Conectou — para o polling e limpa o QR
+          pararPolling(instanceName)
+          setQrCodes(prev => ({ ...prev, [instanceName]: null }))
+        }
+      } catch {
+        // Erro silencioso — continua tentando
+      }
+    }, POLL_INTERVAL)
+  }
+
+  function pararPolling(instanceName: string) {
+    if (pollingRefs.current[instanceName]) {
+      clearInterval(pollingRefs.current[instanceName])
+      delete pollingRefs.current[instanceName]
+    }
   }
 
   async function gerarQRCode(instanceName: string) {
+    if (!tenantId) return
     setGerandoQR(prev => ({ ...prev, [instanceName]: true }))
     setQrCodes(prev => ({ ...prev, [instanceName]: null }))
     try {
       const res = await fetch(`/api/whatsapp/qrcode?instance=${instanceName}`)
       const data = await res.json()
-      setQrCodes(prev => ({ ...prev, [instanceName]: data.qrcode || null }))
-    } finally { setGerandoQR(prev => ({ ...prev, [instanceName]: false })) }
+      const qr = data.qrcode || null
+      setQrCodes(prev => ({ ...prev, [instanceName]: qr }))
+
+      // Inicia polling assim que o QR for exibido
+      if (qr) iniciarPolling(instanceName, tenantId)
+    } finally {
+      setGerandoQR(prev => ({ ...prev, [instanceName]: false }))
+    }
   }
 
   async function desconectar(instanceName: string) {
     setDesconectando(prev => ({ ...prev, [instanceName]: true }))
     setConfirmDesconectar(null)
+    pararPolling(instanceName)
     try {
       const res = await fetch('/api/whatsapp/desconectar', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instance_name: instanceName }),
       })
-      if (res.ok && tenantId) { setQrCodes(prev => ({ ...prev, [instanceName]: null })); await fetchInstancias(tenantId) }
-    } finally { setDesconectando(prev => ({ ...prev, [instanceName]: false })) }
+      if (res.ok && tenantId) {
+        setQrCodes(prev => ({ ...prev, [instanceName]: null }))
+        await fetchInstancias(tenantId)
+      }
+    } finally {
+      setDesconectando(prev => ({ ...prev, [instanceName]: false }))
+    }
   }
 
   async function excluirInstancia(instanceName: string) {
     if (!tenantId) return
+    pararPolling(instanceName)
     setExcluindo(prev => ({ ...prev, [instanceName]: true }))
     setConfirmExcluir(null)
     try {
@@ -79,7 +144,9 @@ export default function ReconexaoWhatsAppPage() {
         body: JSON.stringify({ instance_name: instanceName, tenant_id: tenantId }),
       })
       await fetchInstancias(tenantId)
-    } finally { setExcluindo(prev => ({ ...prev, [instanceName]: false })) }
+    } finally {
+      setExcluindo(prev => ({ ...prev, [instanceName]: false }))
+    }
   }
 
   return (
@@ -97,7 +164,9 @@ export default function ReconexaoWhatsAppPage() {
 
       {carregando ? (
         <div className="space-y-3">
-          {[...Array(2)].map((_, i) => <div key={i} className="h-24 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)' }} />)}
+          {[...Array(2)].map((_, i) => (
+            <div key={i} className="h-24 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)' }} />
+          ))}
         </div>
       ) : instancias.length === 0 ? (
         <div className="rounded-xl p-8 text-center" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
@@ -108,14 +177,15 @@ export default function ReconexaoWhatsAppPage() {
       ) : (
         <div className="space-y-4 max-w-lg">
           {instancias.map(inst => {
-            const conectado           = inst.status === 'open' || inst.status === 'conectado'
-            const banido              = inst.status === 'banido'
-            const qr                  = qrCodes[inst.instance_name]
-            const gerando             = gerandoQR[inst.instance_name] ?? false
-            const estaDesconectando   = desconectando[inst.instance_name] ?? false
-            const pedindoConfirm      = confirmDesconectar === inst.instance_name
-            const estaExcluindo       = excluindo[inst.instance_name] ?? false
+            const conectado             = inst.status === 'open' || inst.status === 'conectado'
+            const banido                = inst.status === 'banido'
+            const qr                    = qrCodes[inst.instance_name]
+            const gerando               = gerandoQR[inst.instance_name] ?? false
+            const estaDesconectando     = desconectando[inst.instance_name] ?? false
+            const pedindoConfirm        = confirmDesconectar === inst.instance_name
+            const estaExcluindo         = excluindo[inst.instance_name] ?? false
             const pedindoConfirmExcluir = confirmExcluir === inst.instance_name
+            const polling               = !!pollingRefs.current[inst.instance_name]
 
             return (
               <div key={inst.id} className="rounded-xl p-4 md:p-6"
@@ -140,6 +210,10 @@ export default function ReconexaoWhatsAppPage() {
                       <div className="flex items-center gap-1.5 text-[#10B981] text-sm"><CheckCircle size={15} /> Conectado</div>
                     ) : banido ? (
                       <div className="flex items-center gap-1.5 text-red-400 text-sm font-semibold"><ShieldAlert size={15} /> Banido</div>
+                    ) : polling ? (
+                      <div className="flex items-center gap-1.5 text-[#F59E0B] text-sm">
+                        <RefreshCw size={14} className="animate-spin" /> Aguardando scan...
+                      </div>
                     ) : (
                       <div className="flex items-center gap-1.5 text-red-400 text-sm"><XCircle size={15} /> Desconectado</div>
                     )}
@@ -203,16 +277,22 @@ export default function ReconexaoWhatsAppPage() {
 
                 {!conectado && !banido && (
                   <div className="space-y-3">
-                    <button onClick={() => gerarQRCode(inst.instance_name)} disabled={gerando}
+                    <button onClick={() => gerarQRCode(inst.instance_name)} disabled={gerando || polling}
                       className="w-full bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2 text-sm">
                       <RefreshCw size={15} className={gerando ? 'animate-spin' : ''} />
-                      {gerando ? 'Gerando QR Code...' : 'Gerar QR Code'}
+                      {gerando ? 'Gerando QR Code...' : polling ? 'Aguardando conexão...' : 'Gerar QR Code'}
                     </button>
 
                     {qr && (
                       <div className="flex flex-col items-center gap-3 p-4 bg-white rounded-xl">
                         <Image src={qr} alt="QR Code WhatsApp" width={192} height={192} unoptimized />
                         <p className="text-black text-xs text-center">Escaneie com o WhatsApp para conectar</p>
+                        {polling && (
+                          <div className="flex items-center gap-1.5 text-xs" style={{ color: '#10B981' }}>
+                            <RefreshCw size={11} className="animate-spin" />
+                            Detectando conexão automaticamente...
+                          </div>
+                        )}
                       </div>
                     )}
 
