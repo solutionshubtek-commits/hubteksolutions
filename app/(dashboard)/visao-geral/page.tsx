@@ -308,10 +308,8 @@ export default function VisaoGeralPage() {
   const [carregando, setCarregando]         = useState(true)
   const [carregandoMais, setCarregandoMais] = useState(false)
   const [convLimit, setConvLimit]           = useState(CONV_LIMIT_STEP)
-  const [totalConvAtivas, setTotalConvAtivas] = useState(0)
   const [nomeUsuario, setNomeUsuario]       = useState('')
   const [tenantId, setTenantId]             = useState<string | null>(null)
-  const [userRole, setUserRole]             = useState<string | null>(null)
   const [pausando, setPausando]             = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
   const [instanciasBanidas, setInstanciasBanidas] = useState<InstanciaBanida[]>([])
@@ -342,7 +340,6 @@ export default function VisaoGeralPage() {
 
       setNomeUsuario(userData.nome?.split(' ')[0] ?? '')
       setTenantId(userData.tenant_id)
-      setUserRole(userData.role)
       const tid = userData.tenant_id
 
       const agora    = new Date()
@@ -431,7 +428,6 @@ export default function VisaoGeralPage() {
       })
 
       setInstanciasBanidas((bandasRes.data ?? []) as InstanciaBanida[])
-      setTotalConvAtivas(semanaRes.count ?? 0)
 
       // ── Sem N+1: última mensagem já vem junto ─────────────────────────────
       type ConvRaw = {
