@@ -26,7 +26,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Este e-mail já está cadastrado no sistema.' }, { status: 400 })
     }
 
-    // 2. Verificar e-mail duplicado no Auth (usuário pode existir no Auth mas não em public.users)
+    // 2. Verificar e-mail duplicado no Auth
     const { data: authList } = await supabaseAdmin.auth.admin.listUsers()
     const emailNoAuth = authList?.users?.find(u => u.email === email)
     if (emailNoAuth) {
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: authErr?.message ?? 'Erro ao criar auth user.' }, { status: 400 })
     }
 
-    // 4. UPSERT na tabela users (evita duplicate key do trigger on_auth_user_created)
+    // 4. UPSERT na tabela users
     const { error: userErr } = await supabaseAdmin.from('users').upsert({
       id: authData.user.id,
       email,
@@ -58,7 +58,34 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: userErr.message }, { status: 400 })
     }
 
-    // 5. Onboarding Evolution API
+    // 5. Criar agent_config padrão — só se ainda não existir
+    const { data: configExiste } = await supabaseAdmin
+      .from('agent_config')
+      .select('tenant_id')
+      .eq('tenant_id', tenant_id)
+      .maybeSingle()
+
+    if (!configExiste) {
+      const { error: configErr } = await supabaseAdmin.from('agent_config').insert({
+        tenant_id,
+        ativo: true,
+        motor_ia_principal: 'openai',
+        motor_ia_backup: 'anthropic',
+        temperatura: 0.7,
+        max_tokens: 1000,
+        horario_inicio: '08:00',
+        horario_fim: '18:00',
+        dias_funcionamento: ['seg', 'ter', 'qua', 'qui', 'sex'],
+        mensagem_ausencia: 'Olá! No momento estamos fora do horário de atendimento. Em breve retornaremos. 😊',
+        prompt_principal: '',
+        funcoes_ativas: [],
+      })
+      if (configErr) {
+        console.error('[criar-usuario] Falha ao criar agent_config (não crítico):', configErr.message)
+      }
+    }
+
+    // 6. Onboarding Evolution API
     if (slug && Array.isArray(instancias) && instancias.length > 0) {
       try {
         const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.hubteksolutions.tech'
