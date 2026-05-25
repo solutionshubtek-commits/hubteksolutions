@@ -4,7 +4,6 @@ import { createClient } from '@supabase/supabase-js'
 export async function POST(request: NextRequest) {
   try {
     const { tenant_id, instancias } = await request.json()
-    // instancias: Array<{ apelido: string }>
 
     if (!tenant_id || !Array.isArray(instancias) || instancias.length === 0) {
       return NextResponse.json({ error: 'tenant_id e instancias são obrigatórios' }, { status: 400 })
@@ -16,7 +15,8 @@ export async function POST(request: NextRequest) {
 
     const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL
     const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY
-    const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.hubteksolutions.tech'
+    const WEBHOOK_SECRET    = process.env.EVOLUTION_WEBHOOK_SECRET ?? process.env.EVOLUTION_API_KEY
+    const APP_URL           = process.env.NEXT_PUBLIC_APP_URL || 'https://app.hubteksolutions.tech'
 
     if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) {
       return NextResponse.json({ error: 'Variáveis de ambiente da Evolution API não configuradas' }, { status: 500 })
@@ -28,7 +28,6 @@ export async function POST(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // Busca slug do tenant
     const { data: tenant } = await supabase
       .from('tenants')
       .select('slug')
@@ -39,7 +38,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Tenant não encontrado' }, { status: 404 })
     }
 
-    // Busca quantas instâncias já existem para numerar corretamente
     const { data: existentes } = await supabase
       .from('tenant_instances')
       .select('id')
@@ -50,9 +48,9 @@ export async function POST(request: NextRequest) {
     const erros: { instance_name: string; erro: unknown }[] = []
 
     for (let i = 0; i < instancias.length; i++) {
-      const numero = offsetNumero + i + 1
+      const numero        = offsetNumero + i + 1
       const instance_name = `${tenant.slug}_conexao${numero}`
-      const apelido = instancias[i].apelido || `Conexão ${numero}`
+      const apelido       = instancias[i].apelido || `Conexão ${numero}`
 
       try {
         // 1. Criar instância na Evolution API
@@ -72,10 +70,10 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        const instanceData = await createResponse.json()
+        const instanceData   = await createResponse.json()
         const instance_token = instanceData?.hash || instanceData?.instance?.token || null
 
-        // 2. Configurar webhook
+        // 2. Configurar webhook com header de autenticação
         await fetch(`${EVOLUTION_API_URL}/webhook/set/${instance_name}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_API_KEY },
@@ -83,6 +81,7 @@ export async function POST(request: NextRequest) {
             webhook: {
               enabled: true,
               url: `${APP_URL}/api/webhook/evolution`,
+              headers: { apikey: WEBHOOK_SECRET },
               webhookByEvents: false,
               webhookBase64: false,
               events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
