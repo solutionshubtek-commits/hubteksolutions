@@ -92,7 +92,7 @@ export default function ConversasPage() {
 
   // Contagem de conversas aguardando humano (sem atendente)
   const totalHumano = conversas.filter(
-    c => c.agente_pausado && (c.status === 'ativa' || c.status === 'ativo')
+    c => c.agente_pausado && !c.atendente_id && (c.status === 'ativa' || c.status === 'ativo')
   ).length
 
   const conversasFiltradas = conversas.filter((c) => {
