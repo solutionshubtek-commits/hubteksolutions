@@ -50,7 +50,7 @@ const PERFIL_EXTRACTION_INTERVAL = 5
 const SAUDACOES_REGEX = /^(oi|olá|ola|opa|hey|hello|bom dia|boa tarde|boa noite|e aí|eai|e ai|tudo bem|tudo bom|salve)[!?.,:]*$/i
 
 // Frases que indicam pedido explícito de atendimento humano
-const HUMANO_REGEX = /\b(falar\s+com\s+(humano|pessoa|atendente|operador|algu[eé]m)|gostaria\s+de\s+falar\s+com|poderia\s+me\s+transferir|pode\s+me\s+transferir|transferir\s+(para|pra)|atendimento\s+humano|quero\s+(um\s+)?(humano|pessoa|atendente|operador)|me\s+passa\s+(para|pra)\s+(um\s+)?(humano|atendente|operador)|me\s+transfere|transfere\s+(para|pra)|falar\s+com\s+algu[eé]m|preciso\s+de\s+(um\s+)?atendente|n[aã]o\s+quero\s+(falar\s+com\s+)?(?:rob[oô]|ia|bot|m[aá]quina)|quero\s+ser\s+atendido|atendente\s+humano|falar\s+com\s+uma\s+pessoa)\b/i
+const HUMANO_REGEX = /\b(falar\s+com\s+(humano|pessoa|atendente|operador|algu[eé]m)|gostaria\s+de\s+(falar|ser\s+atendid[oa])\s+(com\s+)?(um\s+)?(humano|pessoa|atendente|operador)?|gostaria\s+de\s+um\s+atendente|poderia\s+me\s+transferir|pode\s+me\s+transferir|transferir\s+(para|pra)|atendimento\s+humano|atendente\s+humano|quero\s+(um\s+)?(humano|pessoa|atendente|operador)|me\s+passa\s+(para|pra)\s+(um\s+)?(humano|atendente|operador)|me\s+transfere|transfere\s+(para|pra)|falar\s+com\s+algu[eé]m|preciso\s+de\s+(um\s+)?atendente|n[aã]o\s+quero\s+(falar\s+com\s+)?(?:rob[oô]|ia|bot|m[aá]quina)|quero\s+ser\s+atendido|falar\s+com\s+uma\s+pessoa|ser\s+atendid[oa]\s+por\s+um\s+humano|atendimento\s+com\s+(uma?\s+)?(pessoa|humano)|prefiro\s+(falar|conversar)\s+com\s+(uma?\s+)?(pessoa|humano|atendente)|tem\s+(algum|algu[eé]m)\s+(humano|atendente|operador)|existe\s+(algum|algu[eé]m)\s+(humano|atendente)|pode\s+me\s+conectar\s+com|conectar\s+com\s+um\s+atendente|chamar\s+um\s+atendente|fala\s+com\s+algu[eé]m)\b/i
 
 // Frases que indicam que o agente não soube responder
 const FALHA_AGENTE_REGEX = /n[aã]o (tenho|encontrei|possuo|localizei)|n[aã]o (está|esta) (dispon[ií]vel|na base)|n[aã]o (sei|consigo|posso) (responder|ajudar|inform)/i
@@ -1081,13 +1081,22 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   const temCalendar = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
   const temAgendamentosHubtek = funcoesAtivas.includes('agendamentos')
 
-  // 13. Primeira mensagem da conversa — boas-vindas antes de processar
+  // 13. Primeira mensagem da conversa — boas-vindas substituem a resposta do modelo
   const isPrimeiraMsg = historico.filter(m => m.origem === 'cliente').length === 1
   if (isPrimeiraMsg && config.prompt_principal) {
     const saudacao = getSaudacao()
     const nomeCliente = payload.pushName ? `, ${payload.pushName.split(' ')[0]}` : ''
     const boasVindas = `${saudacao}${nomeCliente}! 👋 Em que posso ajudar?`
     await enviarResposta(payload.instanceName, payload.phone, boasVindas)
+    await saveMessage(supabase, {
+      conversationId: conversa.id,
+      tenantId: payload.tenantId,
+      origem: 'agente',
+      tipo: 'texto',
+      conteudo: boasVindas,
+    })
+    await updateConversationTimestamp(supabase, conversa.id)
+    return
   }
 
   // 14. Monta mensagens para o modelo
