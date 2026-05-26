@@ -21,6 +21,8 @@ interface Conversa {
   contato_telefone: string
   status: string
   agente_pausado: boolean
+  atendente_id: string | null
+  atendente_nome: string | null
   instance_name: string | null
   tenant_id: string
 }
@@ -83,7 +85,7 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
       }
       const { data: conv } = await supabase
         .from('conversations')
-        .select('id, contato_nome, contato_telefone, status, agente_pausado, instance_name, tenant_id')
+        .select('id, contato_nome, contato_telefone, status, agente_pausado, atendente_id, atendente_nome, instance_name, tenant_id')
         .eq('id', params.id).single()
       if (!conv) { router.push('/conversas'); return }
       setConversa(conv)
@@ -325,6 +327,23 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     setEnviando(true)
     try {
       const authHeaders = await getAuthHeader()
+
+      // Se conversa aguarda humano e ainda não tem atendente, assume agora
+      if (conversa.agente_pausado && !conversa.atendente_id) {
+        const res = await fetch('/api/conversas/assumir-atendimento', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({ conversation_id: conversa.id }),
+        })
+        if (res.ok) {
+          const json = await res.json()
+          setConversa(prev => prev ? {
+            ...prev,
+            atendente_id: json.atendente_id,
+            atendente_nome: json.atendente_nome,
+          } : prev)
+        }
+      } 
       if (temTexto && !temArquivo) {
         const msg = texto.trim(); setTexto('')
         const res = await fetch('/api/whatsapp/enviar-mensagem', {
