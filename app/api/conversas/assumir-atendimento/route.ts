@@ -45,11 +45,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Erro ao assumir atendimento' }, { status: 500 })
     }
 
-    // Marca notificações desta conversa como lidas para este usuário
+    // Marca notificações desta conversa como lidas para TODOS do tenant
     await supabase
       .from('notifications')
       .update({ lida: true })
-      .eq('user_id', user.id)
+      .eq('tenant_id', userData.tenant_id)
       .eq('tipo', 'atendimento_humano')
       .contains('metadata', { conversation_id })
 

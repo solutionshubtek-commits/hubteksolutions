@@ -110,7 +110,7 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'notifications',
           filter: `user_id=eq.${userId}`,
