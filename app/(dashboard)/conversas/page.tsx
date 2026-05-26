@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Search, MessageCircle, Smartphone, ChevronRight } from 'lucide-react'
+import { Search, MessageCircle, Smartphone, ChevronRight, Headphones } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface Conversa {
@@ -10,6 +10,8 @@ interface Conversa {
   contato_telefone: string
   status: string
   agente_pausado: boolean
+  atendente_id: string | null
+  atendente_nome: string | null
   ultima_mensagem_em: string
   instance_name: string | null
 }
@@ -19,21 +21,32 @@ interface Instancia {
   apelido: string
 }
 
+type Filtro = 'todos' | 'ativa' | 'encerrada' | 'humano'
+
 export default function ConversasPage() {
   const router = useRouter()
   const [conversas, setConversas] = useState<Conversa[]>([])
   const [instancias, setInstancias] = useState<Record<string, string>>({})
   const [carregando, setCarregando] = useState(true)
   const [busca, setBusca] = useState('')
-  const [filtroStatus, setFiltroStatus] = useState('todos')
+  const [filtroStatus, setFiltroStatus] = useState<Filtro>('todos')
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [tenantId, setTenantId] = useState<string | null>(null)
 
   useEffect(() => {
     async function fetchConversas() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-      const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
+      setCurrentUserId(user.id)
+
+      const { data: userData } = await supabase
+        .from('users')
+        .select('tenant_id')
+        .eq('id', user.id)
+        .single()
       if (!userData?.tenant_id) return
+      setTenantId(userData.tenant_id)
 
       const { data: instData } = await supabase
         .from('tenant_instances')
@@ -46,22 +59,56 @@ export default function ConversasPage() {
         setInstancias(mapa)
       }
 
-      const { data } = await supabase.from('conversations')
-        .select('id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em, instance_name')
+      const { data } = await supabase
+        .from('conversations')
+        .select('id, contato_nome, contato_telefone, status, agente_pausado, atendente_id, atendente_nome, ultima_mensagem_em, instance_name')
         .eq('tenant_id', userData.tenant_id)
         .order('ultima_mensagem_em', { ascending: false })
 
-      setConversas(data || [])
+      setConversas((data as Conversa[]) || [])
       setCarregando(false)
     }
     fetchConversas()
   }, [])
 
+  // Realtime — atualiza lista ao vivo quando conversa muda
+  useEffect(() => {
+    if (!tenantId) return
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`conversas-list-${tenantId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'conversations', filter: `tenant_id=eq.${tenantId}` },
+        (payload) => {
+          setConversas(prev =>
+            prev.map(c => c.id === payload.new.id ? { ...c, ...(payload.new as Conversa) } : c)
+          )
+        }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [tenantId])
+
+  // Contagem de conversas aguardando humano (sem atendente)
+  const totalHumano = conversas.filter(
+    c => c.agente_pausado && (c.status === 'ativa' || c.status === 'ativo')
+  ).length
+
   const conversasFiltradas = conversas.filter((c) => {
-    const matchBusca = c.contato_nome?.toLowerCase().includes(busca.toLowerCase()) || c.contato_telefone?.includes(busca)
-    const matchStatus = filtroStatus === 'todos' || 
-  (filtroStatus === 'ativa' && (c.status === 'ativa' || c.status === 'ativo')) ||
-  (filtroStatus === 'encerrada' && (c.status === 'encerrada' || c.status === 'encerrado'))
+    const matchBusca =
+      c.contato_nome?.toLowerCase().includes(busca.toLowerCase()) ||
+      c.contato_telefone?.includes(busca)
+
+    if (filtroStatus === 'humano') {
+      return matchBusca && c.agente_pausado && (c.status === 'ativa' || c.status === 'ativo')
+    }
+
+    const matchStatus =
+      filtroStatus === 'todos' ||
+      (filtroStatus === 'ativa' && (c.status === 'ativa' || c.status === 'ativo') && !c.agente_pausado) ||
+      (filtroStatus === 'encerrada' && (c.status === 'encerrada' || c.status === 'encerrado'))
+
     return matchBusca && matchStatus
   })
 
@@ -78,6 +125,50 @@ export default function ConversasPage() {
     if (!nome) return '?'
     return nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
   }
+
+  // Determina o status visual de cada conversa
+  function renderStatus(c: Conversa) {
+    if (c.status === 'encerrada' || c.status === 'encerrado') {
+      return <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Encerrada</span>
+    }
+    if (c.agente_pausado) {
+      const temAtendente = !!c.atendente_id
+      if (temAtendente) {
+        const sou = c.atendente_id === currentUserId
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-medium" style={{ color: '#818CF8' }}>
+            <Headphones size={9} />
+            {sou ? 'Você está atendendo' : `Em atendimento: ${c.atendente_nome ?? 'Operador'}`}
+          </span>
+        )
+      }
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-medium" style={{ color: '#F59E0B' }}>
+          <Headphones size={9} />
+          Aguardando humano
+        </span>
+      )
+    }
+    return <span className="text-[10px] font-medium" style={{ color: '#10B981' }}>● Ativo</span>
+  }
+
+  // Cor do avatar por estado
+  function avatarStyle(c: Conversa): React.CSSProperties {
+    if (c.agente_pausado && !c.atendente_id && (c.status === 'ativa' || c.status === 'ativo')) {
+      return { background: 'rgba(245,158,11,0.15)', color: '#F59E0B' }
+    }
+    if (c.agente_pausado && c.atendente_id) {
+      return { background: 'rgba(129,140,248,0.15)', color: '#818CF8' }
+    }
+    return { background: 'rgba(16,185,129,0.15)', color: '#10B981' }
+  }
+
+  const abas: { key: Filtro; label: string }[] = [
+    { key: 'todos', label: 'Todas' },
+    { key: 'ativa', label: 'Ativas' },
+    { key: 'humano', label: 'Humano' },
+    { key: 'encerrada', label: 'Encerradas' },
+  ]
 
   return (
     <div className="flex h-[calc(100vh-64px)]" style={{ background: 'var(--bg-base)' }}>
@@ -97,18 +188,41 @@ export default function ConversasPage() {
               style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
             />
           </div>
+
+          {/* Abas */}
           <div className="flex gap-1">
-            {['todos', 'ativa', 'encerrada'].map(f => (
-              <button key={f} onClick={() => setFiltroStatus(f)}
-                className="flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors capitalize"
-                style={{
-                  background: filtroStatus === f ? '#10B98118' : 'transparent',
-                  color: filtroStatus === f ? '#10B981' : 'var(--text-muted)',
-                  border: filtroStatus === f ? '1px solid #10B98130' : '1px solid transparent',
-                }}>
-                {f === 'todos' ? 'Todas' : f === 'ativa' ? 'Ativas' : 'Encerradas'}
-              </button>
-            ))}
+            {abas.map(aba => {
+              const ativo = filtroStatus === aba.key
+              const mostrarBadge = aba.key === 'humano' && totalHumano > 0
+              return (
+                <button
+                  key={aba.key}
+                  onClick={() => setFiltroStatus(aba.key)}
+                  className="flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors relative"
+                  style={{
+                    background: ativo
+                      ? aba.key === 'humano' ? 'rgba(245,158,11,0.12)' : '#10B98118'
+                      : 'transparent',
+                    color: ativo
+                      ? aba.key === 'humano' ? '#F59E0B' : '#10B981'
+                      : 'var(--text-muted)',
+                    border: ativo
+                      ? aba.key === 'humano' ? '1px solid rgba(245,158,11,0.3)' : '1px solid #10B98130'
+                      : '1px solid transparent',
+                  }}
+                >
+                  {aba.label}
+                  {mostrarBadge && (
+                    <span
+                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center"
+                      style={{ background: '#F59E0B', color: '#000' }}
+                    >
+                      {totalHumano > 9 ? '9+' : totalHumano}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -129,19 +243,40 @@ export default function ConversasPage() {
           ) : conversasFiltradas.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48" style={{ color: 'var(--text-muted)' }}>
               <MessageCircle size={32} className="mb-2" />
-              <p className="text-sm">Nenhuma conversa</p>
+              <p className="text-sm">
+                {filtroStatus === 'humano' ? 'Nenhum cliente aguardando' : 'Nenhuma conversa'}
+              </p>
             </div>
           ) : (
             conversasFiltradas.map((c) => {
               const apelido = c.instance_name ? instancias[c.instance_name] : null
+              const aguardandoHumano = c.agente_pausado && !c.atendente_id && (c.status === 'ativa' || c.status === 'ativo')
               return (
-                <button key={c.id} onClick={() => router.push(`/conversas/${c.id}`)}
+                <button
+                  key={c.id}
+                  onClick={() => router.push(`/conversas/${c.id}`)}
                   className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--bg-hover)]"
-                  style={{ borderBottom: '1px solid var(--border)' }}>
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0"
-                    style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981' }}>
+                  style={{
+                    borderBottom: '1px solid var(--border)',
+                    // Destaque sutil para conversas aguardando humano
+                    background: aguardandoHumano ? 'rgba(245,158,11,0.04)' : 'transparent',
+                  }}
+                >
+                  {/* Indicador lateral para aguardando humano */}
+                  {aguardandoHumano && (
+                    <div
+                      className="absolute left-0 w-0.5 h-12 rounded-r"
+                      style={{ background: '#F59E0B' }}
+                    />
+                  )}
+
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0"
+                    style={avatarStyle(c)}
+                  >
                     {iniciais(c.contato_nome)}
                   </div>
+
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-0.5">
                       <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
@@ -157,13 +292,7 @@ export default function ConversasPage() {
                           <Smartphone size={9} />{apelido}
                         </span>
                       )}
-                      {c.agente_pausado ? (
-                        <span className="text-[10px] font-medium" style={{ color: '#F59E0B' }}>● Pausado</span>
-                      ) : (c.status === 'ativa' || c.status === 'ativo') ? (
-                        <span className="text-[10px] font-medium" style={{ color: '#10B981' }}>● Ativo</span>
-                      ) : (
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Encerrada</span>
-                      )}
+                      {renderStatus(c)}
                     </div>
                   </div>
                   <ChevronRight size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />

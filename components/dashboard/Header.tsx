@@ -17,6 +17,11 @@ interface Notification {
   mensagem: string
   lida: boolean
   criado_em: string
+  metadata?: {
+    conversation_id?: string
+    contato_nome?: string
+    motivo?: string
+  }
 }
 
 interface LimiteInfo {
@@ -95,6 +100,32 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
       document.documentElement.setAttribute('data-theme', temaSalvo)
     }
   }, [])
+
+  // Realtime — novas notificações chegam ao vivo no sininho
+  useEffect(() => {
+    if (!tenantId || !userId) return
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`notifications-realtime-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          const nova = payload.new as Notification
+          setNotifications(prev => {
+            if (prev.find(n => n.id === nova.id)) return prev
+            return [nova, ...prev]
+          })
+        }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [tenantId, userId])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -257,7 +288,6 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
           <Menu size={20} />
         </button>
 
-        {/* Spacer para empurrar itens para a direita no desktop */}
         <div className="hidden md:flex flex-1" />
 
         {/* ── Lado direito ── */}
@@ -284,7 +314,6 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
                 {agentAtivo && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75" />}
                 <span className={`relative inline-flex rounded-full h-2 w-2 ${agentAtivo ? 'bg-[#10B981]' : 'bg-red-400'}`} />
               </span>
-              {/* Label longo só em sm+ */}
               <span className="hidden sm:inline">Agente</span>
               <span className="font-bold">{agentAtivo ? 'Ativo' : 'Pausado'}</span>
               {agentAtivo ? <Pause size={11} /> : <Play size={11} />}
@@ -336,28 +365,58 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
                   {notifications.length === 0 ? (
                     <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Nenhuma notificação</div>
                   ) : (
-                    notifications.map(n => (
-                      <div key={n.id}
-                        className="px-4 py-3 flex gap-3 items-start transition-colors"
-                        style={{
-                          background: n.lida ? 'transparent' : n.tipo === 'limite_conversas' ? 'rgba(234,179,8,0.05)' : 'rgba(249,115,22,0.05)',
-                          borderBottom: '1px solid var(--border)',
-                        }}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{n.titulo}</p>
-                          <p className="text-xs mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>{n.mensagem}</p>
-                          <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                            {new Date(n.criado_em).toLocaleDateString('pt-BR')}
-                          </p>
+                    notifications.map(n => {
+                      const isHumano = n.tipo === 'atendimento_humano'
+                      const conversationId = n.metadata?.conversation_id
+                      return (
+                        <div
+                          key={n.id}
+                          className="px-4 py-3 flex gap-3 items-start transition-colors"
+                          style={{
+                            background: n.lida
+                              ? 'transparent'
+                              : isHumano
+                              ? 'rgba(245,158,11,0.06)'
+                              : n.tipo === 'limite_conversas'
+                              ? 'rgba(234,179,8,0.05)'
+                              : 'rgba(249,115,22,0.05)',
+                            borderBottom: '1px solid var(--border)',
+                          }}
+                        >
+                          {isHumano && !n.lida && (
+                            <div
+                              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                              style={{ background: '#F59E0B', marginTop: 6 }}
+                            />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{n.titulo}</p>
+                            <p className="text-xs mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>{n.mensagem}</p>
+                            {isHumano && conversationId && (
+                              <button
+                                onClick={() => {
+                                  marcarLida(n.id)
+                                  setShowDropdown(false)
+                                  router.push(`/conversas/${conversationId}`)
+                                }}
+                                className="mt-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-md"
+                                style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.3)' }}
+                              >
+                                Ir para conversa →
+                              </button>
+                            )}
+                            <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                              {new Date(n.criado_em).toLocaleDateString('pt-BR')}
+                            </p>
+                          </div>
+                          {!n.lida && (
+                            <button onClick={() => marcarLida(n.id)} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }}>
+                              <X size={12} />
+                            </button>
+                          )}
                         </div>
-                        {!n.lida && (
-                          <button onClick={() => marcarLida(n.id)} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }}>
-                            <X size={12} />
-                          </button>
-                        )}
-                      </div>
-                    ))
+                      )
+                    })
                   )}
                 </div>
               </div>
@@ -433,4 +492,4 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
       </header>
     </>
   )
-}
+} 

@@ -49,6 +49,12 @@ const PERFIL_EXTRACTION_INTERVAL = 5
 // Saudações simples — não acionam RAG
 const SAUDACOES_REGEX = /^(oi|olá|ola|opa|hey|hello|bom dia|boa tarde|boa noite|e aí|eai|e ai|tudo bem|tudo bom|salve)[!?.,:]*$/i
 
+// Frases que indicam pedido explícito de atendimento humano
+const HUMANO_REGEX = /\b(falar\s+com\s+(humano|pessoa|atendente|operador|algu[eé]m)|atendimento\s+humano|quero\s+(um\s+)?(humano|pessoa|atendente|operador)|me\s+passa\s+(para|pra)\s+(um\s+)?(humano|atendente|operador)|me\s+transfere|transfere\s+(para|pra)|falar\s+com\s+algu[eé]m|preciso\s+de\s+um\s+atendente|n[aã]o\s+quero\s+(falar\s+com\s+)?(?:rob[oô]|ia|bot|m[aá]quina))\b/i
+
+// Frases que indicam que o agente não soube responder
+const FALHA_AGENTE_REGEX = /n[aã]o (tenho|encontrei|possuo|localizei)|n[aã]o (está|esta) (dispon[ií]vel|na base)|n[aã]o (sei|consigo|posso) (responder|ajudar|inform)/i
+
 // Palavras de frustração — aumentam temperatura para resposta mais empática
 const FRUSTRACAO_REGEX = /insatisfeito|absurdo|ridículo|ridiculo|horrível|horrivel|péssimo|pessimo|lamentável|lamentavel|decepcionante|revoltante|inaceitável|inaceitavel|não funciona|nao funciona|não resolveu|nao resolveu|tô com raiva|to com raiva|que vergonha|me enganaram|fui lesado/i
 
@@ -825,6 +831,55 @@ async function enviarResposta(
 
 // ─── processIncomingMessage ───────────────────────────────────────────────────
 
+async function escalarParaHumano(
+  supabase: ReturnType<typeof createServiceClient>,
+  conversationId: string,
+  tenantId: string,
+  motivo: 'solicitacao' | 'nao_resolvido'
+): Promise<void> {
+  try {
+    await supabase
+      .from('conversations')
+      .update({ agente_pausado: true, atendente_id: null, atendente_nome: null, pausado_em: new Date().toISOString() })
+      .eq('id', conversationId)
+
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('contato_nome, contato_telefone')
+      .eq('id', conversationId)
+      .single()
+
+    const nomeContato = conv?.contato_nome || conv?.contato_telefone || 'Cliente'
+
+    const { data: usuarios } = await supabase
+      .from('users')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('ativo', true)
+      .in('role', ['admin_hubtek', 'admin_tenant', 'self_managed', 'operador'])
+
+    if (!usuarios || usuarios.length === 0) return
+
+    const mensagem = motivo === 'solicitacao'
+      ? `${nomeContato} solicitou atendimento humano.`
+      : `${nomeContato} precisa de atendimento humano — o agente não conseguiu resolver.`
+
+    await supabase.from('notifications').insert(
+      usuarios.map((u) => ({
+        user_id: u.id,
+        tenant_id: tenantId,
+        tipo: 'atendimento_humano',
+        titulo: 'Cliente aguardando atendimento',
+        mensagem,
+        metadata: { conversation_id: conversationId, contato_nome: nomeContato, motivo },
+        lida: false,
+      }))
+    )
+  } catch (err) {
+    console.error('[process-message] escalarParaHumano falhou:', err)
+  }
+}
+
 export async function processIncomingMessage(payload: ProcessMessagePayload): Promise<void> {
   const supabase = createServiceClient()
 
@@ -927,6 +982,22 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   }
 
   if (!conteudoProcessado.trim()) return
+
+    // Detecta pedido explícito de atendimento humano
+  if (HUMANO_REGEX.test(conteudoProcessado)) {
+    const msgTransferencia = 'Claro! Vou transferir você para um de nossos atendentes. Um momento, por favor. 🙋'
+    await enviarResposta(payload.instanceName, payload.phone, msgTransferencia)
+    await saveMessage(supabase, {
+      conversationId: conversa.id,
+      tenantId: payload.tenantId,
+      origem: 'agente',
+      tipo: 'texto',
+      conteudo: msgTransferencia,
+    })
+    await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
+    await updateConversationTimestamp(supabase, conversa.id)
+    return
+  }
 
   // 8. Tipagem de intenção
   const intencao = classificarIntencao(conteudoProcessado)
@@ -1054,6 +1125,19 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   const temperatura = intencao === 'reclamacao' ? Math.min(temperaturaBase + 0.2, 1.0) : temperaturaBase
   const chatConfig = { temperature: temperatura, maxTokens: config.max_tokens }
 
+    // Busca falhas consecutivas do agente
+  const { data: ultimasMsgsAgente } = await supabase
+  .from('messages')
+  .select('conteudo')
+  .eq('conversation_id', conversa.id)
+  .eq('origem', 'agente')
+  .order('criado_em', { ascending: false })
+  .limit(2)
+
+  const falhasConsecutivas = (ultimasMsgsAgente ?? []).filter(
+  (m) => m.conteudo && FALHA_AGENTE_REGEX.test(m.conteudo)
+  ).length
+
   // 15. Geração de resposta
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
   let motorUsado = config.motor_ia_principal
@@ -1114,6 +1198,23 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   }
 
   if (!resultado?.content) return
+
+    // 2ª falha consecutiva — escala para humano
+  const estaFalhando = FALHA_AGENTE_REGEX.test(resultado.content)
+  if (estaFalhando && falhasConsecutivas >= 1) {
+    const msgEscalada = 'Entendo que não consegui resolver sua dúvida. Vou encaminhar você para um atendente que poderá te ajudar melhor! 🙋'
+    await enviarResposta(payload.instanceName, payload.phone, msgEscalada)
+    await saveMessage(supabase, {
+      conversationId: conversa.id,
+      tenantId: payload.tenantId,
+      origem: 'agente',
+      tipo: 'texto',
+      conteudo: msgEscalada,
+    })
+    await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'nao_resolvido')
+    await updateConversationTimestamp(supabase, conversa.id)
+    return
+  }
 
   // 16. Salva resposta
   await saveMessage(supabase, {
