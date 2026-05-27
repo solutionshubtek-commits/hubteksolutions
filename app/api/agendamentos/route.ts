@@ -93,24 +93,29 @@ if (new Date(dataHoraComFuso) <= new Date()) {
   return NextResponse.json({ error: 'Data do agendamento deve ser no futuro' }, { status: 400 })
 }
 
-  // 1. Salva no banco
-  const { data, error } = await supabase
-    .from('appointments')
-    .insert({
-      tenant_id: userData.tenant_id,
-      instance_name,
-      contato_nome,
-      contato_telefone,
-      servico,
-      data_hora,
-      antecedencia_horas: antecedencia_horas ?? 24,
-      criado_por: user.id,
-      profissional: profissional ?? null,
-    })
-    .select()
-    .single()
+// Normaliza data_hora para ISO com fuso Brasília antes de salvar
+const dataHoraNormalizada = data_hora.includes('T') && !data_hora.includes('+') && !data_hora.includes('Z')
+? `${data_hora}:00-03:00`
+: data_hora
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+// 1. Salva no banco
+const { data, error } = await supabase
+.from('appointments')
+.insert({
+  tenant_id: userData.tenant_id,
+  instance_name,
+  contato_nome,
+  contato_telefone,
+  servico,
+  data_hora: dataHoraNormalizada,
+  antecedencia_horas: antecedencia_horas ?? 24,
+  criado_por: user.id,
+  profissional: profissional ?? null,
+})
+.select()
+.single()
+
+if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // 2. Cria evento no Google Calendar (se configurado)
   try {
