@@ -86,9 +86,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Campos obrigatórios faltando' }, { status: 400 })
   }
 
-  if (new Date(data_hora) <= new Date()) {
-    return NextResponse.json({ error: 'Data do agendamento deve ser no futuro' }, { status: 400 })
-  }
+  const dataHoraComFuso = data_hora.includes('T') && !data_hora.includes('+') && !data_hora.includes('Z')
+  ? `${data_hora}:00-03:00`
+  : data_hora
+if (new Date(dataHoraComFuso) <= new Date()) {
+  return NextResponse.json({ error: 'Data do agendamento deve ser no futuro' }, { status: 400 })
+}
 
   // 1. Salva no banco
   const { data, error } = await supabase
