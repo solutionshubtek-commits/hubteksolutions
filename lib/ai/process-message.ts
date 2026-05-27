@@ -719,8 +719,73 @@ async function executarAppointmentToolCall(
   instanceName: string
 ): Promise<string> {
   const supabase = createServiceClient()
+
+  // Busca config do Google Calendar para este tenant
+  async function getCalConfig(): Promise<GoogleCalendarConfig | null> {
+    const { data } = await supabase
+      .from('agent_config')
+      .select('google_calendar_config')
+      .eq('tenant_id', tenantId)
+      .maybeSingle()
+    const cfg = data?.google_calendar_config as GoogleCalendarConfig | null
+    if (!cfg?.client_email || !cfg?.private_key || !cfg?.calendar_id) return null
+    return cfg
+  }
+
+  // Atualiza evento no Google Calendar via PATCH direto
+  async function patchCalendarEvent(
+    calConfig: GoogleCalendarConfig,
+    eventId: string,
+    body: Record<string, unknown>
+  ): Promise<void> {
+    // Gera JWT e access token usando a mesma lógica do lib/google-calendar.ts
+    const now = Math.floor(Date.now() / 1000)
+    const header = { alg: 'RS256', typ: 'JWT' }
+    const payload = {
+      iss: calConfig.client_email,
+      scope: 'https://www.googleapis.com/auth/calendar',
+      aud: 'https://oauth2.googleapis.com/token',
+      exp: now + 3600,
+      iat: now,
+    }
+    const encode = (obj: object) =>
+      btoa(JSON.stringify(obj)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
+    const headerB64 = encode(header)
+    const payloadB64 = encode(payload)
+    const signingInput = `${headerB64}.${payloadB64}`
+    const pemKey = calConfig.private_key.replace(/\\n/g, '\n')
+    const pemBody = pemKey.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\n/g, '')
+    const binaryKey = Uint8Array.from(atob(pemBody), c => c.charCodeAt(0))
+    const cryptoKey = await crypto.subtle.importKey(
+      'pkcs8', binaryKey,
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false, ['sign']
+    )
+    const encoder = new TextEncoder()
+    const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cryptoKey, encoder.encode(signingInput))
+    const signatureB64 = btoa(Array.from(new Uint8Array(signatureBuffer)).map(b => String.fromCharCode(b)).join(''))
+      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
+    const jwt = `${signingInput}.${signatureB64}`
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }),
+    })
+    const tokenData = await tokenRes.json()
+    if (!tokenData.access_token) throw new Error(`Google Auth falhou`)
+    await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calConfig.calendar_id)}/events/${eventId}`,
+      {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${tokenData.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }
+    )
+  }
+
   try {
     if (toolName === 'criar_agendamento_hubtek') {
+      const dataHora = String(args.data_hora)
       const { data, error } = await supabase
         .from('appointments')
         .insert({
@@ -729,18 +794,42 @@ async function executarAppointmentToolCall(
           contato_nome: String(args.contato_nome),
           contato_telefone: normalizarTelefone(String(args.contato_telefone)),
           servico: String(args.servico),
-          data_hora: String(args.data_hora),
+          data_hora: dataHora,
           antecedencia_horas: Number(args.antecedencia_horas ?? 24),
           status: 'pendente',
         })
         .select('id, data_hora')
         .single()
       if (error) { console.error('[appointment tool] criar_agendamento_hubtek:', error); return 'Erro ao criar agendamento. Tente novamente.' }
+
+      // Sincroniza com Google Calendar — fire-and-forget
+      try {
+        const calConfig = await getCalConfig()
+        if (calConfig) {
+          const inicio = new Date(dataHora)
+          const fim = new Date(inicio.getTime() + 60 * 60 * 1000)
+          const evento = await createEvent(calConfig, {
+            summary: String(args.contato_nome),
+            start: dataHora,
+            end: fim.toISOString(),
+            description: [
+              args.servico ? `Serviço: ${args.servico}` : '',
+              `Telefone: ${normalizarTelefone(String(args.contato_telefone))}`,
+              `Agendado via agente IA`,
+            ].filter(Boolean).join('\n'),
+          })
+          await supabase.from('appointments').update({ google_event_id: evento.id }).eq('id', data.id)
+        }
+      } catch (calErr) {
+        console.error('[appointment tool] sync Calendar criar falhou (não crítico):', calErr)
+      }
+
       const d = new Date(data.data_hora)
       const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
       return `Agendamento criado para ${args.contato_nome} em ${dataFmt} às ${horaFmt}. ID: ${data.id}`
     }
+
     if (toolName === 'listar_agendamentos_cliente') {
       const { data, error } = await supabase
         .from('appointments')
@@ -760,16 +849,53 @@ async function executarAppointmentToolCall(
       }).join('\n')
       return `Agendamentos encontrados:\n${lista}`
     }
+
     if (toolName === 'confirmar_agendamento') {
+      const { data: appt } = await supabase
+        .from('appointments')
+        .select('google_event_id, contato_nome')
+        .eq('id', String(args.appointment_id))
+        .eq('tenant_id', tenantId)
+        .maybeSingle()
       const { error } = await supabase.from('appointments').update({ status: 'confirmado' }).eq('id', String(args.appointment_id)).eq('tenant_id', tenantId)
       if (error) { console.error('[appointment tool] confirmar_agendamento:', error); return 'Erro ao confirmar agendamento.' }
+      try {
+        const calConfig = await getCalConfig()
+        if (calConfig && appt?.google_event_id) {
+          await patchCalendarEvent(calConfig, appt.google_event_id, {
+            summary: `✓ ${appt.contato_nome}`,
+            colorId: '2',
+          })
+        }
+      } catch (calErr) {
+        console.error('[appointment tool] sync Calendar confirmar falhou (não crítico):', calErr)
+      }
       return `Agendamento ${args.appointment_id} confirmado com sucesso.`
     }
+
     if (toolName === 'cancelar_agendamento_hubtek') {
+      const { data: appt } = await supabase
+        .from('appointments')
+        .select('google_event_id, contato_nome')
+        .eq('id', String(args.appointment_id))
+        .eq('tenant_id', tenantId)
+        .maybeSingle()
       const { error } = await supabase.from('appointments').update({ status: 'cancelado' }).eq('id', String(args.appointment_id)).eq('tenant_id', tenantId)
       if (error) { console.error('[appointment tool] cancelar_agendamento_hubtek:', error); return 'Erro ao cancelar agendamento.' }
+      try {
+        const calConfig = await getCalConfig()
+        if (calConfig && appt?.google_event_id) {
+          await patchCalendarEvent(calConfig, appt.google_event_id, {
+            summary: `[CANCELADO] ${appt.contato_nome}`,
+            colorId: '11',
+          })
+        }
+      } catch (calErr) {
+        console.error('[appointment tool] sync Calendar cancelar falhou (não crítico):', calErr)
+      }
       return `Agendamento ${args.appointment_id} cancelado com sucesso.`
     }
+
     if (toolName === 'criar_recontato') {
       const { error } = await supabase.from('scheduled_tasks').insert({
         tenant_id: tenantId,
@@ -788,6 +914,7 @@ async function executarAppointmentToolCall(
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
       return `Recontato agendado para ${args.contato_nome} em ${dataFmt} às ${horaFmt}.`
     }
+
     return 'Ação não reconhecida.'
   } catch (err) {
     console.error(`[appointment tool] Erro em ${toolName}:`, err)

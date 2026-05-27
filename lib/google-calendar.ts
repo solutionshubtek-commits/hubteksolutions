@@ -23,8 +23,7 @@ export interface CalendarEvent {
 
 // ─── JWT / Auth ───────────────────────────────────────────────────────────────
 
-async function getAccessToken(config: GoogleCalendarConfig): Promise<string> {
-  const now = Math.floor(Date.now() / 1000)
+export async function getAccessToken(config: GoogleCalendarConfig): Promise<string> {  const now = Math.floor(Date.now() / 1000)
   const header = { alg: 'RS256', typ: 'JWT' }
   const payload = {
     iss: config.client_email,
