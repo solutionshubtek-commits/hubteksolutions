@@ -9,8 +9,6 @@ import {
   type GoogleCalendarConfig,
 } from '@/lib/google-calendar'
 
-const ROLES_GESTAO = ['admin_hubtek', 'admin_tenant', 'self_managed']
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function getCalendarConfig(
