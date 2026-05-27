@@ -113,12 +113,16 @@ export async function POST(request: Request) {
   try {
     const calConfig = await getCalendarConfig(supabase, userData.tenant_id)
     if (calConfig) {
-      const inicio = new Date(data_hora)
+      // data_hora vem do datetime-local sem timezone — interpreta como Brasília (UTC-3)
+      const dataHoraBrasilia = data_hora.includes('T') && !data_hora.includes('+') && !data_hora.includes('Z')
+        ? `${data_hora}:00-03:00`
+        : data_hora
+      const inicio = new Date(dataHoraBrasilia)
       const fim = new Date(inicio.getTime() + 60 * 60 * 1000) // +1h padrão
 
       const evento = await createEvent(calConfig, {
         summary: `${contato_nome}${profissional ? ` — ${profissional}` : ''}`,
-        start: inicio.toISOString(),
+        start: dataHoraBrasilia,
         end: fim.toISOString(),
         description: [
           servico ? `Serviço: ${servico}` : '',
@@ -217,10 +221,13 @@ export async function PATCH(request: Request) {
           }
         )
       } else if (novaDataHora) {
-        // Reagenda
-        const inicio = new Date(novaDataHora)
+        // Reagenda — interpreta como Brasília (UTC-3)
+        const novaDataHoraBrasilia = novaDataHora.includes('T') && !novaDataHora.includes('+') && !novaDataHora.includes('Z')
+          ? `${novaDataHora}:00-03:00`
+          : novaDataHora
+        const inicio = new Date(novaDataHoraBrasilia)
         const fim = new Date(inicio.getTime() + 60 * 60 * 1000)
-        await rescheduleEvent(calConfig, apptAtual.google_event_id, inicio.toISOString(), fim.toISOString())
+        await rescheduleEvent(calConfig, apptAtual.google_event_id, novaDataHoraBrasilia, fim.toISOString())
       }
     }
   } catch (calErr) {
