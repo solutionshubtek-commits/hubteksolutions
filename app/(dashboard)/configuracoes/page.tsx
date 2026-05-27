@@ -7,8 +7,6 @@ import {
 } from 'lucide-react'
 import { GestaoOperadores } from '@/components/dashboard/GestaoOperadores'
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
-
 interface KnowledgeFile {
   id: string; nome_arquivo: string; tipo: string; tamanho_bytes: number; criado_em: string
 }
@@ -23,8 +21,6 @@ interface HorarioFuncionamento {
 interface GoogleCalendarConfig {
   client_email: string; private_key: string; calendar_id: string
 }
-
-// ─── Constantes ───────────────────────────────────────────────────────────────
 
 const DIAS_SEMANA = [
   { num: 1, label: 'Seg' }, { num: 2, label: 'Ter' }, { num: 3, label: 'Qua' },
@@ -48,8 +44,7 @@ const HORARIO_PADRAO: HorarioFuncionamento = {
 }
 
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const ROLES_GESTAO = ['admin_hubtek', 'admin_tenant', 'self_managed']
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -69,8 +64,6 @@ function getInitials(name: string) {
   return name.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
 }
 
-// ─── Skeleton ─────────────────────────────────────────────────────────────────
-
 function Skeleton() {
   return (
     <div className="flex justify-center px-4 py-8">
@@ -86,8 +79,6 @@ function Skeleton() {
     </div>
   )
 }
-
-// ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function ConfiguracoesPage() {
   const [tenant, setTenant] = useState<TenantData | null>(null)
@@ -105,7 +96,6 @@ export default function ConfiguracoesPage() {
   const [sucesso, setSucesso] = useState(false)
   const [erro, setErro] = useState('')
 
-  // Google Calendar
   const [gcClientEmail, setGcClientEmail] = useState('')
   const [gcPrivateKey, setGcPrivateKey] = useState('')
   const [gcCalendarId, setGcCalendarId] = useState('')
@@ -116,7 +106,7 @@ export default function ConfiguracoesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
-  const isSelfManaged = role === 'self_managed'
+  const isGestao = ROLES_GESTAO.includes(role)
   const podeGerenciarOperadores = role === 'admin_tenant' || role === 'self_managed'
   const agendamentosAtivo = funcoes.includes('agendamentos')
 
@@ -152,7 +142,7 @@ export default function ConfiguracoesPage() {
           setGcPrivateKey(gc?.private_key ?? '')
           setGcCalendarId(gc?.calendar_id ?? '')
         }
-        if (userData.role === 'self_managed') {
+        if (ROLES_GESTAO.includes(userData.role)) {
           const { data: files } = await supabase
             .from('knowledge_base').select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
             .eq('tenant_id', userData.tenant_id).order('criado_em', { ascending: false })
@@ -166,8 +156,6 @@ export default function ConfiguracoesPage() {
     }
     fetchData()
   }, [])
-
-  // ─── Avatar ───────────────────────────────────────────────────────────────
 
   async function handleUploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
@@ -219,8 +207,6 @@ export default function ConfiguracoesPage() {
     }
     setUploadandoAvatar(false)
   }
-
-  // ─── Salvar ───────────────────────────────────────────────────────────────
 
   async function handleSalvar() {
     if (!tenant) return
@@ -274,8 +260,6 @@ export default function ConfiguracoesPage() {
     setTimeout(() => setSucesso(false), 3000)
   }
 
-  // ─── Upload KB ────────────────────────────────────────────────────────────
-
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
@@ -296,7 +280,6 @@ export default function ConfiguracoesPage() {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('tenant_id', tenant.id)
-    // ✅ Rota correta
     const res = await fetch('/api/knowledge/upload', { method: 'POST', body: formData })
     const data = await res.json()
     setUploadando(false); setUploadProgresso('')
@@ -319,8 +302,6 @@ export default function ConfiguracoesPage() {
     setArquivos(prev => prev.filter(a => a.id !== id))
     setExcluindo(null)
   }
-
-  // ─── Google Calendar test ─────────────────────────────────────────────────
 
   async function handleTestCalendar() {
     if (!gcClientEmail || !gcPrivateKey || !gcCalendarId) return
@@ -373,8 +354,6 @@ export default function ConfiguracoesPage() {
         {/* Dados do tenant */}
         <div className="rounded-xl p-6" style={cardStyle}>
           <h2 className="font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Dados do tenant</h2>
-
-          {/* Avatar */}
           <div className="flex items-center gap-4 mb-6 pb-6" style={{ borderBottom: '1px solid var(--border)' }}>
             <div className="relative">
               {tenant?.avatar_url ? (
@@ -417,7 +396,6 @@ export default function ConfiguracoesPage() {
               </div>
             </div>
           </div>
-
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Nome</label>
@@ -437,7 +415,7 @@ export default function ConfiguracoesPage() {
           <GestaoOperadores tenantId={tenantId} />
         )}
 
-        {isSelfManaged && (
+        {isGestao && (
           <>
             {/* Funções do agente */}
             <div className="rounded-xl p-6" style={cardStyle}>
@@ -445,8 +423,6 @@ export default function ConfiguracoesPage() {
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 Descreva como o agente deve se comportar, qual o tom, quais informações usar.
               </p>
-
-              {/* Funções */}
               <div className="mb-4">
                 <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
                   Função principal do agente
@@ -465,7 +441,6 @@ export default function ConfiguracoesPage() {
                   ))}
                 </div>
               </div>
-
               <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Prompt do agente</label>
               <textarea value={tenant?.prompt_agente || ''}
                 onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
@@ -483,7 +458,6 @@ export default function ConfiguracoesPage() {
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 O agente só responderá nos dias e horários marcados como ativos.
               </p>
-
               <div className="flex items-center gap-3 mb-4">
                 <input type="time" value={horario.inicio}
                   onChange={(e) => setHorario(prev => ({ ...prev, inicio: e.target.value }))}
@@ -495,7 +469,6 @@ export default function ConfiguracoesPage() {
                   className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ ...inputStyle, colorScheme: 'dark' }} />
               </div>
-
               <div className="flex gap-2 flex-wrap mb-4">
                 {DIAS_SEMANA.map(({ num, label }) => (
                   <button key={num} type="button" onClick={() => toggleDia(num)}
@@ -509,7 +482,6 @@ export default function ConfiguracoesPage() {
                   </button>
                 ))}
               </div>
-
               {horario.dias.length > 0 && (
                 <div className="p-3 rounded-lg text-xs mb-4" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-muted)' }}>
                   Agente ativo: <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
@@ -519,7 +491,6 @@ export default function ConfiguracoesPage() {
                   <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{horario.inicio} às {horario.fim}</span>
                 </div>
               )}
-
               <div>
                 <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Mensagem fora do horário</label>
                 <textarea value={tenant?.mensagem_fora_horario || ''}
@@ -529,8 +500,8 @@ export default function ConfiguracoesPage() {
               </div>
             </div>
 
-            {/* Google Calendar — só quando Agendamentos ativo */}
-            {agendamentosAtivo && (
+            {/* Google Calendar — visível para todos os roles de gestão */}
+            {(agendamentosAtivo || isGestao) && (
               <div className="rounded-xl p-6" style={cardStyle}>
                 <div className="flex items-center gap-2 mb-1">
                   <Calendar size={15} style={{ color: '#10B981' }} />
@@ -539,7 +510,6 @@ export default function ConfiguracoesPage() {
                 <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                   O agente usará estas credenciais para consultar, criar, reagendar e cancelar eventos automaticamente.
                 </p>
-
                 <details className="mb-4 rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
                   <summary className="px-4 py-2.5 text-xs font-semibold cursor-pointer select-none"
                     style={{ background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
@@ -548,15 +518,15 @@ export default function ConfiguracoesPage() {
                   <div className="px-4 py-3 text-xs space-y-1.5" style={{ color: 'var(--text-muted)', background: 'var(--bg-surface-2)' }}>
                     <p><strong style={{ color: 'var(--text-secondary)' }}>1.</strong> Acesse <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-[#10B981] underline inline-flex items-center gap-0.5">console.cloud.google.com <ExternalLink size={10} /></a></p>
                     <p><strong style={{ color: 'var(--text-secondary)' }}>2.</strong> Crie ou selecione um projeto → ative a <strong>Google Calendar API</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>3.</strong> Vá em <strong>IAM e administrador → Contas de serviço → Criar conta de serviço</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>4.</strong> Na conta criada, clique em <strong>Chaves → Adicionar chave → JSON</strong> — baixe o arquivo</p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>5.</strong> No arquivo JSON, copie os campos <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>client_email</code> e <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>private_key</code></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>6.</strong> No Google Calendar, vá em <strong>Configurações da agenda → Compartilhar com pessoas específicas</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>7.</strong> Adicione o <strong>client_email</strong> com permissão <strong>&quot;Fazer alterações em eventos&quot;</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>8.</strong> O <strong>Calendar ID</strong> está em <strong>Configurações da agenda → Integrar agenda</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>3.</strong> Vá em <strong>APIs e serviços → Credenciais → Criar credenciais → Conta de serviço</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>4.</strong> Preencha um nome → clique em <strong>Criar e continuar</strong> → <strong>Concluído</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>5.</strong> Clique na conta criada → aba <strong>Chaves → Adicionar chave → JSON</strong> — o arquivo baixa automaticamente</p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>6.</strong> Abra o arquivo JSON com o Bloco de Notas e copie os campos <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>client_email</code> e <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>private_key</code></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>7.</strong> No Google Calendar → passe o mouse no calendário → <strong>3 pontinhos → Configurações e compartilhamento</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>8.</strong> Em <strong>Compartilhar com pessoas específicas</strong> → adicione o <strong>client_email</strong> com permissão <strong>&quot;Fazer alterações em eventos&quot;</strong></p>
+                    <p><strong style={{ color: 'var(--text-secondary)' }}>9.</strong> O <strong>Calendar ID</strong> está em <strong>Integrar agenda</strong> — formato: email ou <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>xxx@group.calendar.google.com</code></p>
                   </div>
                 </details>
-
                 <div className="space-y-3">
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
@@ -689,7 +659,6 @@ export default function ConfiguracoesPage() {
           </>
         )}
 
-        {/* Feedback */}
         {erro && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
             <AlertCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
@@ -703,7 +672,7 @@ export default function ConfiguracoesPage() {
           </div>
         )}
 
-        {isSelfManaged && (
+        {isGestao && (
           <button onClick={handleSalvar} disabled={salvando}
             className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white font-semibold px-6 py-3 rounded-lg transition-all duration-200">
             <Save size={16} />

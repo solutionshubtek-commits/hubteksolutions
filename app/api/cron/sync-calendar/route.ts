@@ -1,11 +1,11 @@
 // app/api/cron/sync-calendar/route.ts
-// Roda a cada hora — sincroniza Google Calendar de cada tenant com a tabela appointments
+// Roda a cada hora — sincroniza Google Calendar → appointments (Service Account)
 
 import { NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-import { google } from 'googleapis'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { listEventsByDay, type GoogleCalendarConfig } from '@/lib/google-calendar'
 
-const supabase = createClient(
+const supabase = createSupabaseClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
@@ -18,93 +18,86 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Busca todos os tenants com google_calendar_config preenchido
-  const { data: tenants, error } = await supabase
-    .from('tenants')
-    .select('id, google_calendar_config, lembrete_antecedencia_horas')
+  // Busca todos os tenants com google_calendar_config em agent_config
+  const { data: configs, error } = await supabase
+    .from('agent_config')
+    .select('tenant_id, google_calendar_config')
     .not('google_calendar_config', 'is', null)
 
-  if (error || !tenants?.length) {
+  if (error || !configs?.length) {
     return NextResponse.json({ ok: true, sincronizados: 0 })
+  }
+
+  // Busca instance_name padrão por tenant
+  const { data: instances } = await supabase
+    .from('tenant_instances')
+    .select('tenant_id, instance_name')
+    .eq('status', 'conectado')
+
+  const instanceMap: Record<string, string> = {}
+  for (const inst of instances ?? []) {
+    if (!instanceMap[inst.tenant_id]) instanceMap[inst.tenant_id] = inst.instance_name
   }
 
   let sincronizados = 0
   let erros = 0
 
-  for (const tenant of tenants) {
+  for (const cfg of configs) {
     try {
-      const config = tenant.google_calendar_config as {
-        access_token: string
-        refresh_token: string
-        calendar_id: string
-        instance_name: string
-      }
+      const calConfig = cfg.google_calendar_config as GoogleCalendarConfig
+      if (!calConfig?.client_email || !calConfig?.private_key || !calConfig?.calendar_id) continue
 
-      if (!config?.refresh_token || !config?.calendar_id) continue
+      const instanceName = instanceMap[cfg.tenant_id]
+      if (!instanceName) continue
 
-      // Autentica OAuth2 do Google com credenciais do tenant
-      const oauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET,
-        process.env.GOOGLE_REDIRECT_URI
-      )
+      // Sincroniza próximos 7 dias
+      for (let d = 0; d < 7; d++) {
+        const data = new Date(Date.now() + d * 24 * 60 * 60 * 1000)
+        const dateStr = new Date(data.getTime() - 3 * 60 * 60 * 1000).toISOString().split('T')[0]
 
-      oauth2Client.setCredentials({
-        access_token: config.access_token,
-        refresh_token: config.refresh_token,
-      })
+        const eventos = await listEventsByDay(calConfig, dateStr)
 
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client })
+        for (const evento of eventos) {
+          if (!evento.id || !evento.start) continue
 
-      // Sincroniza eventos das próximas 7 dias
-      const agora = new Date()
-      const em7dias = new Date(agora.getTime() + 7 * 24 * 60 * 60 * 1000)
+          // Só sincroniza eventos que NÃO foram criados pela dashboard
+          // (os da dashboard já têm google_event_id no banco)
+          const { data: existing } = await supabase
+            .from('appointments')
+            .select('id')
+            .eq('google_event_id', evento.id)
+            .maybeSingle()
 
-      const { data: eventos } = await calendar.events.list({
-        calendarId: config.calendar_id,
-        timeMin: agora.toISOString(),
-        timeMax: em7dias.toISOString(),
-        singleEvents: true,
-        orderBy: 'startTime',
-        maxResults: 100,
-      })
+          if (existing) continue // já existe, não duplica
 
-      const items = eventos.items ?? []
+          // Extrai telefone da descrição
+          const telefone = extrairTelefone(evento.description ?? '')
+          if (!telefone) continue
 
-      for (const evento of items) {
-        if (!evento.id || !evento.start?.dateTime) continue
+          // Mapeia status pelo título
+          const isCancelado = evento.summary?.startsWith('[CANCELADO]')
+          const isConfirmado = evento.summary?.startsWith('✓')
+          const status = isCancelado ? 'cancelado' : isConfirmado ? 'confirmado' : 'pendente'
 
-        // Extrai telefone do evento (campo description ou extendedProperties)
-        const telefone = extrairTelefone(
-          evento.description ?? '',
-          evento.extendedProperties?.private ?? {}
-        )
-        if (!telefone) continue
-
-        const contato_nome = evento.summary ?? 'Cliente'
-        const servico = evento.description?.split('\n')[0] ?? evento.summary ?? 'Agendamento'
-        const data_hora = new Date(evento.start.dateTime).toISOString()
-
-        // Upsert no appointments pelo google_event_id
-        await supabase.from('appointments').upsert(
-          {
-            tenant_id: tenant.id,
-            instance_name: config.instance_name,
-            contato_nome,
+          // Insere apenas eventos externos (não criados pela dashboard)
+          await supabase.from('appointments').insert({
+            tenant_id: cfg.tenant_id,
+            instance_name: instanceName,
+            contato_nome: evento.summary?.replace(/^\[CANCELADO\]\s*|^✓\s*/, '') ?? 'Cliente',
             contato_telefone: telefone,
-            servico,
-            data_hora,
+            servico: extrairServico(evento.description ?? ''),
+            data_hora: evento.start,
             google_event_id: evento.id,
-            status: mapearStatus(evento.status ?? ''),
-          },
-          { onConflict: 'google_event_id' }
-        )
+            status,
+            lembrete_enviado: false,
+            antecedencia_horas: 24,
+          })
+        }
       }
 
       sincronizados++
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[cron:sync-calendar] Erro tenant ${tenant.id}:`, msg)
+    } catch (err) {
+      console.error(`[sync-calendar] Erro tenant ${cfg.tenant_id}:`, err)
       erros++
     }
   }
@@ -112,26 +105,16 @@ export async function GET(request: Request) {
   return NextResponse.json({ ok: true, sincronizados, erros })
 }
 
-function extrairTelefone(
-  description: string,
-  extProps: Record<string, string>
-): string | null {
-  // Tenta em extendedProperties primeiro
-  if (extProps?.telefone) return extProps.telefone
-  if (extProps?.phone) return extProps.phone
-
-  // Tenta regex no campo description
-  const match = description.match(/(\+?55?\s?\(?[1-9]{2}\)?\s?9?\d{4}[-\s]?\d{4})/)
+function extrairTelefone(description: string): string | null {
+  const match = description.match(/Telefone:\s*(\+?[\d\s\-().]{10,15})/)
   if (match) return match[1].replace(/\D/g, '')
-
+  // fallback — tenta qualquer número com DDD
+  const fallback = description.match(/(\+?55?\s?\(?[1-9]{2}\)?\s?9?\d{4}[-\s]?\d{4})/)
+  if (fallback) return fallback[1].replace(/\D/g, '')
   return null
 }
 
-function mapearStatus(googleStatus: string): string {
-  const mapa: Record<string, string> = {
-    confirmed: 'confirmado',
-    tentative: 'pendente',
-    cancelled: 'cancelado',
-  }
-  return mapa[googleStatus] ?? 'pendente'
+function extrairServico(description: string): string | null {
+  const match = description.match(/Serviço:\s*(.+)/)
+  return match ? match[1].trim() : null
 }
