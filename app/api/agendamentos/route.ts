@@ -368,5 +368,3 @@ async function getGoogleToken(config: GoogleCalendarConfig): Promise<string> {
   if (!data.access_token) throw new Error(`Google Auth falhou: ${JSON.stringify(data)}`)
   return data.access_token
 }
-
-export { ROLES_GESTAO }
