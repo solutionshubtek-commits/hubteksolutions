@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
-  Calendar, Clock, Plus, Phone, User, Scissors,
+  Calendar, Clock, Plus, Phone, User,
   CheckCircle, XCircle, AlertCircle, RefreshCw,
   ChevronLeft, ChevronRight, Send, Trash2, Bell, BellOff,
 } from 'lucide-react'
@@ -140,7 +140,6 @@ function ModalNovoAgendamento({ onClose, onSaved, instances }: {
             </select>
           </div>
 
-          {/* Grid responsivo: 2 colunas no desktop, 1 no mobile */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             <div>
               <label style={labelStyle}>Nome do cliente <span style={{ color: '#EF4444' }}>*</span></label>
@@ -163,7 +162,7 @@ function ModalNovoAgendamento({ onClose, onSaved, instances }: {
           </div>
 
           <div>
-            <label style={labelStyle}>Enviar lembrete com antecedência de</label>
+            <label style={labelStyle}>Agente de IA enviará a mensagem em</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <select value={form.antecedencia_horas} onChange={e => setForm(f => ({ ...f, antecedencia_horas: parseInt(e.target.value) }))} style={selectStyle}>
                 {[1,2,4,6,12,24,48].map(h => <option key={h} value={h}>{h === 1 ? '1 hora' : `${h} horas`}</option>)}
@@ -273,7 +272,6 @@ function ModalMeChama({ onClose, onSaved, instances }: {
   )
 }
 
-// Card mobile para Agendamento
 function AppointmentCard({ appt, onConfirmar, onCancelar }: {
   appt: Appointment
   onConfirmar: (id: string) => void
@@ -307,7 +305,7 @@ function AppointmentCard({ appt, onConfirmar, onCancelar }: {
         <div style={{ background: 'var(--bg-surface-2)', borderRadius: 8, padding: '8px 10px' }}>
           <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>Serviço</p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
-            <Scissors size={12} color="var(--text-muted)" />
+            <Calendar size={12} color="var(--text-muted)" />
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{appt.servico ?? '—'}</span>
           </div>
         </div>
@@ -333,7 +331,6 @@ function AppointmentCard({ appt, onConfirmar, onCancelar }: {
   )
 }
 
-// Card mobile para Recontato
 function TaskCard({ task, onCancelar }: {
   task: ScheduledTask
   onCancelar: (id: string) => void
@@ -450,60 +447,24 @@ export default function AgendamentosPage() {
 
   return (
     <>
-      {/* Estilos responsivos injetados globalmente */}
       <style>{`
-        .agend-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          flex-wrap: wrap;
-          gap: 16px;
-        }
-        .agend-header-actions {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-        .agend-filtros {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          flex-wrap: wrap;
-        }
-        .agend-table-wrapper {
-          display: block;
-        }
-        .agend-cards-wrapper {
-          display: none;
-        }
-        .agend-pagination {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-        }
+        .agend-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+        .agend-header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .agend-filtros { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .agend-table-wrapper { display: block; }
+        .agend-cards-wrapper { display: none; }
+        .agend-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         @media (max-width: 640px) {
-          .agend-header-actions button {
-            flex: 1;
-            justify-content: center;
-          }
-          .agend-table-wrapper {
-            display: none;
-          }
-          .agend-cards-wrapper {
-            display: block;
-          }
-          .agend-pagination {
-            flex-direction: column;
-            align-items: center;
-          }
+          .agend-header-actions button { flex: 1; justify-content: center; }
+          .agend-table-wrapper { display: none; }
+          .agend-cards-wrapper { display: block; }
+          .agend-pagination { flex-direction: column; align-items: center; }
         }
       `}</style>
 
       <div style={{ minHeight: '100vh', background: 'var(--bg-page)', padding: '16px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {/* Header */}
           <div className="agend-header">
             <div>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Agendamentos</h1>
@@ -519,7 +480,6 @@ export default function AgendamentosPage() {
             </div>
           </div>
 
-          {/* Tabs */}
           <div style={{ display: 'flex', gap: 4, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 4, width: 'fit-content' }}>
             {([{ key: 'agendamentos', label: 'Agendamentos', icon: Calendar }, { key: 'recontatos', label: 'Recontatos', icon: Phone }] as const).map(({ key, label, icon: Icon }) => (
               <button key={key} onClick={() => { setTab(key); setPage(1); setFilterStatus('') }} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 8, border: 'none', background: tab === key ? 'var(--bg-hover)' : 'transparent', color: tab === key ? 'var(--text-primary)' : 'var(--text-muted)', padding: '8px 16px', fontSize: 13, fontWeight: tab === key ? 600 : 400, cursor: 'pointer' }}>
@@ -528,7 +488,6 @@ export default function AgendamentosPage() {
             ))}
           </div>
 
-          {/* Filtros */}
           <div className="agend-filtros">
             <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }} style={selectStyle}>
               <option value="">Todos os status</option>
@@ -543,7 +502,6 @@ export default function AgendamentosPage() {
             <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{totalCount} registro{totalCount !== 1 ? 's' : ''}</span>
           </div>
 
-          {/* Tabela Agendamentos */}
           {tab === 'agendamentos' && (
             <div style={{ borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
               {loading ? (
@@ -556,7 +514,6 @@ export default function AgendamentosPage() {
                 </div>
               ) : (
                 <>
-                  {/* Desktop: tabela */}
                   <div className="agend-table-wrapper" style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
@@ -583,7 +540,7 @@ export default function AgendamentosPage() {
                               </td>
                               <td style={{ padding: '14px 20px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  <Scissors size={13} color="var(--text-muted)" />
+                                  <Calendar size={13} color="var(--text-muted)" />
                                   <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{appt.servico ?? '—'}</span>
                                 </div>
                               </td>
@@ -618,16 +575,9 @@ export default function AgendamentosPage() {
                       </tbody>
                     </table>
                   </div>
-
-                  {/* Mobile: cards */}
                   <div className="agend-cards-wrapper">
                     {appointments.map(appt => (
-                      <AppointmentCard
-                        key={appt.id}
-                        appt={appt}
-                        onConfirmar={confirmarAgendamento}
-                        onCancelar={cancelarAgendamento}
-                      />
+                      <AppointmentCard key={appt.id} appt={appt} onConfirmar={confirmarAgendamento} onCancelar={cancelarAgendamento} />
                     ))}
                   </div>
                 </>
@@ -635,7 +585,6 @@ export default function AgendamentosPage() {
             </div>
           )}
 
-          {/* Tabela Recontatos */}
           {tab === 'recontatos' && (
             <div style={{ borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
               {loading ? (
@@ -647,7 +596,6 @@ export default function AgendamentosPage() {
                 </div>
               ) : (
                 <>
-                  {/* Desktop: tabela */}
                   <div className="agend-table-wrapper" style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
@@ -698,15 +646,9 @@ export default function AgendamentosPage() {
                       </tbody>
                     </table>
                   </div>
-
-                  {/* Mobile: cards */}
                   <div className="agend-cards-wrapper">
                     {tasks.map(task => (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        onCancelar={cancelarTask}
-                      />
+                      <TaskCard key={task.id} task={task} onCancelar={cancelarTask} />
                     ))}
                   </div>
                 </>
@@ -714,7 +656,6 @@ export default function AgendamentosPage() {
             </div>
           )}
 
-          {/* Paginação */}
           {totalPages > 1 && (
             <div className="agend-pagination">
               <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Página {page} de {totalPages}</span>

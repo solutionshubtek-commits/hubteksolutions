@@ -40,22 +40,15 @@ const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
   anthropic: { entrada: 0.015, saida: 0.075 },
 }
 
-// Extração de perfil — motor leve, barato
 const MOTOR_PERFIL = 'gpt-4o-mini'
-
-// Dispara extração de perfil a cada N mensagens do cliente
 const PERFIL_EXTRACTION_INTERVAL = 5
 
-// Saudações simples — não acionam RAG
 const SAUDACOES_REGEX = /^(oi|olá|ola|opa|hey|hello|bom dia|boa tarde|boa noite|e aí|eai|e ai|tudo bem|tudo bom|salve)[!?.,:]*$/i
 
-// Frases que indicam pedido explícito de atendimento humano
 const HUMANO_REGEX = /\b(falar\s+com\s+(humano|pessoa|atendente|operador|algu[eé]m)|gostaria\s+de\s+(falar|ser\s+atendid[oa])\s+(com\s+)?(um\s+)?(humano|pessoa|atendente|operador)?|gostaria\s+de\s+um\s+atendente|poderia\s+me\s+transferir|pode\s+me\s+transferir|transferir\s+(para|pra)|atendimento\s+humano|atendente\s+humano|quero\s+(um\s+)?(humano|pessoa|atendente|operador)|me\s+passa\s+(para|pra)\s+(um\s+)?(humano|atendente|operador)|me\s+transfere|transfere\s+(para|pra)|falar\s+com\s+algu[eé]m|preciso\s+de\s+(um\s+)?atendente|n[aã]o\s+quero\s+(falar\s+com\s+)?(?:rob[oô]|ia|bot|m[aá]quina)|quero\s+ser\s+atendido|falar\s+com\s+uma\s+pessoa|ser\s+atendid[oa]\s+por\s+um\s+humano|atendimento\s+com\s+(uma?\s+)?(pessoa|humano)|prefiro\s+(falar|conversar)\s+com\s+(uma?\s+)?(pessoa|humano|atendente)|tem\s+(algum|algu[eé]m)\s+(humano|atendente|operador)|existe\s+(algum|algu[eé]m)\s+(humano|atendente)|pode\s+me\s+conectar\s+com|conectar\s+com\s+um\s+atendente|chamar\s+um\s+atendente|fala\s+com\s+algu[eé]m)\b/i
 
-// Frases que indicam que o agente não soube responder
 const FALHA_AGENTE_REGEX = /n[aã]o (tenho|encontrei|possuo|localizei)|n[aã]o (está|esta) (dispon[ií]vel|na base)|n[aã]o (sei|consigo|posso) (responder|ajudar|inform)/i
 
-// Palavras de frustração — aumentam temperatura para resposta mais empática
 const FRUSTRACAO_REGEX = /insatisfeito|absurdo|ridículo|ridiculo|horrível|horrivel|péssimo|pessimo|lamentável|lamentavel|decepcionante|revoltante|inaceitável|inaceitavel|não funciona|nao funciona|não resolveu|nao resolveu|tô com raiva|to com raiva|que vergonha|me enganaram|fui lesado/i
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,11 +58,7 @@ function calcularCusto(motor: string, tokensIn: number, tokensOut: number): numb
   return (tokensIn / 1000) * tabela.entrada + (tokensOut / 1000) * tabela.saida
 }
 
-function isWithinOperatingHours(
-  horarioInicio: string,
-  horarioFim: string,
-  diasFuncionamento: string[]
-): boolean {
+function isWithinOperatingHours(horarioInicio: string, horarioFim: string, diasFuncionamento: string[]): boolean {
   const agora = new Date()
   const agoraBrasil = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
   const diaSemana = DIAS_PT[agoraBrasil.getUTCDay()]
@@ -140,7 +129,6 @@ interface ContactProfile {
   historico_resumido: string | null
 }
 
-// Resultado da extração de perfil pelo modelo leve
 interface PerfilExtraido {
   nome: string | null
   cidade: string | null
@@ -162,11 +150,6 @@ async function buscarPerfilCliente(
   return data as ContactProfile | null
 }
 
-/**
- * Atualiza perfil fazendo MERGE com dados existentes.
- * Nunca sobrescreve campos já preenchidos com null.
- * Preferências são acumuladas (merge de objetos).
- */
 async function salvarPerfilCliente(
   supabase: ReturnType<typeof createServiceClient>,
   tenantId: string,
@@ -177,17 +160,12 @@ async function salvarPerfilCliente(
   try {
     const prefAtual = (perfilAtual?.preferencias ?? {}) as Record<string, unknown>
     const prefNovo  = (novosDados.preferencias ?? {}) as Record<string, unknown>
-
     await supabase.from('contact_profiles').upsert({
       tenant_id:          tenantId,
       contato_telefone:   telefone,
-      // Nome: usa o novo se vier preenchido, senão mantém o atual
       contato_nome:       novosDados.nome || perfilAtual?.contato_nome || null,
-      // Cidade: idem
       cidade:             novosDados.cidade || perfilAtual?.cidade || null,
-      // Preferências: merge — mantém o que já existia + adiciona o novo
       preferencias:       { ...prefAtual, ...prefNovo },
-      // Resumo: substitui sempre (representa o estado mais recente)
       historico_resumido: novosDados.resumo_conversa || perfilAtual?.historico_resumido || null,
       ultima_atualizacao: new Date().toISOString(),
     }, { onConflict: 'tenant_id,contato_telefone' })
@@ -196,29 +174,19 @@ async function salvarPerfilCliente(
   }
 }
 
-/**
- * Extrai passivamente informações do cliente a partir do histórico.
- * Usa GPT-4o mini — nunca pergunta ao cliente, só captura o que foi dito.
- * Retorna null se não encontrar nada relevante.
- */
 async function extrairPerfilDaConversa(
   mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>
 ): Promise<PerfilExtraido | null> {
   if (mensagens.length === 0) return null
-
-  // Usa apenas mensagens do cliente para extração
   const apenasCliente = mensagens
     .filter(m => m.origem === 'cliente')
     .map(m => m.transcricao || m.conteudo || '')
     .filter(Boolean)
     .join('\n')
-
   if (!apenasCliente.trim()) return null
-
   try {
     const OpenAI = (await import('openai')).default
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
-
     const response = await openai.chat.completions.create({
       model: MOTOR_PERFIL,
       temperature: 0,
@@ -237,38 +205,20 @@ Retorne um JSON válido com esta estrutura exata (sem markdown, sem explicaçõe
   },
   "resumo_conversa": "resumo em 1-2 frases do que o cliente precisava nesta conversa ou null"
 }
-
-Exemplos de preferências válidas (só capture se mencionado):
-- "servico_preferido": "corte masculino"
-- "horario_preferido": "manhã"
-- "produto_interesse": "plano mensal"
-- "forma_pagamento": "pix"
-- "reclamacao_recorrente": "demora no atendimento"
-
 Se não houver nada relevante para um campo, use null ou {} para preferencias.`,
         },
-        {
-          role: 'user',
-          content: apenasCliente,
-        },
+        { role: 'user', content: apenasCliente },
       ],
     })
-
     const raw = response.choices[0]?.message?.content?.trim() ?? ''
     if (!raw) return null
-
-    const parsed = JSON.parse(raw) as PerfilExtraido
-    return parsed
+    return JSON.parse(raw) as PerfilExtraido
   } catch (err) {
     console.error('[perfil] Falha na extração de perfil:', err)
     return null
   }
 }
 
-/**
- * Verifica se deve rodar a extração de perfil nesta mensagem.
- * Dispara a cada PERFIL_EXTRACTION_INTERVAL mensagens do cliente.
- */
 function deveExtrairPerfil(totalMensagensCliente: number): boolean {
   return totalMensagensCliente > 0 && totalMensagensCliente % PERFIL_EXTRACTION_INTERVAL === 0
 }
@@ -303,23 +253,12 @@ function buildSystemPrompt(
   prompt += `\nSTATUS ATUAL: ESTAMOS ATENDENDO AGORA. Se o cliente perguntar se estão atendendo ou se está aberto, confirme que SIM — você só recebe mensagens dentro do horário de funcionamento.`
 
   prompt += `\n\nINTENÇÃO DETECTADA: ${intencao}.`
-  if (intencao === 'reclamacao') {
-    prompt += ' O cliente demonstra frustração. Seja mais empático, reconheça o problema antes de tentar resolver.'
-  }
-  if (intencao === 'saudacao') {
-    prompt += ' É uma saudação simples. Responda com cumprimento + pergunta aberta. Não busque dados na base para isso.'
-  }
-  if (intencao === 'fora_escopo') {
-    prompt += ' A mensagem parece fora do seu escopo. Redirecione gentilmente para o que você pode ajudar.'
-  }
+  if (intencao === 'reclamacao') prompt += ' O cliente demonstra frustração. Seja mais empático, reconheça o problema antes de tentar resolver.'
+  if (intencao === 'saudacao') prompt += ' É uma saudação simples. Responda com cumprimento + pergunta aberta. Não busque dados na base para isso.'
+  if (intencao === 'fora_escopo') prompt += ' A mensagem parece fora do seu escopo. Redirecione gentilmente para o que você pode ajudar.'
 
-  if (perfilCliente) {
-    prompt += `\n\nPERFIL DO CLIENTE (informações de conversas anteriores — use para personalizar sem perguntar o que já sabe):\n${perfilCliente}`
-  }
-
-  if (historicoResumido) {
-    prompt += `\n\nRESUMO DO CONTEXTO DESTA CONVERSA:\n${historicoResumido}`
-  }
+  if (perfilCliente) prompt += `\n\nPERFIL DO CLIENTE (informações de conversas anteriores — use para personalizar sem perguntar o que já sabe):\n${perfilCliente}`
+  if (historicoResumido) prompt += `\n\nRESUMO DO CONTEXTO DESTA CONVERSA:\n${historicoResumido}`
 
   prompt += `
 
@@ -359,8 +298,9 @@ REGRAS DE COMPORTAMENTO:
   }
 
   if (temAgendamentosHubtek) {
-    prompt += `\n\nAGENDAMENTOS INTERNOS: Você pode criar, consultar, confirmar e cancelar agendamentos diretamente no sistema.`
+    prompt += `\n\nAGENDAMENTOS INTERNOS: Você pode criar, consultar, confirmar, reagendar e cancelar agendamentos diretamente no sistema.`
     prompt += '\nUse as tools de agendamento para registrar compromissos solicitados pelo cliente.'
+    prompt += '\nPara reagendar: use listar_agendamentos_cliente para obter o ID, depois use reagendar_agendamento_hubtek.'
     prompt += '\nPara recontatos: use criar_recontato quando o cliente pedir para ser chamado depois.'
     prompt += '\nSempre confirme com o cliente após criar ou alterar um agendamento.'
     prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
@@ -529,6 +469,21 @@ const APPOINTMENT_TOOLS: Tool[] = [
   {
     type: 'function',
     function: {
+      name: 'reagendar_agendamento_hubtek',
+      description: 'Reagenda um agendamento existente para nova data e horário',
+      parameters: {
+        type: 'object',
+        properties: {
+          appointment_id: { type: 'string', description: 'ID do agendamento a reagendar (obtido via listar_agendamentos_cliente)' },
+          nova_data_hora: { type: 'string', description: 'Nova data e hora ISO 8601 com offset -03:00. Ex: "2026-05-29T10:00:00-03:00"' },
+        },
+        required: ['appointment_id', 'nova_data_hora'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'cancelar_agendamento_hubtek',
       description: 'Cancela um agendamento existente no sistema Hubtek',
       parameters: {
@@ -582,16 +537,11 @@ function normalizarTelefone(tel: string, dddPadrao = '51'): string {
 async function normalizarPergunta(pergunta: string): Promise<string> {
   try {
     const resposta = await openAIChatCompletion([
-      {
-        role: 'system',
-        content: 'Corrija erros ortográficos e expanda abreviações do texto abaixo. Retorne apenas o texto corrigido, sem explicações.',
-      },
+      { role: 'system', content: 'Corrija erros ortográficos e expanda abreviações do texto abaixo. Retorne apenas o texto corrigido, sem explicações.' },
       { role: 'user', content: pergunta },
     ], { temperature: 0, maxTokens: 100 })
     return resposta.content.trim() || pergunta
-  } catch {
-    return pergunta
-  }
+  } catch { return pergunta }
 }
 
 async function expandirPergunta(pergunta: string, contextoAnterior?: string): Promise<string> {
@@ -600,17 +550,12 @@ async function expandirPergunta(pergunta: string, contextoAnterior?: string): Pr
       ? `Contexto da conversa anterior: "${contextoAnterior}"\nPergunta atual: "${pergunta}"`
       : pergunta
     const resposta = await openAIChatCompletion([
-      {
-        role: 'system',
-        content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema. Considere o contexto da conversa para enriquecer as palavras-chave quando a pergunta for curta ou ambígua. Inclua sinônimos, termos do domínio e variações relevantes. Retorne apenas as palavras separadas por espaço, sem pontuação.',
-      },
+      { role: 'system', content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema. Considere o contexto da conversa para enriquecer as palavras-chave quando a pergunta for curta ou ambígua. Inclua sinônimos, termos do domínio e variações relevantes. Retorne apenas as palavras separadas por espaço, sem pontuação.' },
       { role: 'user', content: contexto },
     ], { temperature: 0, maxTokens: 60 })
     const palavras = resposta.content.trim()
     return palavras ? `${pergunta} ${palavras}` : pergunta
-  } catch {
-    return pergunta
-  }
+  } catch { return pergunta }
 }
 
 async function gerarResumoHistorico(
@@ -623,16 +568,11 @@ async function gerarResumoHistorico(
       .map(m => `${m.origem === 'agente' ? 'Agente' : 'Cliente'}: ${m.transcricao || m.conteudo || ''}`)
       .join('\n')
     const resposta = await openAIChatCompletion([
-      {
-        role: 'system',
-        content: 'Resuma em até 5 linhas os pontos principais desta conversa de atendimento: o problema do cliente, informações fornecidas e o que já foi resolvido. Seja objetivo e em português.',
-      },
+      { role: 'system', content: 'Resuma em até 5 linhas os pontos principais desta conversa de atendimento: o problema do cliente, informações fornecidas e o que já foi resolvido. Seja objetivo e em português.' },
       { role: 'user', content: texto },
     ], { temperature: 0, maxTokens: 200 })
     return resposta.content.trim()
-  } catch {
-    return ''
-  }
+  } catch { return '' }
 }
 
 // ─── Executor de tool calls — Google Calendar ─────────────────────────────────
@@ -720,7 +660,6 @@ async function executarAppointmentToolCall(
 ): Promise<string> {
   const supabase = createServiceClient()
 
-  // Busca config do Google Calendar para este tenant
   async function getCalConfig(): Promise<GoogleCalendarConfig | null> {
     const { data } = await supabase
       .from('agent_config')
@@ -732,13 +671,11 @@ async function executarAppointmentToolCall(
     return cfg
   }
 
-  // Atualiza evento no Google Calendar via PATCH direto
   async function patchCalendarEvent(
     calConfig: GoogleCalendarConfig,
     eventId: string,
     body: Record<string, unknown>
   ): Promise<void> {
-    // Gera JWT e access token usando a mesma lógica do lib/google-calendar.ts
     const now = Math.floor(Date.now() / 1000)
     const header = { alg: 'RS256', typ: 'JWT' }
     const payload = {
@@ -802,7 +739,6 @@ async function executarAppointmentToolCall(
         .single()
       if (error) { console.error('[appointment tool] criar_agendamento_hubtek:', error); return 'Erro ao criar agendamento. Tente novamente.' }
 
-      // Sincroniza com Google Calendar — fire-and-forget
       try {
         const calConfig = await getCalConfig()
         if (calConfig) {
@@ -862,15 +798,46 @@ async function executarAppointmentToolCall(
       try {
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
-          await patchCalendarEvent(calConfig, appt.google_event_id, {
-            summary: `✓ ${appt.contato_nome}`,
-            colorId: '2',
-          })
+          await patchCalendarEvent(calConfig, appt.google_event_id, { summary: `✓ ${appt.contato_nome}`, colorId: '2' })
         }
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar confirmar falhou (não crítico):', calErr)
       }
       return `Agendamento ${args.appointment_id} confirmado com sucesso.`
+    }
+
+    if (toolName === 'reagendar_agendamento_hubtek') {
+      const novaDataHora = String(args.nova_data_hora)
+      const { data: appt } = await supabase
+        .from('appointments')
+        .select('google_event_id, contato_nome')
+        .eq('id', String(args.appointment_id))
+        .eq('tenant_id', tenantId)
+        .maybeSingle()
+      const { error } = await supabase
+        .from('appointments')
+        .update({ data_hora: novaDataHora, status: 'pendente' })
+        .eq('id', String(args.appointment_id))
+        .eq('tenant_id', tenantId)
+      if (error) { console.error('[appointment tool] reagendar_agendamento_hubtek:', error); return 'Erro ao reagendar agendamento.' }
+      try {
+        const calConfig = await getCalConfig()
+        if (calConfig && appt?.google_event_id) {
+          const inicio = new Date(novaDataHora)
+          const fim = new Date(inicio.getTime() + 60 * 60 * 1000)
+          await patchCalendarEvent(calConfig, appt.google_event_id, {
+            start: { dateTime: novaDataHora, timeZone: 'America/Sao_Paulo' },
+            end: { dateTime: fim.toISOString(), timeZone: 'America/Sao_Paulo' },
+            summary: appt.contato_nome,
+          })
+        }
+      } catch (calErr) {
+        console.error('[appointment tool] sync Calendar reagendar falhou (não crítico):', calErr)
+      }
+      const d = new Date(novaDataHora)
+      const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
+      const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
+      return `Agendamento reagendado com sucesso para ${dataFmt} às ${horaFmt}.`
     }
 
     if (toolName === 'cancelar_agendamento_hubtek') {
@@ -885,10 +852,7 @@ async function executarAppointmentToolCall(
       try {
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
-          await patchCalendarEvent(calConfig, appt.google_event_id, {
-            summary: `[CANCELADO] ${appt.contato_nome}`,
-            colorId: '11',
-          })
+          await patchCalendarEvent(calConfig, appt.google_event_id, { summary: `[CANCELADO] ${appt.contato_nome}`, colorId: '11' })
         }
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar cancelar falhou (não crítico):', calErr)
@@ -938,11 +902,7 @@ export interface ProcessMessagePayload {
 
 // ─── Envio com presença + múltiplos blocos ────────────────────────────────────
 
-async function enviarResposta(
-  instanceName: string,
-  phone: string,
-  texto: string
-): Promise<void> {
+async function enviarResposta(instanceName: string, phone: string, texto: string): Promise<void> {
   const blocos = quebrarEmBlocos(texto)
   for (let i = 0; i < blocos.length; i++) {
     const bloco = blocos[i]
@@ -950,13 +910,11 @@ async function enviarResposta(
     await sendPresence(instanceName, phone, delay)
     await new Promise(resolve => setTimeout(resolve, delay))
     await sendTextMessage(instanceName, phone, bloco)
-    if (i < blocos.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
+    if (i < blocos.length - 1) await new Promise(resolve => setTimeout(resolve, 500))
   }
 }
 
-// ─── processIncomingMessage ───────────────────────────────────────────────────
+// ─── Escalar para humano ──────────────────────────────────────────────────────
 
 async function escalarParaHumano(
   supabase: ReturnType<typeof createServiceClient>,
@@ -1007,15 +965,15 @@ async function escalarParaHumano(
   }
 }
 
+// ─── processIncomingMessage ───────────────────────────────────────────────────
+
 export async function processIncomingMessage(payload: ProcessMessagePayload): Promise<void> {
   const supabase = createServiceClient()
 
-  // 1. Conversa
   const conversa = await reativarOuCriarConversa(
     supabase, payload.tenantId, payload.phone, payload.pushName, payload.instanceName
   )
 
-  // 2. Persiste mensagem do cliente
   let tipoDb = 'texto'
   if (payload.messageType === 'audioMessage') tipoDb = 'audio'
   else if (payload.messageType === 'imageMessage') tipoDb = 'imagem'
@@ -1033,28 +991,21 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   await updateConversationTimestamp(supabase, conversa.id)
 
-  // 3. Agente global ativo?
   const tenantAtivoGlobal = await isTenantAgentActive(supabase, payload.tenantId)
   if (!tenantAtivoGlobal) return
 
-  // 4. Agente pausado por conversa?
   const pausado = await isAgentPaused(supabase, conversa.id)
   if (pausado) return
 
-  // 5. Config do agente
   const config = await getAgentConfig(supabase, payload.tenantId)
   if (!config || !config.ativo) return
 
-  // 6. Fora do horário
-  const dentroDoHorario = isWithinOperatingHours(
-    config.horario_inicio, config.horario_fim, config.dias_funcionamento
-  )
+  const dentroDoHorario = isWithinOperatingHours(config.horario_inicio, config.horario_fim, config.dias_funcionamento)
   if (!dentroDoHorario) {
     await sendTextMessage(payload.instanceName, payload.phone, config.mensagem_ausencia)
     return
   }
 
-  // 7. Processa mídia
   let conteudoProcessado = payload.conteudo ?? ''
 
   if (payload.messageType === 'audioMessage') {
@@ -1067,9 +1018,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         const ext = mimetype.includes('ogg') ? 'ogg' : mimetype.includes('mp4') ? 'mp4' : 'webm'
         const path = `${payload.tenantId}/${Date.now()}_audio.${ext}`
         const buffer = Buffer.from(base64, 'base64')
-        const { error: uploadErr } = await supabase.storage
-          .from('mensagens-midia')
-          .upload(path, buffer, { contentType: mimetype })
+        const { error: uploadErr } = await supabase.storage.from('mensagens-midia').upload(path, buffer, { contentType: mimetype })
         if (!uploadErr) {
           const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
           await supabase.from('messages').update({ arquivo_url: urlData.publicUrl }).eq('id', mensagemSalva.id)
@@ -1092,9 +1041,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         const ext = mimetype.includes('png') ? 'png' : mimetype.includes('webp') ? 'webp' : 'jpg'
         const path = `${payload.tenantId}/${Date.now()}_img.${ext}`
         const buffer = Buffer.from(base64, 'base64')
-        const { error: uploadErr } = await supabase.storage
-          .from('mensagens-midia')
-          .upload(path, buffer, { contentType: mimetype })
+        const { error: uploadErr } = await supabase.storage.from('mensagens-midia').upload(path, buffer, { contentType: mimetype })
         if (!uploadErr) {
           const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
           await supabase.from('messages').update({ arquivo_url: urlData.publicUrl }).eq('id', mensagemSalva.id)
@@ -1110,26 +1057,17 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!conteudoProcessado.trim()) return
 
-    // Detecta pedido explícito de atendimento humano
   if (HUMANO_REGEX.test(conteudoProcessado)) {
     const msgTransferencia = 'Claro! Vou transferir você para um de nossos atendentes. Um momento, por favor. 🙋'
     await enviarResposta(payload.instanceName, payload.phone, msgTransferencia)
-    await saveMessage(supabase, {
-      conversationId: conversa.id,
-      tenantId: payload.tenantId,
-      origem: 'agente',
-      tipo: 'texto',
-      conteudo: msgTransferencia,
-    })
+    await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgTransferencia })
     await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
     await updateConversationTimestamp(supabase, conversa.id)
     return
   }
 
-  // 8. Tipagem de intenção
   const intencao = classificarIntencao(conteudoProcessado)
 
-  // 9. Perfil acumulado do cliente
   const perfil = await buscarPerfilCliente(supabase, payload.tenantId, payload.phone)
   const perfilTexto = perfil
     ? [
@@ -1142,28 +1080,21 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       ].filter(Boolean).join('\n')
     : ''
 
-  // Atualiza nome pelo pushName — sempre que disponível (fire-and-forget)
   if (payload.pushName) {
-    salvarPerfilCliente(supabase, payload.tenantId, payload.phone, perfil, {
-      nome: payload.pushName,
-    }).catch(() => {})
+    salvarPerfilCliente(supabase, payload.tenantId, payload.phone, perfil, { nome: payload.pushName }).catch(() => {})
   }
 
-  // 10. Histórico + resumo para conversas longas
   const historico = await getRecentMessages(supabase, conversa.id, 20)
   const historicoResumido = await gerarResumoHistorico(historico)
   const historicoRecente = historico.slice(-10)
 
-  // ── Extração de perfil a cada 5 mensagens do cliente — fire-and-forget ──
   const totalMensagensCliente = historico.filter(m => m.origem === 'cliente').length
   if (deveExtrairPerfil(totalMensagensCliente)) {
     extrairPerfilDaConversa(historico)
       .then(async (extraido) => {
         if (!extraido) return
-        // Só persiste se extraiu algo relevante
         const temDados = extraido.nome || extraido.cidade ||
-          Object.keys(extraido.preferencias ?? {}).length > 0 ||
-          extraido.resumo_conversa
+          Object.keys(extraido.preferencias ?? {}).length > 0 || extraido.resumo_conversa
         if (!temDados) return
         await salvarPerfilCliente(supabase, payload.tenantId, payload.phone, perfil, {
           nome: extraido.nome ?? undefined,
@@ -1176,7 +1107,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       .catch((err) => console.error('[perfil] Extração falhou (não crítico):', err))
   }
 
-  // 11. Busca semântica — skip para saudações simples
   let knowledgeDocs: Array<{ conteudo_texto: string; similarity: number; criado_em: string }> = []
 
   if (intencao !== 'saudacao') {
@@ -1201,32 +1131,23 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     }
   }
 
-  // 12. Config extra
   const configExtra = config as unknown as Record<string, unknown>
   const calendarConfig = configExtra.google_calendar_config as GoogleCalendarConfig | null
   const funcoesAtivas = (configExtra.funcoes_ativas as string[]) ?? []
   const temCalendar = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
   const temAgendamentosHubtek = funcoesAtivas.includes('agendamentos')
 
-  // 13. Primeira mensagem da conversa — boas-vindas substituem a resposta do modelo
   const isPrimeiraMsg = historico.filter(m => m.origem === 'cliente').length === 1
   if (isPrimeiraMsg && config.prompt_principal) {
     const saudacao = getSaudacao()
     const nomeCliente = payload.pushName ? `, ${payload.pushName.split(' ')[0]}` : ''
     const boasVindas = `${saudacao}${nomeCliente}! 👋 Em que posso ajudar?`
     await enviarResposta(payload.instanceName, payload.phone, boasVindas)
-    await saveMessage(supabase, {
-      conversationId: conversa.id,
-      tenantId: payload.tenantId,
-      origem: 'agente',
-      tipo: 'texto',
-      conteudo: boasVindas,
-    })
+    await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: boasVindas })
     await updateConversationTimestamp(supabase, conversa.id)
     return
   }
 
-  // 14. Monta mensagens para o modelo
   const chatMessages: ChatMessage[] = [
     {
       role: 'system',
@@ -1253,8 +1174,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   const toolsAtivas: Tool[] = []
   if (temAgendamentosHubtek) {
-    // APPOINTMENT_TOOLS já sincroniza com Google Calendar internamente
-    // não adiciona CALENDAR_TOOLS para evitar duplicação
+    // APPOINTMENT_TOOLS já sincroniza com Google Calendar — não usar CALENDAR_TOOLS junto
     toolsAtivas.push(...APPOINTMENT_TOOLS)
   } else if (temCalendar) {
     toolsAtivas.push(...CALENDAR_TOOLS)
@@ -1266,20 +1186,18 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   const temperatura = intencao === 'reclamacao' ? Math.min(temperaturaBase + 0.2, 1.0) : temperaturaBase
   const chatConfig = { temperature: temperatura, maxTokens: config.max_tokens }
 
-    // Busca falhas consecutivas do agente
   const { data: ultimasMsgsAgente } = await supabase
-  .from('messages')
-  .select('conteudo')
-  .eq('conversation_id', conversa.id)
-  .eq('origem', 'agente')
-  .order('criado_em', { ascending: false })
-  .limit(2)
+    .from('messages')
+    .select('conteudo')
+    .eq('conversation_id', conversa.id)
+    .eq('origem', 'agente')
+    .order('criado_em', { ascending: false })
+    .limit(2)
 
   const falhasConsecutivas = (ultimasMsgsAgente ?? []).filter(
-  (m) => m.conteudo && FALHA_AGENTE_REGEX.test(m.conteudo)
+    (m) => m.conteudo && FALHA_AGENTE_REGEX.test(m.conteudo)
   ).length
 
-  // 15. Geração de resposta
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
   let motorUsado = config.motor_ia_principal
   let recontotoCriadoPorTool = false
@@ -1340,24 +1258,16 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!resultado?.content) return
 
-    // 2ª falha consecutiva — escala para humano
   const estaFalhando = FALHA_AGENTE_REGEX.test(resultado.content)
   if (estaFalhando && falhasConsecutivas >= 1) {
     const msgEscalada = 'Entendo que não consegui resolver sua dúvida. Vou encaminhar você para um atendente que poderá te ajudar melhor! 🙋'
     await enviarResposta(payload.instanceName, payload.phone, msgEscalada)
-    await saveMessage(supabase, {
-      conversationId: conversa.id,
-      tenantId: payload.tenantId,
-      origem: 'agente',
-      tipo: 'texto',
-      conteudo: msgEscalada,
-    })
+    await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgEscalada })
     await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'nao_resolvido')
     await updateConversationTimestamp(supabase, conversa.id)
     return
   }
 
-  // 16. Salva resposta
   await saveMessage(supabase, {
     conversationId: conversa.id,
     tenantId: payload.tenantId,
@@ -1367,11 +1277,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     metadata: { motor: motorUsado },
   })
 
-  // 17. Envia com presença + quebra em blocos naturais
   await enviarResposta(payload.instanceName, payload.phone, resultado.content)
   await updateConversationTimestamp(supabase, conversa.id)
 
-  // 18. Registra uso de IA
   await logAiUsage(supabase, {
     tenantId: payload.tenantId,
     conversationId: conversa.id,
@@ -1381,7 +1289,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     custoReais: calcularCusto(motorUsado, resultado.tokensIn, resultado.tokensOut),
   })
 
-  // 19. Detecta "me chama depois" — fire-and-forget
   if (!recontotoCriadoPorTool) {
     detectarMeChama({
       mensagemCliente: conteudoProcessado,
