@@ -1252,8 +1252,13 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   ]
 
   const toolsAtivas: Tool[] = []
-  if (temCalendar) toolsAtivas.push(...CALENDAR_TOOLS)
-  if (temAgendamentosHubtek) toolsAtivas.push(...APPOINTMENT_TOOLS)
+  if (temAgendamentosHubtek) {
+    // APPOINTMENT_TOOLS já sincroniza com Google Calendar internamente
+    // não adiciona CALENDAR_TOOLS para evitar duplicação
+    toolsAtivas.push(...APPOINTMENT_TOOLS)
+  } else if (temCalendar) {
+    toolsAtivas.push(...CALENDAR_TOOLS)
+  }
 
   const usarTools = toolsAtivas.length > 0 && config.motor_ia_principal === 'openai'
 
