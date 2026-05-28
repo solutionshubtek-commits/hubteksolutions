@@ -81,7 +81,7 @@ export async function acumularMensagem(
 
     // Tenta adquirir lock de disparo — só quem conseguir dispara o process-webhook
     // ex: 30s — tempo suficiente para o processamento completo
-    const lockDisparo = await client.set(chaveDisparo, '1', { ex: 30, nx: true })
+    const lockDisparo = await client.set(chaveDisparo, '1', { ex: 120, nx: true })
     const isFirst = !!lockDisparo
 
     return { timestamp: mensagem.timestamp, isFirst }
@@ -113,7 +113,7 @@ export async function aguardarEObterMensagens(
 
   try {
     // Tenta adquirir lock exclusivo
-    const lockObtido = await client.set(chave_lock, '1', { ex: 10, nx: true })
+    const lockObtido = await client.set(chave_lock, '1', { ex: 120, nx: true })
     if (!lockObtido) return null
 
     // Lê e remove a fila
