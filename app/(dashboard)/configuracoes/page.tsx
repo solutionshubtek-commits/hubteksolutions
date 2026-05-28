@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { GestaoOperadores } from '@/components/dashboard/GestaoOperadores'
 import { GoogleCalendarGuide } from '@/components/dashboard/GoogleCalendarGuide'
+import { GestaoProfissionais } from '@/components/dashboard/GestaoProfissionais'
 
 interface KnowledgeFile {
   id: string; nome_arquivo: string; tipo: string; tamanho_bytes: number; criado_em: string
@@ -501,6 +502,7 @@ export default function ConfiguracoesPage() {
               </div>
             </div>
 
+            {isGestao && <GestaoProfissionais />}
             {/* Google Calendar */}
             {(agendamentosAtivo || isGestao) && (
               <div className="rounded-xl p-6" style={cardStyle}>

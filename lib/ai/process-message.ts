@@ -106,6 +106,99 @@ function quebrarEmBlocos(texto: string): string[] {
   return blocos.slice(0, 3)
 }
 
+// ─── Feriados nacionais Brasil ────────────────────────────────────────────────
+
+function getFeriadosDoAno(year: number): Map<string, string> {
+  const feriados = new Map<string, string>()
+
+  const fixos: [number, number, string][] = [
+    [1, 1, 'Ano Novo'],
+    [4, 21, 'Tiradentes'],
+    [5, 1, 'Dia do Trabalho'],
+    [9, 7, 'Independência do Brasil'],
+    [10, 12, 'Nossa Senhora Aparecida'],
+    [11, 2, 'Finados'],
+    [11, 15, 'Proclamação da República'],
+    [11, 20, 'Consciência Negra'],
+    [12, 25, 'Natal'],
+  ]
+  fixos.forEach(([m, d, label]) => {
+    feriados.set(`${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`, label)
+  })
+
+  // Páscoa (algoritmo de Butcher)
+  const a = year % 19
+  const b = Math.floor(year / 100)
+  const c = year % 100
+  const d2 = Math.floor(b / 4)
+  const e = b % 4
+  const f = Math.floor((b + 8) / 25)
+  const g = Math.floor((b - f + 1) / 3)
+  const h = (19 * a + b - d2 - g + 15) % 30
+  const i = Math.floor(c / 4)
+  const k = c % 4
+  const l = (32 + 2 * e + 2 * i - h - k) % 7
+  const m2 = Math.floor((a + 11 * h + 22 * l) / 451)
+  const pMonth = Math.floor((h + l - 7 * m2 + 114) / 31)
+  const pDay = ((h + l - 7 * m2 + 114) % 31) + 1
+  const pascoa = new Date(year, pMonth - 1, pDay)
+
+  const addDias = (base: Date, dias: number, label: string) => {
+    const dt = new Date(base.getTime() + dias * 86400000)
+    feriados.set(
+      `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`,
+      label
+    )
+  }
+  addDias(pascoa, -48, 'Carnaval (segunda-feira)')
+  addDias(pascoa, -47, 'Carnaval (terça-feira)')
+  addDias(pascoa, -2, 'Sexta-feira Santa')
+  addDias(pascoa, 0, 'Páscoa')
+  addDias(pascoa, 60, 'Corpus Christi')
+
+  return feriados
+}
+
+function getFeriadosProximos(): string {
+  const agora = new Date()
+  const agoraBR = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
+  const hoje = agoraBR.toISOString().slice(0, 10)
+  const em60Dias = new Date(agoraBR.getTime() + 60 * 86400000).toISOString().slice(0, 10)
+
+  const ano = agoraBR.getFullYear()
+  const todos = new Map([...Array.from(getFeriadosDoAno(ano).entries()), ...Array.from(getFeriadosDoAno(ano + 1).entries())])
+
+  const proximos: string[] = []
+  Array.from(todos.entries()).forEach(([key, label]) => {
+    if (key >= hoje && key <= em60Dias) {
+      const d = new Date(key + 'T12:00:00-03:00')
+      const fmt = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Sao_Paulo' })
+      proximos.push(`• ${fmt} — ${label}`)
+    }
+  })
+
+  return proximos.sort().join('\n')
+}
+
+// ─── Profissionais do tenant ──────────────────────────────────────────────────
+
+async function getProfissionaisDoTenant(
+  supabase: ReturnType<typeof createServiceClient>,
+  tenantId: string
+): Promise<Array<{ nome: string; especialidade: string | null }>> {
+  try {
+    const { data } = await supabase
+      .from('profissionais')
+      .select('nome, especialidade')
+      .eq('tenant_id', tenantId)
+      .eq('ativo', true)
+      .order('nome', { ascending: true })
+    return data ?? []
+  } catch {
+    return []
+  }
+}
+
 // ─── Tipagem de intenção ──────────────────────────────────────────────────────
 
 type Intencao = 'saudacao' | 'agendamento' | 'reclamacao' | 'duvida' | 'fora_escopo'
@@ -237,7 +330,9 @@ function buildSystemPrompt(
   telefoneCliente: string,
   intencao: Intencao,
   perfilCliente: string,
-  historicoResumido: string
+  historicoResumido: string,
+  profissionais: Array<{ nome: string; especialidade: string | null }>,
+  feriadosProximos: string,
 ): string {
   let prompt = promptPrincipal || 'Você é um assistente de atendimento ao cliente prestativo e cordial.'
 
@@ -311,6 +406,16 @@ REGRAS DE COMPORTAMENTO:
     prompt += `\n2. Número com DDD (10 ou 11 dígitos) → normalize e use`
     prompt += `\n3. Número SEM DDD (8 ou 9 dígitos) → pergunte: "Qual o DDD? Aqui costumamos usar 51."`
     prompt += `\n4. NUNCA salve número sem DDD completo`
+
+    if (profissionais.length > 0) {
+      prompt += `\n\nPROFISSIONAIS DA EQUIPE (use para sugerir e registrar no campo profissional do agendamento):\n`
+      prompt += profissionais.map(p => `• ${p.nome}${p.especialidade ? ` — ${p.especialidade}` : ''}`).join('\n')
+      prompt += `\nQuando o cliente não especificar profissional, liste as opções ou pergunte se tem preferência. Registre sempre o nome exato no campo profissional ao criar o agendamento.`
+    }
+  }
+
+  if (feriadosProximos) {
+    prompt += `\n\nFERIADOS NACIONAIS PRÓXIMOS (próximos 60 dias — informe o cliente quando tentar agendar nesta data):\n${feriadosProximos}`
   }
 
   const agora = new Date()
@@ -435,6 +540,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
           servico: { type: 'string', description: 'Serviço ou motivo do agendamento' },
           data_hora: { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00. Ex: "2026-05-20T10:00:00-03:00"' },
           antecedencia_horas: { type: 'number', description: 'Horas de antecedência para o lembrete. Padrão: 24' },
+          profissional: { type: 'string', description: 'Nome do profissional responsável (opcional — use exatamente o nome da lista de profissionais)' },
         },
         required: ['contato_nome', 'contato_telefone', 'servico', 'data_hora'],
       },
@@ -673,7 +779,6 @@ async function executarAppointmentToolCall(
     return cfg
   }
 
-  // Usa getAccessToken importado de lib/google-calendar para PATCH direto na API do Google
   async function patchCalendarEvent(
     calConfig: GoogleCalendarConfig,
     eventId: string,
@@ -697,6 +802,7 @@ async function executarAppointmentToolCall(
   try {
     if (toolName === 'criar_agendamento_hubtek') {
       const dataHora = String(args.data_hora)
+      const profissional = args.profissional ? String(args.profissional) : null
       const { data, error } = await supabase
         .from('appointments')
         .insert({
@@ -708,6 +814,7 @@ async function executarAppointmentToolCall(
           data_hora: dataHora,
           antecedencia_horas: Number(args.antecedencia_horas ?? 24),
           status: 'pendente',
+          profissional,
         })
         .select('id, data_hora')
         .single()
@@ -718,14 +825,14 @@ async function executarAppointmentToolCall(
         if (calConfig) {
           const inicio = new Date(dataHora)
           const fim = new Date(inicio.getTime() + 60 * 60 * 1000)
-          // fim com offset Brasília para consistência
           const fimISO = fim.toISOString().replace('Z', '-03:00').replace(/\.\d{3}/, '')
           const evento = await createEvent(calConfig, {
-            summary: String(args.contato_nome),
+            summary: `${String(args.contato_nome)}${profissional ? ` — ${profissional}` : ''}`,
             start: dataHora,
             end: fimISO,
             description: [
               args.servico ? `Serviço: ${args.servico}` : '',
+              profissional ? `Profissional: ${profissional}` : '',
               `Telefone: ${normalizarTelefone(String(args.contato_telefone))}`,
               `Agendado via agente IA`,
             ].filter(Boolean).join('\n'),
@@ -739,13 +846,13 @@ async function executarAppointmentToolCall(
       const d = new Date(data.data_hora)
       const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
-      return `Agendamento criado para ${args.contato_nome} em ${dataFmt} às ${horaFmt}. ID: ${data.id}`
+      return `Agendamento criado para ${args.contato_nome} em ${dataFmt} às ${horaFmt}${profissional ? ` com ${profissional}` : ''}.`
     }
 
     if (toolName === 'listar_agendamentos_cliente') {
       const { data, error } = await supabase
         .from('appointments')
-        .select('id, servico, data_hora, status')
+        .select('id, servico, data_hora, status, profissional')
         .eq('tenant_id', tenantId)
         .eq('contato_telefone', normalizarTelefone(String(args.contato_telefone)))
         .not('status', 'eq', 'cancelado')
@@ -757,7 +864,8 @@ async function executarAppointmentToolCall(
         const d = new Date(a.data_hora)
         const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
         const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
-        return `[ID:${a.id}] ${dataFmt} às ${horaFmt} — ${a.servico} (${a.status})`
+        const profStr = a.profissional ? ` — ${a.profissional}` : ''
+        return `[ID:${a.id}] ${dataFmt} às ${horaFmt} — ${a.servico}${profStr} (${a.status})`
       }).join('\n')
       return `Agendamentos encontrados:\n${lista}`
     }
@@ -765,7 +873,7 @@ async function executarAppointmentToolCall(
     if (toolName === 'confirmar_agendamento') {
       const { data: appt } = await supabase
         .from('appointments')
-        .select('google_event_id, contato_nome')
+        .select('google_event_id, contato_nome, profissional')
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
         .maybeSingle()
@@ -779,14 +887,14 @@ async function executarAppointmentToolCall(
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
           await patchCalendarEvent(calConfig, appt.google_event_id, {
-            summary: `✓ ${appt.contato_nome}`,
+            summary: `✓ ${appt.contato_nome}${appt.profissional ? ` — ${appt.profissional}` : ''}`,
             colorId: '2',
           })
         }
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar confirmar falhou (não crítico):', calErr)
       }
-      return `Agendamento ${args.appointment_id} confirmado com sucesso.`
+      return `Agendamento confirmado com sucesso.`
     }
 
     if (toolName === 'reagendar_agendamento_hubtek') {
@@ -794,7 +902,7 @@ async function executarAppointmentToolCall(
 
       const { data: appt } = await supabase
         .from('appointments')
-        .select('google_event_id, contato_nome')
+        .select('google_event_id, contato_nome, profissional')
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
         .maybeSingle()
@@ -811,7 +919,6 @@ async function executarAppointmentToolCall(
         if (calConfig && appt?.google_event_id) {
           const inicio = new Date(novaDataHora)
           const fim = new Date(inicio.getTime() + 60 * 60 * 1000)
-          // Usa rescheduleEvent do lib/google-calendar — formato correto com timeZone
           await rescheduleEvent(calConfig, appt.google_event_id, novaDataHora, fim.toISOString())
         }
       } catch (calErr) {
@@ -827,7 +934,7 @@ async function executarAppointmentToolCall(
     if (toolName === 'cancelar_agendamento_hubtek') {
       const { data: appt } = await supabase
         .from('appointments')
-        .select('google_event_id, contato_nome')
+        .select('google_event_id, contato_nome, profissional')
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
         .maybeSingle()
@@ -841,14 +948,14 @@ async function executarAppointmentToolCall(
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
           await patchCalendarEvent(calConfig, appt.google_event_id, {
-            summary: `[CANCELADO] ${appt.contato_nome}`,
+            summary: `[CANCELADO] ${appt.contato_nome}${appt.profissional ? ` — ${appt.profissional}` : ''}`,
             colorId: '11',
           })
         }
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar cancelar falhou (não crítico):', calErr)
       }
-      return `Agendamento ${args.appointment_id} cancelado com sucesso.`
+      return `Agendamento cancelado com sucesso.`
     }
 
     if (toolName === 'criar_recontato') {
@@ -1128,6 +1235,12 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   const temCalendar = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
   const temAgendamentosHubtek = funcoesAtivas.includes('agendamentos')
 
+  // Busca profissionais e feriados apenas quando agendamentos está ativo
+  const profissionaisDoTenant = temAgendamentosHubtek
+    ? await getProfissionaisDoTenant(supabase, payload.tenantId)
+    : []
+  const feriadosProximosStr = getFeriadosProximos()
+
   const isPrimeiraMsg = historico.filter(m => m.origem === 'cliente').length === 1
   if (isPrimeiraMsg && config.prompt_principal) {
     const saudacao = getSaudacao()
@@ -1153,7 +1266,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         payload.phone,
         intencao,
         perfilTexto,
-        historicoResumido
+        historicoResumido,
+        profissionaisDoTenant,
+        feriadosProximosStr,
       ),
     },
     ...historicoRecente.slice(0, -1).map(m => ({
@@ -1197,7 +1312,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       let mensagensAcumuladas: ChatMessage[] = [...chatMessages]
       const MAX_RODADAS = 5
       let rodada = 0
-    
+
       while (rodada < MAX_RODADAS) {
         rodada++
         const respostaComTools = await openAIChatCompletionWithTools(
@@ -1205,9 +1320,8 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
           toolsAtivas as Parameters<typeof openAIChatCompletionWithTools>[1],
           chatConfig
         )
-    
+
         if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
-          // Executa todas as tools desta rodada
           const toolResults: ChatMessage[] = []
           const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
           for (const tc of toolCallsTyped) {
@@ -1223,16 +1337,13 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
               tool_call_id: tc.id,
             } as ChatMessage)
           }
-    
-          // Acumula histórico para próxima rodada
+
           mensagensAcumuladas = [
             ...mensagensAcumuladas,
             { role: 'assistant', content: '', tool_calls: respostaComTools.toolCalls } as unknown as ChatMessage,
             ...toolResults,
           ]
-          // Continua o loop — modelo vai decidir se precisa de mais tools ou responde
         } else {
-          // Modelo respondeu sem tool call — é a resposta final
           resultado = {
             content: respostaComTools.content,
             tokensIn: respostaComTools.tokensIn,
@@ -1241,8 +1352,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
           break
         }
       }
-    
-      // Se saiu do loop sem resposta (atingiu MAX_RODADAS), força resposta final
+
       if (!resultado) {
         resultado = await openAIChatCompletion(mensagensAcumuladas, chatConfig)
       }

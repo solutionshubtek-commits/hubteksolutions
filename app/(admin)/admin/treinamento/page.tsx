@@ -6,6 +6,7 @@ import {
   ChevronDown, Calendar, Eye, EyeOff,
 } from 'lucide-react'
 import { GoogleCalendarGuide } from '@/components/dashboard/GoogleCalendarGuide'
+import { GestaoProfissionais } from '@/components/dashboard/GestaoProfissionais'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
@@ -383,6 +384,7 @@ export default function AdminTreinamentoPage() {
             </div>
           </div>
 
+          <GestaoProfissionais tenantId={selectedId} />
           {/* Google Calendar — aparece quando Agendamentos está ativo */}
           {agendamentosAtivo && (
             <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
