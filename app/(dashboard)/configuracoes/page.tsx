@@ -502,7 +502,7 @@ export default function ConfiguracoesPage() {
               </div>
             </div>
 
-            {isGestao && <GestaoProfissionais />}
+            {isGestao && agendamentosAtivo && <GestaoProfissionais />}
             {/* Google Calendar */}
             {(agendamentosAtivo || isGestao) && (
               <div className="rounded-xl p-6" style={cardStyle}>

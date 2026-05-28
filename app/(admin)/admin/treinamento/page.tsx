@@ -384,7 +384,7 @@ export default function AdminTreinamentoPage() {
             </div>
           </div>
 
-          <GestaoProfissionais tenantId={selectedId} />
+          {agendamentosAtivo && <GestaoProfissionais tenantId={selectedId} />}
           {/* Google Calendar — aparece quando Agendamentos está ativo */}
           {agendamentosAtivo && (
             <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
