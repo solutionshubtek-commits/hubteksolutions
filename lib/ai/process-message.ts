@@ -1194,39 +1194,57 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   try {
     if (usarTools) {
-      const respostaComTools = await openAIChatCompletionWithTools(
-        chatMessages,
-        toolsAtivas as Parameters<typeof openAIChatCompletionWithTools>[1],
-        chatConfig
-      )
-      if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
-        const toolResults: ChatMessage[] = []
-        const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
-        for (const tc of toolCallsTyped) {
-          const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
-          const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
-          if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
-          const toolResult = isAppointmentTool
-            ? await executarAppointmentToolCall(tc.function.name, args, payload.tenantId, payload.instanceName)
-            : await executarToolCall(tc.function.name, args, calendarConfig!, config.horario_inicio, config.horario_fim)
-          toolResults.push({
-            role: 'tool' as const,
-            content: toolResult,
-            tool_call_id: tc.id,
-          } as ChatMessage)
+      let mensagensAcumuladas: ChatMessage[] = [...chatMessages]
+      const MAX_RODADAS = 5
+      let rodada = 0
+    
+      while (rodada < MAX_RODADAS) {
+        rodada++
+        const respostaComTools = await openAIChatCompletionWithTools(
+          mensagensAcumuladas,
+          toolsAtivas as Parameters<typeof openAIChatCompletionWithTools>[1],
+          chatConfig
+        )
+    
+        if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
+          // Executa todas as tools desta rodada
+          const toolResults: ChatMessage[] = []
+          const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
+          for (const tc of toolCallsTyped) {
+            const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
+            const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
+            if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
+            const toolResult = isAppointmentTool
+              ? await executarAppointmentToolCall(tc.function.name, args, payload.tenantId, payload.instanceName)
+              : await executarToolCall(tc.function.name, args, calendarConfig!, config.horario_inicio, config.horario_fim)
+            toolResults.push({
+              role: 'tool' as const,
+              content: toolResult,
+              tool_call_id: tc.id,
+            } as ChatMessage)
+          }
+    
+          // Acumula histórico para próxima rodada
+          mensagensAcumuladas = [
+            ...mensagensAcumuladas,
+            { role: 'assistant', content: '', tool_calls: respostaComTools.toolCalls } as unknown as ChatMessage,
+            ...toolResults,
+          ]
+          // Continua o loop — modelo vai decidir se precisa de mais tools ou responde
+        } else {
+          // Modelo respondeu sem tool call — é a resposta final
+          resultado = {
+            content: respostaComTools.content,
+            tokensIn: respostaComTools.tokensIn,
+            tokensOut: respostaComTools.tokensOut,
+          }
+          break
         }
-        const messagesComTools: ChatMessage[] = [
-          ...chatMessages,
-          { role: 'assistant', content: '', tool_calls: respostaComTools.toolCalls } as unknown as ChatMessage,
-          ...toolResults,
-        ]
-        resultado = await openAIChatCompletion(messagesComTools, chatConfig)
-      } else {
-        resultado = {
-          content: respostaComTools.content,
-          tokensIn: respostaComTools.tokensIn,
-          tokensOut: respostaComTools.tokensOut,
-        }
+      }
+    
+      // Se saiu do loop sem resposta (atingiu MAX_RODADAS), força resposta final
+      if (!resultado) {
+        resultado = await openAIChatCompletion(mensagensAcumuladas, chatConfig)
       }
     } else {
       resultado = config.motor_ia_principal === 'openai'
