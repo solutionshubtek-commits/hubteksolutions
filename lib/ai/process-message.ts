@@ -299,7 +299,8 @@ Retorne um JSON válido com esta estrutura exata (sem markdown, sem explicaçõe
   },
   "resumo_conversa": "resumo em 1-2 frases do que o cliente precisava nesta conversa ou null"
 }
-Se não houver nada relevante para um campo, use null ou {} para preferencias.`,
+Se não houver nada relevante para um campo, use null ou {} para preferencias.
+Não inclua informações sobre agendamentos, datas ou horários marcados no resumo_conversa — esses dados ficam no sistema de agendamentos.`,
         },
         { role: 'user', content: apenasCliente },
       ],
@@ -353,8 +354,8 @@ function buildSystemPrompt(
   if (intencao === 'saudacao') prompt += ' É uma saudação simples. Responda com cumprimento + pergunta aberta. Não busque dados na base para isso.'
   if (intencao === 'fora_escopo') prompt += ' A mensagem parece fora do seu escopo. Redirecione gentilmente para o que você pode ajudar.'
 
-  if (perfilCliente) prompt += `\n\nPERFIL DO CLIENTE (informações de conversas anteriores — use para personalizar sem perguntar o que já sabe):\n${perfilCliente}`
-  if (historicoResumido) prompt += `\n\nRESUMO DO CONTEXTO DESTA CONVERSA:\n${historicoResumido}`
+  if (perfilCliente && intencao !== 'saudacao') prompt += `\n\nPERFIL DO CLIENTE (informações de conversas anteriores — use para personalizar sem perguntar o que já sabe):\n${perfilCliente}`
+  if (historicoResumido && intencao !== 'saudacao') prompt += `\n\nRESUMO DO CONTEXTO DESTA CONVERSA:\n${historicoResumido}`
 
   prompt += `
 
