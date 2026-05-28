@@ -504,7 +504,7 @@ export default function ConfiguracoesPage() {
 
             {isGestao && agendamentosAtivo && <GestaoProfissionais />}
             {/* Google Calendar */}
-            {(agendamentosAtivo || isGestao) && (
+            {agendamentosAtivo && (
               <div className="rounded-xl p-6" style={cardStyle}>
                 <div className="flex items-center gap-2 mb-1">
                   <Calendar size={15} style={{ color: '#10B981' }} />
