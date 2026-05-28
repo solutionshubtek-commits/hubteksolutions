@@ -25,6 +25,7 @@ import {
   deleteEvent,
   findEventByName,
   parseDateFromText,
+  getAccessToken,
   type GoogleCalendarConfig,
 } from '@/lib/google-calendar'
 import { detectarMeChama } from './detect-me-chama'
@@ -300,7 +301,8 @@ REGRAS DE COMPORTAMENTO:
   if (temAgendamentosHubtek) {
     prompt += `\n\nAGENDAMENTOS INTERNOS: Você pode criar, consultar, confirmar, reagendar e cancelar agendamentos diretamente no sistema.`
     prompt += '\nUse as tools de agendamento para registrar compromissos solicitados pelo cliente.'
-    prompt += '\nPara reagendar: use listar_agendamentos_cliente para obter o ID, depois use reagendar_agendamento_hubtek.'
+    prompt += '\nPara reagendar: SEMPRE use primeiro listar_agendamentos_cliente para obter o ID correto, depois chame reagendar_agendamento_hubtek UMA ÚNICA VEZ com esse ID e a nova data/hora. NÃO cancele e recrie — use apenas reagendar_agendamento_hubtek.'
+    prompt += '\nPara cancelar: use listar_agendamentos_cliente para obter o ID, depois chame cancelar_agendamento_hubtek UMA ÚNICA VEZ com esse ID.'
     prompt += '\nPara recontatos: use criar_recontato quando o cliente pedir para ser chamado depois.'
     prompt += '\nSempre confirme com o cliente após criar ou alterar um agendamento.'
     prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
@@ -442,7 +444,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
     type: 'function',
     function: {
       name: 'listar_agendamentos_cliente',
-      description: 'Busca todos os agendamentos de um cliente pelo telefone',
+      description: 'Busca todos os agendamentos ativos de um cliente pelo telefone. Use antes de reagendar ou cancelar para obter o ID correto.',
       parameters: {
         type: 'object',
         properties: {
@@ -470,7 +472,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
     type: 'function',
     function: {
       name: 'reagendar_agendamento_hubtek',
-      description: 'Reagenda um agendamento existente para nova data e horário',
+      description: 'Reagenda um agendamento existente para nova data e horário. Use o ID retornado por listar_agendamentos_cliente. NÃO cancele e recrie — use apenas esta tool.',
       parameters: {
         type: 'object',
         properties: {
@@ -485,7 +487,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
     type: 'function',
     function: {
       name: 'cancelar_agendamento_hubtek',
-      description: 'Cancela um agendamento existente no sistema Hubtek',
+      description: 'Cancela um agendamento existente no sistema Hubtek. Use o ID retornado por listar_agendamentos_cliente.',
       parameters: {
         type: 'object',
         properties: {
@@ -671,53 +673,25 @@ async function executarAppointmentToolCall(
     return cfg
   }
 
+  // Usa getAccessToken importado de lib/google-calendar para PATCH direto na API do Google
   async function patchCalendarEvent(
     calConfig: GoogleCalendarConfig,
     eventId: string,
     body: Record<string, unknown>
   ): Promise<void> {
-    const now = Math.floor(Date.now() / 1000)
-    const header = { alg: 'RS256', typ: 'JWT' }
-    const payload = {
-      iss: calConfig.client_email,
-      scope: 'https://www.googleapis.com/auth/calendar',
-      aud: 'https://oauth2.googleapis.com/token',
-      exp: now + 3600,
-      iat: now,
-    }
-    const encode = (obj: object) =>
-      btoa(JSON.stringify(obj)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-    const headerB64 = encode(header)
-    const payloadB64 = encode(payload)
-    const signingInput = `${headerB64}.${payloadB64}`
-    const pemKey = calConfig.private_key.replace(/\\n/g, '\n')
-    const pemBody = pemKey.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\n/g, '')
-    const binaryKey = Uint8Array.from(atob(pemBody), c => c.charCodeAt(0))
-    const cryptoKey = await crypto.subtle.importKey(
-      'pkcs8', binaryKey,
-      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-      false, ['sign']
-    )
-    const encoder = new TextEncoder()
-    const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cryptoKey, encoder.encode(signingInput))
-    const signatureB64 = btoa(Array.from(new Uint8Array(signatureBuffer)).map(b => String.fromCharCode(b)).join(''))
-      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-    const jwt = `${signingInput}.${signatureB64}`
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }),
-    })
-    const tokenData = await tokenRes.json()
-    if (!tokenData.access_token) throw new Error(`Google Auth falhou`)
-    await fetch(
+    const token = await getAccessToken(calConfig)
+    const res = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calConfig.calendar_id)}/events/${eventId}`,
       {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${tokenData.access_token}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }
     )
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(`Google Calendar PATCH falhou: ${JSON.stringify(err)}`)
+    }
   }
 
   try {
@@ -744,10 +718,12 @@ async function executarAppointmentToolCall(
         if (calConfig) {
           const inicio = new Date(dataHora)
           const fim = new Date(inicio.getTime() + 60 * 60 * 1000)
+          // fim com offset Brasília para consistência
+          const fimISO = fim.toISOString().replace('Z', '-03:00').replace(/\.\d{3}/, '')
           const evento = await createEvent(calConfig, {
             summary: String(args.contato_nome),
             start: dataHora,
-            end: fim.toISOString(),
+            end: fimISO,
             description: [
               args.servico ? `Serviço: ${args.servico}` : '',
               `Telefone: ${normalizarTelefone(String(args.contato_telefone))}`,
@@ -793,12 +769,19 @@ async function executarAppointmentToolCall(
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
         .maybeSingle()
-      const { error } = await supabase.from('appointments').update({ status: 'confirmado' }).eq('id', String(args.appointment_id)).eq('tenant_id', tenantId)
+      const { error } = await supabase
+        .from('appointments')
+        .update({ status: 'confirmado' })
+        .eq('id', String(args.appointment_id))
+        .eq('tenant_id', tenantId)
       if (error) { console.error('[appointment tool] confirmar_agendamento:', error); return 'Erro ao confirmar agendamento.' }
       try {
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
-          await patchCalendarEvent(calConfig, appt.google_event_id, { summary: `✓ ${appt.contato_nome}`, colorId: '2' })
+          await patchCalendarEvent(calConfig, appt.google_event_id, {
+            summary: `✓ ${appt.contato_nome}`,
+            colorId: '2',
+          })
         }
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar confirmar falhou (não crítico):', calErr)
@@ -808,32 +791,33 @@ async function executarAppointmentToolCall(
 
     if (toolName === 'reagendar_agendamento_hubtek') {
       const novaDataHora = String(args.nova_data_hora)
+
       const { data: appt } = await supabase
         .from('appointments')
         .select('google_event_id, contato_nome')
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
         .maybeSingle()
+
       const { error } = await supabase
         .from('appointments')
         .update({ data_hora: novaDataHora, status: 'pendente' })
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
       if (error) { console.error('[appointment tool] reagendar_agendamento_hubtek:', error); return 'Erro ao reagendar agendamento.' }
+
       try {
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
           const inicio = new Date(novaDataHora)
           const fim = new Date(inicio.getTime() + 60 * 60 * 1000)
-          await patchCalendarEvent(calConfig, appt.google_event_id, {
-            start: { dateTime: novaDataHora, timeZone: 'America/Sao_Paulo' },
-            end: { dateTime: fim.toISOString(), timeZone: 'America/Sao_Paulo' },
-            summary: appt.contato_nome,
-          })
+          // Usa rescheduleEvent do lib/google-calendar — formato correto com timeZone
+          await rescheduleEvent(calConfig, appt.google_event_id, novaDataHora, fim.toISOString())
         }
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar reagendar falhou (não crítico):', calErr)
       }
+
       const d = new Date(novaDataHora)
       const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
@@ -847,12 +831,19 @@ async function executarAppointmentToolCall(
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
         .maybeSingle()
-      const { error } = await supabase.from('appointments').update({ status: 'cancelado' }).eq('id', String(args.appointment_id)).eq('tenant_id', tenantId)
+      const { error } = await supabase
+        .from('appointments')
+        .update({ status: 'cancelado' })
+        .eq('id', String(args.appointment_id))
+        .eq('tenant_id', tenantId)
       if (error) { console.error('[appointment tool] cancelar_agendamento_hubtek:', error); return 'Erro ao cancelar agendamento.' }
       try {
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
-          await patchCalendarEvent(calConfig, appt.google_event_id, { summary: `[CANCELADO] ${appt.contato_nome}`, colorId: '11' })
+          await patchCalendarEvent(calConfig, appt.google_event_id, {
+            summary: `[CANCELADO] ${appt.contato_nome}`,
+            colorId: '11',
+          })
         }
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar cancelar falhou (não crítico):', calErr)
@@ -1174,7 +1165,6 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   const toolsAtivas: Tool[] = []
   if (temAgendamentosHubtek) {
-    // APPOINTMENT_TOOLS já sincroniza com Google Calendar — não usar CALENDAR_TOOLS junto
     toolsAtivas.push(...APPOINTMENT_TOOLS)
   } else if (temCalendar) {
     toolsAtivas.push(...CALENDAR_TOOLS)

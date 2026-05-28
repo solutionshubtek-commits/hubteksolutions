@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Calendar, Clock, Plus, Phone, User,
   CheckCircle, XCircle, AlertCircle, RefreshCw,
-  ChevronLeft, ChevronRight, Send, Trash2, Bell, BellOff,
+  ChevronLeft, ChevronRight, Send, Trash2, Bell, BellOff, Edit2,
 } from 'lucide-react'
 
 interface Appointment {
@@ -54,6 +54,13 @@ function formatTime(iso: string) {
   })
 }
 
+// Converte ISO para datetime-local (YYYY-MM-DDTHH:MM) no fuso Brasília
+function isoToDatetimeLocal(iso: string): string {
+  const d = new Date(iso)
+  const br = new Date(d.getTime() - 3 * 60 * 60 * 1000)
+  return br.toISOString().slice(0, 16)
+}
+
 const inputStyle: React.CSSProperties = {
   width: '100%', borderRadius: 10,
   border: '1px solid var(--border)',
@@ -87,6 +94,88 @@ const TASK_STATUS_CONFIG = {
   falhou:    { label: 'Falhou',    bg: 'rgba(239,68,68,0.15)',   color: '#EF4444' },
   cancelado: { label: 'Cancelado', bg: 'rgba(163,163,163,0.15)', color: '#A3A3A3' },
 }
+
+// ─── Modal Reagendamento ───────────────────────────────────────────────────────
+
+function ModalReagendamento({ appt, onClose, onSaved }: {
+  appt: Appointment
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [novaDataHora, setNovaDataHora] = useState(isoToDatetimeLocal(appt.data_hora))
+
+  async function handleSubmit() {
+    if (!novaDataHora) { alert('Selecione a nova data e horário'); return }
+    setLoading(true)
+    try {
+      const res = await fetch('/api/agendamentos', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: appt.id, data_hora: novaDataHora }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error)
+      onSaved()
+      onClose()
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Erro ao reagendar')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', padding: 16 }}>
+      <div style={{ width: '100%', maxWidth: 420, borderRadius: 16, background: 'var(--bg-surface)', border: '1px solid var(--border)', boxShadow: '0 24px 48px rgba(0,0,0,0.4)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ borderRadius: 10, background: 'rgba(234,179,8,0.1)', padding: 8, flexShrink: 0 }}>
+              <Edit2 size={18} color="#EAB308" />
+            </div>
+            <div>
+              <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', display: 'block' }}>Reagendar</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{appt.contato_nome}</span>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
+            <XCircle size={20} />
+          </button>
+        </div>
+
+        <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ background: 'var(--bg-surface-2)', borderRadius: 10, padding: '10px 14px' }}>
+            <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', marginBottom: 2 }}>Data/hora atual</p>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>
+              {formatDate(appt.data_hora)} às {formatTime(appt.data_hora)}
+            </p>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Nova data e horário <span style={{ color: '#EF4444' }}>*</span></label>
+            <input
+              type="datetime-local"
+              value={novaDataHora}
+              onChange={e => setNovaDataHora(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, padding: '16px 24px', borderTop: '1px solid var(--border)' }}>
+          <button onClick={onClose} style={{ borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', padding: '10px 20px', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
+            Cancelar
+          </button>
+          <button onClick={handleSubmit} disabled={loading} style={{ borderRadius: 10, border: 'none', background: '#EAB308', color: '#000', padding: '10px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: loading ? 0.6 : 1 }}>
+            {loading ? <RefreshCw size={16} /> : <Edit2 size={16} />} Confirmar reagendamento
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Modal Novo Agendamento ────────────────────────────────────────────────────
 
 function ModalNovoAgendamento({ onClose, onSaved, instances }: {
   onClose: () => void; onSaved: () => void; instances: TenantInstance[]
@@ -183,6 +272,8 @@ function ModalNovoAgendamento({ onClose, onSaved, instances }: {
   )
 }
 
+// ─── Modal Recontato ───────────────────────────────────────────────────────────
+
 function ModalMeChama({ onClose, onSaved, instances }: {
   onClose: () => void; onSaved: () => void; instances: TenantInstance[]
 }) {
@@ -272,9 +363,12 @@ function ModalMeChama({ onClose, onSaved, instances }: {
   )
 }
 
-function AppointmentCard({ appt, onConfirmar, onCancelar }: {
+// ─── Card mobile ───────────────────────────────────────────────────────────────
+
+function AppointmentCard({ appt, onConfirmar, onReagendar, onCancelar }: {
   appt: Appointment
   onConfirmar: (id: string) => void
+  onReagendar: (appt: Appointment) => void
   onCancelar: (id: string) => void
 }) {
   const sc = STATUS_CONFIG[appt.status]
@@ -321,6 +415,11 @@ function AppointmentCard({ appt, onConfirmar, onCancelar }: {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {appt.status === 'pendente' && (
             <button onClick={() => onConfirmar(appt.id)} style={{ borderRadius: 8, border: 'none', background: 'rgba(34,197,94,0.1)', color: '#22C55E', padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Confirmar</button>
+          )}
+          {(appt.status === 'pendente' || appt.status === 'confirmado') && (
+            <button onClick={() => onReagendar(appt)} style={{ borderRadius: 8, border: 'none', background: 'rgba(234,179,8,0.1)', color: '#EAB308', padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>
+              <Edit2 size={13} />
+            </button>
           )}
           {(appt.status === 'pendente' || appt.status === 'confirmado') && (
             <button onClick={() => onCancelar(appt.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><Trash2 size={15} /></button>
@@ -382,6 +481,8 @@ function TaskCard({ task, onCancelar }: {
   )
 }
 
+// ─── Página principal ──────────────────────────────────────────────────────────
+
 export default function AgendamentosPage() {
   const supabase = createClient()
   const [tab, setTab] = useState<'agendamentos' | 'recontatos'>('agendamentos')
@@ -391,6 +492,7 @@ export default function AgendamentosPage() {
   const [loading, setLoading] = useState(true)
   const [modalAgendamento, setModalAgendamento] = useState(false)
   const [modalRecontato, setModalRecontato] = useState(false)
+  const [modalReagendar, setModalReagendar] = useState<Appointment | null>(null)
   const [filterStatus, setFilterStatus] = useState('')
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
@@ -565,6 +667,11 @@ export default function AgendamentosPage() {
                                     <button onClick={() => confirmarAgendamento(appt.id)} style={{ borderRadius: 8, border: 'none', background: 'rgba(34,197,94,0.1)', color: '#22C55E', padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Confirmar</button>
                                   )}
                                   {(appt.status === 'pendente' || appt.status === 'confirmado') && (
+                                    <button onClick={() => setModalReagendar(appt)} style={{ borderRadius: 8, border: 'none', background: 'rgba(234,179,8,0.1)', color: '#EAB308', padding: '6px 10px', fontSize: 12, cursor: 'pointer' }} title="Reagendar">
+                                      <Edit2 size={13} />
+                                    </button>
+                                  )}
+                                  {(appt.status === 'pendente' || appt.status === 'confirmado') && (
                                     <button onClick={() => cancelarAgendamento(appt.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><Trash2 size={15} /></button>
                                   )}
                                 </div>
@@ -577,7 +684,13 @@ export default function AgendamentosPage() {
                   </div>
                   <div className="agend-cards-wrapper">
                     {appointments.map(appt => (
-                      <AppointmentCard key={appt.id} appt={appt} onConfirmar={confirmarAgendamento} onCancelar={cancelarAgendamento} />
+                      <AppointmentCard
+                        key={appt.id}
+                        appt={appt}
+                        onConfirmar={confirmarAgendamento}
+                        onReagendar={setModalReagendar}
+                        onCancelar={cancelarAgendamento}
+                      />
                     ))}
                   </div>
                 </>
@@ -669,6 +782,7 @@ export default function AgendamentosPage() {
 
         {modalAgendamento && <ModalNovoAgendamento onClose={() => setModalAgendamento(false)} onSaved={fetchData} instances={instances} />}
         {modalRecontato && <ModalMeChama onClose={() => setModalRecontato(false)} onSaved={fetchData} instances={instances} />}
+        {modalReagendar && <ModalReagendamento appt={modalReagendar} onClose={() => setModalReagendar(null)} onSaved={fetchData} />}
       </div>
     </>
   )
