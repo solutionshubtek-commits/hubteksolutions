@@ -406,6 +406,8 @@ REGRAS DE COMPORTAMENTO:
     prompt += `\n2. Número com DDD (10 ou 11 dígitos) → normalize e use`
     prompt += `\n3. Número SEM DDD (8 ou 9 dígitos) → pergunte: "Qual o DDD? Aqui costumamos usar 51."`
     prompt += `\n4. NUNCA salve número sem DDD completo`
+    prompt += '\nNUNCA cancele ou modifique agendamentos sem o cliente pedir EXPLICITAMENTE. Se o cliente pedir para CRIAR um novo agendamento, apenas crie — não cancele nada antes.'
+    prompt += '\nAntes de cancelar ou reagendar, SEMPRE confirme com o cliente: "Confirma o cancelamento do agendamento de [data] às [hora]?"'
 
     if (profissionais.length > 0) {
       prompt += `\n\nPROFISSIONAIS DA EQUIPE (use para sugerir e registrar no campo profissional do agendamento):\n`
@@ -1313,6 +1315,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       const MAX_RODADAS = 5
       let rodada = 0
 
+      const toolsExecutadas = new Set<string>()
       while (rodada < MAX_RODADAS) {
         rodada++
         const respostaComTools = await openAIChatCompletionWithTools(
@@ -1325,6 +1328,19 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
           const toolResults: ChatMessage[] = []
           const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
           for (const tc of toolCallsTyped) {
+            const toolsUnicas = ['criar_agendamento_hubtek', 'cancelar_agendamento_hubtek', 'reagendar_agendamento_hubtek', 'criar_recontato']
+if (toolsUnicas.includes(tc.function.name)) {
+  if (toolsExecutadas.has(tc.function.name)) {
+    console.warn(`[tools] Tool ${tc.function.name} já executada nesta conversa — bloqueando duplicata`)
+    toolResults.push({
+      role: 'tool' as const,
+      content: 'Ação já executada anteriormente nesta conversa. Não execute novamente.',
+      tool_call_id: tc.id,
+    } as ChatMessage)
+    continue
+  }
+  toolsExecutadas.add(tc.function.name)
+} 
             const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
             const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
             if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
