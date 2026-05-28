@@ -304,7 +304,7 @@ REGRAS DE COMPORTAMENTO:
     prompt += '\nPara reagendar: SEMPRE use primeiro listar_agendamentos_cliente para obter o ID correto, depois chame reagendar_agendamento_hubtek UMA ÚNICA VEZ com esse ID e a nova data/hora. NÃO cancele e recrie — use apenas reagendar_agendamento_hubtek. Nunca mencione IDs técnicos ao cliente.'
     prompt += '\nPara cancelar: use listar_agendamentos_cliente para obter o ID, depois chame cancelar_agendamento_hubtek UMA ÚNICA VEZ com esse ID. Nunca mencione IDs técnicos ao cliente.'
     prompt += '\nPara recontatos: use criar_recontato quando o cliente pedir para ser chamado depois.'
-    prompt += '\nSempre confirme com o cliente após criar ou alterar um agendamento.'
+    prompt += '\nEXECUTE a ação ANTES de responder ao cliente. NUNCA anuncie que vai fazer algo e espere — chame a tool, receba o resultado e confirme tudo em uma única resposta. Jamais diga "Um momento, por favor" ou "Vou verificar" sem já ter executado.'
     prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
     prompt += `\n\nTELEFONE PARA AGENDAMENTOS:`
     prompt += `\n1. "este número", "meu número" → use ${telefoneCliente}`

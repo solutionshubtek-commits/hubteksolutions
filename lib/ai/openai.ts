@@ -50,7 +50,7 @@ export async function openAIChatCompletionWithTools(
     model: 'gpt-4o',
     messages: messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     tools,
-    tool_choice: 'auto',
+    tool_choice: 'required',
     temperature: config.temperature ?? 0.7,
     max_tokens: config.maxTokens ?? 1000,
   })
