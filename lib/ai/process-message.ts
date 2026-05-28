@@ -1177,8 +1177,11 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         perfil.contato_nome ? `Nome: ${perfil.contato_nome}` : '',
         perfil.cidade ? `Cidade: ${perfil.cidade}` : '',
         perfil.preferencias && Object.keys(perfil.preferencias).length > 0
-          ? `Preferências: ${Object.entries(perfil.preferencias).map(([k, v]) => `${k}: ${v}`).join(', ')}`
-          : '',
+  ? `Preferências: ${Object.entries(perfil.preferencias)
+      .filter(([k]) => !/(data|hora|agendamento|pizza|sabor|produto|pagamento|reagendamento)/i.test(k))
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ')}`
+  : '',
         perfil.historico_resumido ? `Histórico anterior: ${perfil.historico_resumido}` : '',
       ].filter(Boolean).join('\n')
     : ''
