@@ -301,8 +301,8 @@ REGRAS DE COMPORTAMENTO:
   if (temAgendamentosHubtek) {
     prompt += `\n\nAGENDAMENTOS INTERNOS: Você pode criar, consultar, confirmar, reagendar e cancelar agendamentos diretamente no sistema.`
     prompt += '\nUse as tools de agendamento para registrar compromissos solicitados pelo cliente.'
-    prompt += '\nPara reagendar: SEMPRE use primeiro listar_agendamentos_cliente para obter o ID correto, depois chame reagendar_agendamento_hubtek UMA ÚNICA VEZ com esse ID e a nova data/hora. NÃO cancele e recrie — use apenas reagendar_agendamento_hubtek.'
-    prompt += '\nPara cancelar: use listar_agendamentos_cliente para obter o ID, depois chame cancelar_agendamento_hubtek UMA ÚNICA VEZ com esse ID.'
+    prompt += '\nPara reagendar: SEMPRE use primeiro listar_agendamentos_cliente para obter o ID correto, depois chame reagendar_agendamento_hubtek UMA ÚNICA VEZ com esse ID e a nova data/hora. NÃO cancele e recrie — use apenas reagendar_agendamento_hubtek. Nunca mencione IDs técnicos ao cliente.'
+    prompt += '\nPara cancelar: use listar_agendamentos_cliente para obter o ID, depois chame cancelar_agendamento_hubtek UMA ÚNICA VEZ com esse ID. Nunca mencione IDs técnicos ao cliente.'
     prompt += '\nPara recontatos: use criar_recontato quando o cliente pedir para ser chamado depois.'
     prompt += '\nSempre confirme com o cliente após criar ou alterar um agendamento.'
     prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
@@ -757,7 +757,7 @@ async function executarAppointmentToolCall(
         const d = new Date(a.data_hora)
         const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
         const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
-        return `• ${dataFmt} às ${horaFmt} — ${a.servico} (${a.status}) — ID: ${a.id}`
+        return `[ID:${a.id}] ${dataFmt} às ${horaFmt} — ${a.servico} (${a.status})`
       }).join('\n')
       return `Agendamentos encontrados:\n${lista}`
     }
