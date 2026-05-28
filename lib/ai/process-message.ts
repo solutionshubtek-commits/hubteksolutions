@@ -1297,7 +1297,11 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     toolsAtivas.push(...CALENDAR_TOOLS)
   }
 
-  const usarTools = toolsAtivas.length > 0 && config.motor_ia_principal === 'openai'
+  const usarTools = toolsAtivas.length > 0 
+  && config.motor_ia_principal === 'openai'
+  && intencao !== 'saudacao'
+  && intencao !== 'fora_escopo'
+  && intencao !== 'duvida'
 
   const temperaturaBase = Number(config.temperatura)
   const temperatura = intencao === 'reclamacao' ? Math.min(temperaturaBase + 0.2, 1.0) : temperaturaBase
