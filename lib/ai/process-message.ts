@@ -412,8 +412,9 @@ REGRAS DE COMPORTAMENTO:
     if (profissionais.length > 0) {
       prompt += `\n\nPROFISSIONAIS DA EQUIPE (use para sugerir e registrar no campo profissional do agendamento):\n`
       prompt += profissionais.map(p => `• ${p.nome}${p.especialidade ? ` — ${p.especialidade}` : ''}`).join('\n')
-      prompt += `\nQuando o cliente não especificar profissional, liste as opções ou pergunte se tem preferência. Registre sempre o nome exato no campo profissional ao criar o agendamento.`
+      prompt += `\nSEMPRE pergunte o profissional de preferência ANTES de criar o agendamento, mesmo que o cliente não mencione. Só crie o agendamento após o cliente confirmar o profissional. Registre sempre o nome exato no campo profissional.`
     }
+    prompt += `\nAntes de criar um agendamento, use listar_agendamentos_cliente para verificar se já existe um agendamento no mesmo horário. Se houver conflito, informe o cliente e sugira outro horário.`
   }
 
   if (feriadosProximos) {
