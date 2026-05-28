@@ -3,9 +3,10 @@ import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Save, Upload, Trash2, FileText, AlertCircle, CheckCircle2,
-  Image as ImageIcon, Camera, X, Calendar, ExternalLink, Eye, EyeOff,
+  Image as ImageIcon, Camera, X, Calendar, Eye, EyeOff,
 } from 'lucide-react'
 import { GestaoOperadores } from '@/components/dashboard/GestaoOperadores'
+import { GoogleCalendarGuide } from '@/components/dashboard/GoogleCalendarGuide'
 
 interface KnowledgeFile {
   id: string; nome_arquivo: string; tipo: string; tamanho_bytes: number; criado_em: string
@@ -500,7 +501,7 @@ export default function ConfiguracoesPage() {
               </div>
             </div>
 
-            {/* Google Calendar — visível para todos os roles de gestão */}
+            {/* Google Calendar */}
             {(agendamentosAtivo || isGestao) && (
               <div className="rounded-xl p-6" style={cardStyle}>
                 <div className="flex items-center gap-2 mb-1">
@@ -510,23 +511,12 @@ export default function ConfiguracoesPage() {
                 <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                   O agente usará estas credenciais para consultar, criar, reagendar e cancelar eventos automaticamente.
                 </p>
-                <details className="mb-4 rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-                  <summary className="px-4 py-2.5 text-xs font-semibold cursor-pointer select-none"
-                    style={{ background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
-                    📋 Como obter as credenciais (passo a passo)
-                  </summary>
-                  <div className="px-4 py-3 text-xs space-y-1.5" style={{ color: 'var(--text-muted)', background: 'var(--bg-surface-2)' }}>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>1.</strong> Acesse <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-[#10B981] underline inline-flex items-center gap-0.5">console.cloud.google.com <ExternalLink size={10} /></a></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>2.</strong> Crie ou selecione um projeto → ative a <strong>Google Calendar API</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>3.</strong> Vá em <strong>APIs e serviços → Credenciais → Criar credenciais → Conta de serviço</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>4.</strong> Preencha um nome → clique em <strong>Criar e continuar</strong> → <strong>Concluído</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>5.</strong> Clique na conta criada → aba <strong>Chaves → Adicionar chave → JSON</strong> — o arquivo baixa automaticamente</p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>6.</strong> Abra o arquivo JSON com o Bloco de Notas e copie os campos <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>client_email</code> e <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>private_key</code></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>7.</strong> No Google Calendar → passe o mouse no calendário → <strong>3 pontinhos → Configurações e compartilhamento</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>8.</strong> Em <strong>Compartilhar com pessoas específicas</strong> → adicione o <strong>client_email</strong> com permissão <strong>&quot;Fazer alterações em eventos&quot;</strong></p>
-                    <p><strong style={{ color: 'var(--text-secondary)' }}>9.</strong> O <strong>Calendar ID</strong> está em <strong>Integrar agenda</strong> — formato: email ou <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>xxx@group.calendar.google.com</code></p>
-                  </div>
-                </details>
+
+                {/* ── Passo a passo em modal ── */}
+                <div className="mb-4">
+                  <GoogleCalendarGuide />
+                </div>
+
                 <div className="space-y-3">
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>

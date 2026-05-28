@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   History, CheckCircle, Upload, X, AlertTriangle,
-  ChevronDown, Calendar, ExternalLink, Eye, EyeOff,
+  ChevronDown, Calendar, Eye, EyeOff,
 } from 'lucide-react'
+import { GoogleCalendarGuide } from '@/components/dashboard/GoogleCalendarGuide'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
@@ -79,7 +80,6 @@ export default function AdminTreinamentoPage() {
   const [dias, setDias] = useState<number[]>([1, 2, 3, 4, 5])
   const [agentOn, setAgentOn] = useState(true)
 
-  // Google Calendar
   const [gcClientEmail, setGcClientEmail] = useState('')
   const [gcPrivateKey, setGcPrivateKey] = useState('')
   const [gcCalendarId, setGcCalendarId] = useState('')
@@ -383,7 +383,7 @@ export default function AdminTreinamentoPage() {
             </div>
           </div>
 
-          {/* Google Calendar — só aparece quando Agendamentos está ativo */}
+          {/* Google Calendar — aparece quando Agendamentos está ativo */}
           {agendamentosAtivo && (
             <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
               <div className="flex items-center gap-2 mb-1">
@@ -394,23 +394,10 @@ export default function AdminTreinamentoPage() {
                 O agente usará estas credenciais para consultar, criar, reagendar e cancelar eventos automaticamente.
               </p>
 
-              {/* Instruções colapsáveis */}
-              <details className="mb-4 rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-                <summary className="px-4 py-2.5 text-xs font-semibold cursor-pointer select-none flex items-center gap-2"
-                  style={{ background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
-                  📋 Como obter as credenciais (passo a passo)
-                </summary>
-                <div className="px-4 py-3 text-xs space-y-1.5" style={{ color: 'var(--text-muted)', background: 'var(--bg-surface-2)' }}>
-                  <p><strong style={{ color: 'var(--text-secondary)' }}>1.</strong> Acesse <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-[#10B981] underline inline-flex items-center gap-0.5">console.cloud.google.com <ExternalLink size={10} /></a></p>
-                  <p><strong style={{ color: 'var(--text-secondary)' }}>2.</strong> Crie ou selecione um projeto → ative a <strong>Google Calendar API</strong></p>
-                  <p><strong style={{ color: 'var(--text-secondary)' }}>3.</strong> Vá em <strong>IAM e administrador → Contas de serviço → Criar conta de serviço</strong></p>
-                  <p><strong style={{ color: 'var(--text-secondary)' }}>4.</strong> Na conta criada, clique em <strong>Chaves → Adicionar chave → JSON</strong> — baixe o arquivo</p>
-                  <p><strong style={{ color: 'var(--text-secondary)' }}>5.</strong> No arquivo JSON, copie os campos <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>client_email</code> e <code className="px-1 rounded" style={{ background: 'var(--bg-hover)' }}>private_key</code></p>
-                  <p><strong style={{ color: 'var(--text-secondary)' }}>6.</strong> No Google Calendar do cliente, vá em <strong>Configurações da agenda → Compartilhar com pessoas específicas</strong></p>
-                  <p><strong style={{ color: 'var(--text-secondary)' }}>7.</strong> Adicione o <strong>client_email</strong> da service account com permissão <strong>&quot;Fazer alterações em eventos&quot;</strong></p>
-                  <p><strong style={{ color: 'var(--text-secondary)' }}>8.</strong> O <strong>Calendar ID</strong> está em <strong>Configurações da agenda → Integrar agenda</strong> (formato: xxx@group.calendar.google.com ou email)</p>
-                </div>
-              </details>
+              {/* ── Passo a passo em modal ── */}
+              <div className="mb-4">
+                <GoogleCalendarGuide />
+              </div>
 
               <div className="space-y-3">
                 <div>
