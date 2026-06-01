@@ -29,6 +29,19 @@ export function Sidebar() {
   const [role, setRole]               = useState<string | null>(null)
   const [nomeEmpresa, setNomeEmpresa] = useState<string>('')
   const [avatarUrl, setAvatarUrl]     = useState<string | null>(null)
+  const [tema, setTema]               = useState<'dark' | 'light'>('dark')
+
+  useEffect(() => {
+    const saved = localStorage.getItem('hubtek-tema') as 'dark' | 'light' | null
+    if (saved) setTema(saved)
+
+    const observer = new MutationObserver(() => {
+      const current = document.documentElement.getAttribute('data-theme')
+      setTema(current === 'light' ? 'light' : 'dark')
+    })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const supabase = createClient()
@@ -86,12 +99,11 @@ export function Sidebar() {
       {/* Logo + fechar (mobile) */}
       <div className="h-16 flex items-center justify-between px-5">
         <Image
-          src="/logo-horizontal.png"
-          alt="HUBTEK SOLUTIONS"
+          src={tema === 'light' ? '/logo-black.png' : '/logo-verde.png'}
+          alt="Hubtek Agents"
           width={160}
           height={32}
           priority
-          style={{ filter: 'var(--logo-filter)' }}
         />
         <button
           onClick={() => setOpen(false)}
@@ -154,9 +166,7 @@ export function Sidebar() {
           <Link
             href="/termos"
             className="text-[11px] transition-colors"
-            style={{
-              color: pathname === '/termos' ? '#10B981' : 'var(--text-label)',
-            }}
+            style={{ color: pathname === '/termos' ? '#10B981' : 'var(--text-label)' }}
             onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#10B981'}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = pathname === '/termos' ? '#10B981' : 'var(--text-label)'}
           >
@@ -166,9 +176,7 @@ export function Sidebar() {
           <Link
             href="/privacidade"
             className="text-[11px] transition-colors"
-            style={{
-              color: pathname === '/privacidade' ? '#10B981' : 'var(--text-label)',
-            }}
+            style={{ color: pathname === '/privacidade' ? '#10B981' : 'var(--text-label)' }}
             onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#10B981'}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = pathname === '/privacidade' ? '#10B981' : 'var(--text-label)'}
           >
@@ -178,7 +186,7 @@ export function Sidebar() {
 
         {/* Copyright */}
         <p className="text-[10px] mt-2 px-1" style={{ color: 'var(--text-label)' }}>
-          © {new Date().getFullYear()} Hubtek Solutions
+          © {new Date().getFullYear()} Hubtek Agents
         </p>
       </div>
     </aside>

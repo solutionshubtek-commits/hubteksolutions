@@ -49,8 +49,8 @@ export default function LoginPage() {
     <div className="w-full max-w-sm">
       <div className="flex justify-center mb-8">
         <Image
-          src="/logo-horizontal.png"
-          alt="Hubtek Solutions"
+          src="/logo-verde.png"
+          alt="Hubtek Agents"
           width={240}
           height={60}
           priority
@@ -59,7 +59,7 @@ export default function LoginPage() {
             target.style.display = 'none'
             const parent = target.parentElement
             if (parent) {
-              parent.innerHTML = '<span class="text-white text-xl font-bold">Hubtek Solutions</span>'
+              parent.innerHTML = '<span class="text-white text-xl font-bold">Hubtek Agents</span>'
             }
           }}
         />
@@ -85,25 +85,25 @@ export default function LoginPage() {
                 />
               </div>
               <div>
-  <label className="text-[#A3A3A3] text-sm font-medium block mb-2">Senha</label>
-  <input
-    type="password"
-    value={password}
-    onChange={(e) => setPassword(e.target.value)}
-    placeholder="••••••••"
-    required
-    className="w-full bg-[#0A0A0A] border border-[#262626] text-white
-      placeholder-[#A3A3A3] rounded-lg px-4 py-3 focus:outline-none
-      focus:border-[#10B981] transition-all duration-200"
-  />
-  <button
-    type="button"
-    onClick={() => { setEsqueceuSenha(true); setErro('') }}
-    className="text-[#10B981] text-sm hover:underline mt-2 block"
-  >
-    Esqueci minha senha
-  </button>
-</div>
+                <label className="text-[#A3A3A3] text-sm font-medium block mb-2">Senha</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-[#0A0A0A] border border-[#262626] text-white
+                    placeholder-[#A3A3A3] rounded-lg px-4 py-3 focus:outline-none
+                    focus:border-[#10B981] transition-all duration-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => { setEsqueceuSenha(true); setErro('') }}
+                  className="text-[#10B981] text-sm hover:underline mt-2 block"
+                >
+                  Esqueci minha senha
+                </button>
+              </div>
               {erro && (
                 <div className="bg-[#EF4444]/10 border border-[#EF4444]/30 rounded-lg p-3">
                   <p className="text-[#EF4444] text-sm">{erro}</p>

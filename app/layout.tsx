@@ -8,7 +8,7 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'Hubtek Solutions',
+  title: 'Hubtek Agents',
   description: 'Plataforma de automação de atendimento via WhatsApp',
   icons: {
     icon: '/icon.svg',
