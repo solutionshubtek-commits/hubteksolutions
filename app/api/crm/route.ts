@@ -3,12 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   ETAPAS_FUNIL,
   ETAPA_INICIAL,
-  LABELS_ETAPA,
   ETAPAS_FINAIS,
 } from '@/lib/crm'
-
-// Re-exporta para compatibilidade (process-message.ts importa ETAPA_INICIAL daqui)
-export { ETAPAS_FUNIL, ETAPA_INICIAL, LABELS_ETAPA }
 
 // ─── GET /api/crm ─────────────────────────────────────────────────────────────
 
