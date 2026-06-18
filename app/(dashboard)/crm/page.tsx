@@ -133,7 +133,6 @@ export default function CRMPage() {
   const etapas        = ETAPAS_FUNIL[funilAtivo] ?? []
   const labels        = LABELS_ETAPA[funilAtivo] ?? {}
   const leadsDoFunil  = leads.filter(l => l.funil_tipo === funilAtivo)
-  const etapasFinais  = etapas.slice(-2)
 
   if (carregando) {
     return (
