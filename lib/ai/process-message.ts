@@ -29,7 +29,7 @@ import {
   type GoogleCalendarConfig,
 } from '@/lib/google-calendar'
 import { detectarMeChama } from './detect-me-chama'
-import { ETAPA_INICIAL } from '@/app/api/crm/route'
+import { ETAPA_INICIAL } from '@/lib/crm'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
