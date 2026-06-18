@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, Calendar } from 'lucide-react'
 import { CRMCardModal } from '@/components/dashboard/CRMCardModal'
 import { ETAPAS_FUNIL, LABELS_ETAPA, LABELS_FUNIL } from '@/lib/crm'
 
@@ -53,6 +53,10 @@ function tempoRelativo(data: string): string {
   return `há ${Math.floor(diff / 86400)} d`
 }
 
+function dataHoje(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
 type FiltroVista = 'ativas' | 'todas'
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -65,6 +69,9 @@ export default function CRMPage() {
   const [modalLead, setModalLead]   = useState<CRMLead | null>(null)
   const [movendo, setMovendo]       = useState(false)
   const [filtro, setFiltro]         = useState<FiltroVista>('ativas')
+  const [dataInicio, setDataInicio] = useState<string>('')
+  const [dataFim, setDataFim]       = useState<string>('')
+  const [mostraFiltroData, setMostraFiltroData] = useState(false)
 
   const fetchLeads = useCallback(async (tid: string) => {
     const res = await fetch(`/api/crm?tenant_id=${tid}`)
@@ -109,7 +116,6 @@ export default function CRMPage() {
     const { draggableId, destination } = result
     if (!destination) return
     const lead = leads.find(l => l.id === draggableId)
-    // Não permite arrastar leads de conversas encerradas
     if (!lead || lead.etapa === destination.droppableId || lead.conversa_encerrada) return
 
     setLeads(prev => prev.map(l =>
@@ -135,17 +141,37 @@ export default function CRMPage() {
     }
   }
 
+  // ─── Filtragem ──────────────────────────────────────────────────────────────
+
   const etapas       = ETAPAS_FUNIL[funilAtivo] ?? []
   const labels       = LABELS_ETAPA[funilAtivo] ?? {}
   const leadsDoFunil = leads.filter(l => l.funil_tipo === funilAtivo)
 
-  // Aplica filtro ativas/todas
-  const leadsFiltrados = filtro === 'ativas'
-    ? leadsDoFunil.filter(l => !l.conversa_encerrada)
-    : leadsDoFunil
+  const leadsFiltrados = leadsDoFunil.filter(l => {
+    // Filtro ativas/todas
+    if (filtro === 'ativas' && l.conversa_encerrada) return false
 
-  const totalAtivas    = leadsDoFunil.filter(l => !l.conversa_encerrada).length
+    // Filtro de período por atualizado_em
+    if (dataInicio) {
+      const inicio = new Date(dataInicio + 'T00:00:00')
+      if (new Date(l.atualizado_em) < inicio) return false
+    }
+    if (dataFim) {
+      const fim = new Date(dataFim + 'T23:59:59')
+      if (new Date(l.atualizado_em) > fim) return false
+    }
+
+    return true
+  })
+
+  const totalAtivas     = leadsDoFunil.filter(l => !l.conversa_encerrada).length
   const totalEncerradas = leadsDoFunil.filter(l => l.conversa_encerrada).length
+  const filtroPeriodoAtivo = !!(dataInicio || dataFim)
+
+  function limparPeriodo() {
+    setDataInicio('')
+    setDataFim('')
+  }
 
   if (carregando) {
     return (
@@ -163,44 +189,114 @@ export default function CRMPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-        style={{ borderBottom: '1px solid var(--border)' }}>
-        <div>
-          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>CRM</h1>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAtivas} ativa{totalAtivas !== 1 ? 's' : ''}
-            {totalEncerradas > 0 && ` · ${totalEncerradas} encerrada${totalEncerradas !== 1 ? 's' : ''}`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {movendo && <RefreshCw size={14} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+      <div className="flex-shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
+        <div className="flex items-center justify-between px-6 py-3 gap-3 flex-wrap">
+          <div>
+            <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>CRM</h1>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAtivas} ativa{totalAtivas !== 1 ? 's' : ''}
+              {totalEncerradas > 0 && ` · ${totalEncerradas} encerrada${totalEncerradas !== 1 ? 's' : ''}`}
+              {filtroPeriodoAtivo && ` · ${leadsFiltrados.length} no período`}
+            </p>
+          </div>
 
-          {/* Toggle ativas / todas */}
-          <div className="flex items-center rounded-lg p-1" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
-            {(['ativas', 'todas'] as FiltroVista[]).map(f => (
-              <button key={f} onClick={() => setFiltro(f)}
-                className="px-3 py-1 rounded-md text-xs font-medium transition-colors"
+          <div className="flex items-center gap-2 flex-wrap">
+            {movendo && <RefreshCw size={14} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+
+            {/* Toggle ativas / todas */}
+            <div className="flex items-center rounded-lg p-1" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+              {(['ativas', 'todas'] as FiltroVista[]).map(f => (
+                <button key={f} onClick={() => setFiltro(f)}
+                  className="px-3 py-1 rounded-md text-xs font-medium transition-colors"
+                  style={{
+                    background: filtro === f ? 'var(--bg-hover)' : 'transparent',
+                    color: filtro === f ? 'var(--text-primary)' : 'var(--text-muted)',
+                  }}>
+                  {f === 'ativas' ? 'Ativas' : 'Todas'}
+                  {f === 'todas' && totalEncerradas > 0 && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px]"
+                      style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                      +{totalEncerradas}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Botão filtro por período */}
+            <button
+              onClick={() => setMostraFiltroData(prev => !prev)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              style={{
+                background: filtroPeriodoAtivo ? 'rgba(16,185,129,.1)' : 'var(--bg-surface-2)',
+                border: `1px solid ${filtroPeriodoAtivo ? 'rgba(16,185,129,.3)' : 'var(--border)'}`,
+                color: filtroPeriodoAtivo ? '#10B981' : 'var(--text-muted)',
+              }}>
+              <Calendar size={12} />
+              {filtroPeriodoAtivo ? 'Período ativo' : 'Período'}
+            </button>
+
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+              style={{ background: 'rgba(16,185,129,.1)', border: '1px solid rgba(16,185,129,.3)', color: '#10B981' }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+              {LABELS_FUNIL[funilAtivo] ?? funilAtivo}
+            </div>
+          </div>
+        </div>
+
+        {/* Painel de filtro por período */}
+        {mostraFiltroData && (
+          <div className="flex items-center gap-3 px-6 py-3 flex-wrap"
+            style={{ background: 'var(--bg-surface-2)', borderTop: '1px solid var(--border)' }}>
+            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Período:</span>
+
+            <div className="flex items-center gap-2">
+              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>De</label>
+              <input
+                type="date"
+                value={dataInicio}
+                max={dataFim || dataHoje()}
+                onChange={e => setDataInicio(e.target.value)}
+                className="text-xs rounded-lg px-2.5 py-1.5 outline-none"
                 style={{
-                  background: filtro === f ? 'var(--bg-hover)' : 'transparent',
-                  color: filtro === f ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}>
-                {f === 'ativas' ? 'Ativas' : 'Todas'}
-                {f === 'todas' && totalEncerradas > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px]"
-                    style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
-                    +{totalEncerradas}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-primary)',
+                }}
+              />
+            </div>
 
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-            style={{ background: 'rgba(16,185,129,.1)', border: '1px solid rgba(16,185,129,.3)', color: '#10B981' }}>
-            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-            {LABELS_FUNIL[funilAtivo] ?? funilAtivo}
+            <div className="flex items-center gap-2">
+              <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Até</label>
+              <input
+                type="date"
+                value={dataFim}
+                min={dataInicio || undefined}
+                max={dataHoje()}
+                onChange={e => setDataFim(e.target.value)}
+                className="text-xs rounded-lg px-2.5 py-1.5 outline-none"
+                style={{
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-primary)',
+                }}
+              />
+            </div>
+
+            {filtroPeriodoAtivo && (
+              <button
+                onClick={limparPeriodo}
+                className="text-xs px-2.5 py-1.5 rounded-lg transition-colors"
+                style={{ color: '#F87171', border: '1px solid rgba(248,113,113,.3)', background: 'rgba(248,113,113,.08)' }}>
+                Limpar
+              </button>
+            )}
+
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {leadsFiltrados.length} resultado{leadsFiltrados.length !== 1 ? 's' : ''}
+            </span>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Board */}
@@ -270,14 +366,13 @@ export default function CRMPage() {
                                     cursor:     encerrado ? 'pointer' : 'grab',
                                     opacity:    encerrado ? 0.55 : 1,
                                     background: snap.isDragging ? 'var(--bg-hover)' : 'var(--bg-surface-2)',
-                                    border:     `1px solid ${encerrado ? 'var(--border)' : snap.isDragging ? 'var(--border-2)' : 'var(--border)'}`,
+                                    border:     `1px solid ${snap.isDragging ? 'var(--border-2)' : 'var(--border)'}`,
                                     boxShadow:  snap.isDragging ? '0 8px 24px rgba(0,0,0,.4)' : 'none',
                                     transform:  snap.isDragging ? 'rotate(1.5deg)' : 'none',
                                     transition: snap.isDragging ? 'none' : 'border-color .15s, opacity .15s',
                                     ...prov.draggableProps.style,
                                   }}>
 
-                                  {/* Badge encerrada */}
                                   {encerrado && (
                                     <div className="flex justify-end mb-1">
                                       <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold"
