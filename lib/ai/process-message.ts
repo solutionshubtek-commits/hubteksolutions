@@ -29,6 +29,7 @@ import {
   type GoogleCalendarConfig,
 } from '@/lib/google-calendar'
 import { detectarMeChama } from './detect-me-chama'
+import { ETAPA_INICIAL } from '@/app/api/crm/route'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -37,11 +38,11 @@ const DIAS_PT: Record<number, string> = {
 }
 
 const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
-  openai: { entrada: 0.025, saida: 0.1 },
+  openai:    { entrada: 0.025, saida: 0.1 },
   anthropic: { entrada: 0.015, saida: 0.075 },
 }
 
-const MOTOR_PERFIL = 'gpt-4o-mini'
+const MOTOR_PERFIL              = 'gpt-4o-mini'
 const PERFIL_EXTRACTION_INTERVAL = 5
 
 const SAUDACOES_REGEX = /^(oi|olá|ola|opa|hey|hello|bom dia|boa tarde|boa noite|e aí|eai|e ai|tudo bem|tudo bom|salve)[!?.,:]*$/i
@@ -51,6 +52,37 @@ const HUMANO_REGEX = /\b(falar\s+com\s+(humano|pessoa|atendente|operador|algu[e�
 const FALHA_AGENTE_REGEX = /n[aã]o (tenho|encontrei|possuo|localizei)|n[aã]o (está|esta) (dispon[ií]vel|na base)|n[aã]o (sei|consigo|posso) (responder|ajudar|inform)/i
 
 const FRUSTRACAO_REGEX = /insatisfeito|absurdo|ridículo|ridiculo|horrível|horrivel|péssimo|pessimo|lamentável|lamentavel|decepcionante|revoltante|inaceitável|inaceitavel|não funciona|nao funciona|não resolveu|nao resolveu|tô com raiva|to com raiva|que vergonha|me enganaram|fui lesado/i
+
+const FUNIS_VALIDOS = ['vendas', 'suporte', 'agendamentos', 'qualificacao'] as const
+type FunilTipo = typeof FUNIS_VALIDOS[number]
+
+// ─── Prompt complementar por função ──────────────────────────────────────────
+
+const PROMPT_COMPLEMENTAR: Record<FunilTipo, string> = {
+  vendas: `
+MODO DE ATENDIMENTO: Vendas consultivas.
+Foque em entender a necessidade do cliente, apresentar valor e conduzir naturalmente para o fechamento.
+Nunca force a venda. Identifique objeções e responda com empatia.
+Ao perceber interesse claro, avance para proposta de valor.`,
+
+  suporte: `
+MODO DE ATENDIMENTO: Suporte técnico e atendimento.
+Foque em resolver o problema do cliente com clareza e empatia.
+Confirme sempre se o problema foi resolvido antes de encerrar.
+Se não conseguir resolver, encaminhe para atendimento humano.`,
+
+  agendamentos: `
+MODO DE ATENDIMENTO: Agendamentos.
+Foque em encontrar o melhor horário, confirmar dados e registrar o compromisso.
+Sempre confirme nome, data, hora e serviço antes de finalizar o agendamento.
+Envie um resumo claro após cada agendamento criado.`,
+
+  qualificacao: `
+MODO DE ATENDIMENTO: Qualificação de leads.
+Faça perguntas estratégicas para entender perfil, necessidade e momento de compra do cliente.
+Seja natural — não pareça um questionário. Conduza como uma conversa.
+Ao final, classifique internamente o lead como quente, morno ou frio.`,
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,8 +111,7 @@ function getSaudacao(): string {
 }
 
 function calcularDelayDigitacao(texto: string): number {
-  const ms = texto.length * 30
-  return Math.min(Math.max(ms, 1000), 4000)
+  return Math.min(Math.max(texto.length * 30, 1000), 4000)
 }
 
 function quebrarEmBlocos(texto: string): string[] {
@@ -110,39 +141,23 @@ function quebrarEmBlocos(texto: string): string[] {
 
 function getFeriadosDoAno(year: number): Map<string, string> {
   const feriados = new Map<string, string>()
-
   const fixos: [number, number, string][] = [
-    [1, 1, 'Ano Novo'],
-    [4, 21, 'Tiradentes'],
-    [5, 1, 'Dia do Trabalho'],
-    [9, 7, 'Independência do Brasil'],
-    [10, 12, 'Nossa Senhora Aparecida'],
-    [11, 2, 'Finados'],
-    [11, 15, 'Proclamação da República'],
-    [11, 20, 'Consciência Negra'],
-    [12, 25, 'Natal'],
+    [1, 1, 'Ano Novo'], [4, 21, 'Tiradentes'], [5, 1, 'Dia do Trabalho'],
+    [9, 7, 'Independência do Brasil'], [10, 12, 'Nossa Senhora Aparecida'],
+    [11, 2, 'Finados'], [11, 15, 'Proclamação da República'],
+    [11, 20, 'Consciência Negra'], [12, 25, 'Natal'],
   ]
   fixos.forEach(([m, d, label]) => {
     feriados.set(`${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`, label)
   })
-
-  // Páscoa (algoritmo de Butcher)
-  const a = year % 19
-  const b = Math.floor(year / 100)
-  const c = year % 100
-  const d2 = Math.floor(b / 4)
-  const e = b % 4
-  const f = Math.floor((b + 8) / 25)
-  const g = Math.floor((b - f + 1) / 3)
-  const h = (19 * a + b - d2 - g + 15) % 30
-  const i = Math.floor(c / 4)
-  const k = c % 4
-  const l = (32 + 2 * e + 2 * i - h - k) % 7
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100
+  const d2 = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25)
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d2 - g + 15) % 30
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7
   const m2 = Math.floor((a + 11 * h + 22 * l) / 451)
   const pMonth = Math.floor((h + l - 7 * m2 + 114) / 31)
   const pDay = ((h + l - 7 * m2 + 114) % 31) + 1
   const pascoa = new Date(year, pMonth - 1, pDay)
-
   const addDias = (base: Date, dias: number, label: string) => {
     const dt = new Date(base.getTime() + dias * 86400000)
     feriados.set(
@@ -155,7 +170,6 @@ function getFeriadosDoAno(year: number): Map<string, string> {
   addDias(pascoa, -2, 'Sexta-feira Santa')
   addDias(pascoa, 0, 'Páscoa')
   addDias(pascoa, 60, 'Corpus Christi')
-
   return feriados
 }
 
@@ -164,10 +178,11 @@ function getFeriadosProximos(): string {
   const agoraBR = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
   const hoje = agoraBR.toISOString().slice(0, 10)
   const em60Dias = new Date(agoraBR.getTime() + 60 * 86400000).toISOString().slice(0, 10)
-
   const ano = agoraBR.getFullYear()
-  const todos = new Map([...Array.from(getFeriadosDoAno(ano).entries()), ...Array.from(getFeriadosDoAno(ano + 1).entries())])
-
+  const todos = new Map([
+    ...Array.from(getFeriadosDoAno(ano).entries()),
+    ...Array.from(getFeriadosDoAno(ano + 1).entries()),
+  ])
   const proximos: string[] = []
   Array.from(todos.entries()).forEach(([key, label]) => {
     if (key >= hoje && key <= em60Dias) {
@@ -176,7 +191,6 @@ function getFeriadosProximos(): string {
       proximos.push(`• ${fmt} — ${label}`)
     }
   })
-
   return proximos.sort().join('\n')
 }
 
@@ -300,7 +314,7 @@ Retorne um JSON válido com esta estrutura exata (sem markdown, sem explicaçõe
   "resumo_conversa": "resumo em 1-2 frases do que o cliente precisava nesta conversa ou null"
 }
 Se não houver nada relevante para um campo, use null ou {} para preferencias.
-Não inclua informações sobre agendamentos, datas ou horários marcados no resumo_conversa — esses dados ficam no sistema de agendamentos.`,
+Não inclua informações sobre agendamentos, datas ou horários marcados no resumo_conversa.`,
         },
         { role: 'user', content: apenasCliente },
       ],
@@ -334,8 +348,14 @@ function buildSystemPrompt(
   historicoResumido: string,
   profissionais: Array<{ nome: string; especialidade: string | null }>,
   feriadosProximos: string,
+  funcaoPrincipal?: string,
 ): string {
   let prompt = promptPrincipal || 'Você é um assistente de atendimento ao cliente prestativo e cordial.'
+
+  // Prompt complementar dinâmico por função
+  if (funcaoPrincipal && PROMPT_COMPLEMENTAR[funcaoPrincipal as FunilTipo]) {
+    prompt += `\n\n${PROMPT_COMPLEMENTAR[funcaoPrincipal as FunilTipo]}`
+  }
 
   const saudacao = getSaudacao()
   prompt += `\n\nSAUDAÇÃO ATUAL: Use "${saudacao}" quando for a primeira mensagem ou quando fizer sentido cumprimentar.`
@@ -346,16 +366,20 @@ function buildSystemPrompt(
   }
   const diasLabel = diasFuncionamento.map(d => DIAS_LABEL[d] ?? d).join(', ')
   prompt += `\n\nHORÁRIO DE FUNCIONAMENTO OFICIAL: ${diasLabel}, das ${horarioInicio} às ${horarioFim} (horário de Brasília).`
-  prompt += `\nEsta é a fonte ÚNICA e DEFINITIVA do horário de atendimento. IGNORE qualquer horário diferente que apareça nos documentos da base de conhecimento — eles podem estar desatualizados. Quando perguntarem sobre horário de funcionamento, use SEMPRE este.`
-  prompt += `\nSTATUS ATUAL: ESTAMOS ATENDENDO AGORA. Se o cliente perguntar se estão atendendo ou se está aberto, confirme que SIM — você só recebe mensagens dentro do horário de funcionamento.`
+  prompt += `\nEsta é a fonte ÚNICA e DEFINITIVA do horário de atendimento. IGNORE qualquer horário diferente que apareça nos documentos da base de conhecimento — eles podem estar desatualizados.`
+  prompt += `\nSTATUS ATUAL: ESTAMOS ATENDENDO AGORA. Se o cliente perguntar se estão atendendo ou se está aberto, confirme que SIM.`
 
   prompt += `\n\nINTENÇÃO DETECTADA: ${intencao}.`
   if (intencao === 'reclamacao') prompt += ' O cliente demonstra frustração. Seja mais empático, reconheça o problema antes de tentar resolver.'
   if (intencao === 'saudacao') prompt += ' É uma saudação simples. Responda com cumprimento + pergunta aberta. Não busque dados na base para isso.'
   if (intencao === 'fora_escopo') prompt += ' A mensagem parece fora do seu escopo. Redirecione gentilmente para o que você pode ajudar.'
 
-  if (perfilCliente && intencao !== 'saudacao') prompt += `\n\nPERFIL DO CLIENTE (informações de conversas anteriores — use para personalizar sem perguntar o que já sabe):\n${perfilCliente}`
-  if (historicoResumido && intencao !== 'saudacao') prompt += `\n\nRESUMO DO CONTEXTO DESTA CONVERSA:\n${historicoResumido}`
+  if (perfilCliente && intencao !== 'saudacao') {
+    prompt += `\n\nPERFIL DO CLIENTE:\n${perfilCliente}`
+  }
+  if (historicoResumido && intencao !== 'saudacao') {
+    prompt += `\n\nRESUMO DO CONTEXTO DESTA CONVERSA:\n${historicoResumido}`
+  }
 
   prompt += `
 
@@ -367,31 +391,28 @@ REGRAS DE COMPORTAMENTO:
    - Se dois trechos trouxerem valores diferentes para a mesma informação, use o trecho de número menor (mais recente).
 
 2. QUANDO A BASE NÃO TEM A RESPOSTA
-   - Para perguntas gerais, contextuais ou de conversação que não exigem dados específicos da empresa, responda naturalmente com base no seu conhecimento.
-   - Para perguntas que exigem dados específicos da empresa (preços, prazos, políticas) e que não estão na base, diga: "Não tenho essa informação no momento. Para mais detalhes, entre em contato diretamente conosco."
-   - Não diga "não sei" para perguntas simples de atendimento que você claramente consegue responder.
+   - Para perguntas gerais que não exigem dados específicos da empresa, responda naturalmente.
+   - Para perguntas que exigem dados específicos da empresa e que não estão na base, diga: "Não tenho essa informação no momento. Para mais detalhes, entre em contato diretamente conosco."
 
 3. RESPOSTAS
    - Seja direto e objetivo. Responda o que foi perguntado.
    - Não repita a pergunta do cliente na resposta.
    - Não use frases como "Claro!", "Com certeza!", "Ótima pergunta!" — vá direto ao ponto.
-   - NUNCA invente contexto ou assuma o que o cliente está fazendo. Se não houver contexto claro, apenas responda ao que foi dito diretamente.
-   - Se a mensagem for vaga ou ambígua, peça esclarecimento de forma simples.
-   - NUNCA mencione ferramentas internas, sistemas, IDs, ou processos técnicos ao cliente. O cliente só deve ver respostas naturais de atendimento.
+   - NUNCA invente contexto ou assuma o que o cliente está fazendo.
+   - NUNCA mencione ferramentas internas, sistemas, IDs, ou processos técnicos ao cliente.
    - NUNCA confirme ou negue informações que não foram fornecidas pelo cliente nesta conversa.
    - Finalize com uma pergunta curta de continuidade apenas quando fizer sentido.
-   - Nunca invente dados específicos da empresa para parecer mais prestativo.
    - Quebre respostas longas em parágrafos curtos — mais natural para WhatsApp.`
 
   if (knowledgeDocs.length > 0) {
     prompt += '\n\nBASE DE CONHECIMENTO (do mais recente para o mais antigo — priorize os primeiros em caso de conflito):\n'
     prompt += knowledgeDocs.map((d, i) => `\n[Trecho ${i + 1}]\n${d.conteudo_texto}`).join('\n---')
   } else {
-    prompt += '\n\nBase de conhecimento: nenhum trecho relevante encontrado para esta consulta. Use seu conhecimento geral para responder perguntas simples de atendimento. Para informações específicas da empresa, informe que não tem o dado disponível no momento.'
+    prompt += '\n\nBase de conhecimento: nenhum trecho relevante encontrado. Use seu conhecimento geral para responder perguntas simples de atendimento.'
   }
 
   if (temCalendar) {
-    prompt += `\n\nAGENDA: Você tem acesso à agenda da empresa. Horário de atendimento: ${horarioInicio} às ${horarioFim}.`
+    prompt += `\n\nAGENDA: Você tem acesso à agenda da empresa. Horário: ${horarioInicio} às ${horarioFim}.`
     prompt += '\nAgendamento: consulte slots disponíveis, confirme data/hora e crie o evento.'
     prompt += '\nReagendamento: localize pelo nome do cliente e reagende.'
     prompt += '\nCancelamento: localize, confirme com o cliente e delete.'
@@ -400,41 +421,37 @@ REGRAS DE COMPORTAMENTO:
 
   if (temAgendamentosHubtek) {
     prompt += `\n\nAGENDAMENTOS INTERNOS: Você pode criar, consultar, confirmar, reagendar e cancelar agendamentos diretamente no sistema.`
-    prompt += '\nUse as tools de agendamento para registrar compromissos solicitados pelo cliente.'
-    prompt += '\nPara reagendar: SEMPRE use primeiro listar_agendamentos_cliente para obter o ID correto, depois chame reagendar_agendamento_hubtek UMA ÚNICA VEZ com esse ID e a nova data/hora. NÃO cancele e recrie — use apenas reagendar_agendamento_hubtek. Nunca mencione IDs técnicos ao cliente.'
-    prompt += '\nPara cancelar: use listar_agendamentos_cliente para obter o ID, depois chame cancelar_agendamento_hubtek UMA ÚNICA VEZ com esse ID. Nunca mencione IDs técnicos ao cliente.'
+    prompt += '\nPara reagendar: SEMPRE use primeiro listar_agendamentos_cliente para obter o ID correto, depois chame reagendar_agendamento_hubtek UMA ÚNICA VEZ.'
+    prompt += '\nPara cancelar: use listar_agendamentos_cliente para obter o ID, depois chame cancelar_agendamento_hubtek UMA ÚNICA VEZ.'
     prompt += '\nPara recontatos: use criar_recontato quando o cliente pedir para ser chamado depois.'
-    prompt += '\nNUNCA mencione agendamentos existentes espontaneamente na saudação ou em respostas gerais. Só consulte ou liste agendamentos se o cliente perguntar explicitamente sobre eles, pedir para confirmar, reagendar ou cancelar.'
-    prompt += '\nEXECUTE a ação ANTES de responder ao cliente. NUNCA anuncie que vai fazer algo e espere — chame a tool, receba o resultado e confirme tudo em uma única resposta. Jamais diga "Um momento, por favor" ou "Vou verificar" sem já ter executado.'
-    prompt += '\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00). Exemplo: 20/05/2026 às 10:00 = "2026-05-20T10:00:00-03:00".'
+    prompt += '\nNUNCA mencione agendamentos existentes espontaneamente na saudação ou em respostas gerais.'
+    prompt += '\nEXECUTE a ação ANTES de responder ao cliente. Jamais diga "Um momento, por favor" sem já ter executado.'
+    prompt += `\nDATAS E HORÁRIOS: sempre use o fuso horário de Brasília (offset -03:00).`
     prompt += `\n\nTELEFONE PARA AGENDAMENTOS:`
     prompt += `\n1. "este número", "meu número" → use ${telefoneCliente}`
-    prompt += `\n2. Número com DDD (10 ou 11 dígitos) → normalize e use`
-    prompt += `\n3. Número SEM DDD (8 ou 9 dígitos) → pergunte: "Qual o DDD? Aqui costumamos usar 51."`
+    prompt += `\n2. Número com DDD → normalize e use`
+    prompt += `\n3. Número SEM DDD → pergunte: "Qual o DDD? Aqui costumamos usar 51."`
     prompt += `\n4. NUNCA salve número sem DDD completo`
-    prompt += '\nNUNCA cancele ou modifique agendamentos sem o cliente pedir EXPLICITAMENTE. Se o cliente pedir para CRIAR um novo agendamento, apenas crie — não cancele nada antes.'
-    prompt += '\nAntes de cancelar ou reagendar, SEMPRE confirme com o cliente: "Confirma o cancelamento do agendamento de [data] às [hora]?"'
-
+    prompt += '\nNUNCA cancele ou modifique agendamentos sem o cliente pedir EXPLICITAMENTE.'
+    prompt += '\nAntes de cancelar ou reagendar, SEMPRE confirme com o cliente.'
     if (profissionais.length > 0) {
-      prompt += `\n\nPROFISSIONAIS DA EQUIPE (use para sugerir e registrar no campo profissional do agendamento):\n`
+      prompt += `\n\nPROFISSIONAIS DA EQUIPE:\n`
       prompt += profissionais.map(p => `• ${p.nome}${p.especialidade ? ` — ${p.especialidade}` : ''}`).join('\n')
-      prompt += `\nSEMPRE pergunte o profissional de preferência ANTES de criar o agendamento, mesmo que o cliente não mencione. Só crie o agendamento após o cliente confirmar o profissional. Registre sempre o nome exato no campo profissional.`
+      prompt += `\nSEMPRE pergunte o profissional de preferência ANTES de criar o agendamento.`
     }
-    prompt += `\nAntes de criar um agendamento, use listar_agendamentos_cliente para verificar se já existe um agendamento no mesmo horário. Se houver conflito, informe o cliente e sugira outro horário.`
+    prompt += `\nAntes de criar um agendamento, use listar_agendamentos_cliente para verificar conflitos de horário.`
   }
 
   if (feriadosProximos) {
-    prompt += `\n\nFERIADOS NACIONAIS PRÓXIMOS (próximos 60 dias — informe o cliente quando tentar agendar nesta data):\n${feriadosProximos}`
+    prompt += `\n\nFERIADOS NACIONAIS PRÓXIMOS (próximos 60 dias):\n${feriadosProximos}`
   }
 
   const agora = new Date()
   const agoraBrasil = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
-  const dataAtual = agoraBrasil.toISOString().slice(0, 10)
-  const horaAtual = agoraBrasil.toISOString().slice(11, 16)
-  prompt += `\n\nDATA E HORA ATUAL (Brasília): ${dataAtual} às ${horaAtual}.`
+  prompt += `\n\nDATA E HORA ATUAL (Brasília): ${agoraBrasil.toISOString().slice(0, 10)} às ${agoraBrasil.toISOString().slice(11, 16)}.`
   prompt += `\n\nTELEFONE DO CLIENTE NESTA CONVERSA: ${telefoneCliente}.`
   prompt += '\n\nResponda sempre em português brasileiro.'
-  prompt += '\n\nCAPACIDADES DE MÍDIA: Você consegue receber e interpretar áudios (transcrição automática), imagens (visão computacional) e ler textos. Quando o cliente perguntar se você pode ouvir áudios, ver imagens ou processar mídia, confirme que SIM e diga que pode enviar à vontade — você processa tudo automaticamente.'
+  prompt += '\n\nCAPACIDADES DE MÍDIA: Você consegue receber e interpretar áudios (transcrição automática), imagens (visão computacional) e ler textos.'
 
   return prompt
 }
@@ -477,10 +494,10 @@ const CALENDAR_TOOLS: Tool[] = [
         type: 'object',
         properties: {
           nome_cliente: { type: 'string', description: 'Nome do cliente para o título do evento' },
-          data: { type: 'string', description: 'Data no formato YYYY-MM-DD' },
-          hora_inicio: { type: 'string', description: 'Hora de início no formato HH:MM' },
-          hora_fim: { type: 'string', description: 'Hora de fim no formato HH:MM' },
-          descricao: { type: 'string', description: 'Descrição ou observações do agendamento' },
+          data:         { type: 'string', description: 'Data no formato YYYY-MM-DD' },
+          hora_inicio:  { type: 'string', description: 'Hora de início no formato HH:MM' },
+          hora_fim:     { type: 'string', description: 'Hora de fim no formato HH:MM' },
+          descricao:    { type: 'string', description: 'Descrição ou observações do agendamento' },
         },
         required: ['nome_cliente', 'data', 'hora_inicio', 'hora_fim'],
       },
@@ -494,10 +511,10 @@ const CALENDAR_TOOLS: Tool[] = [
       parameters: {
         type: 'object',
         properties: {
-          nome_cliente: { type: 'string', description: 'Nome do cliente para buscar o evento' },
-          nova_data: { type: 'string', description: 'Nova data no formato YYYY-MM-DD' },
+          nome_cliente:     { type: 'string', description: 'Nome do cliente para buscar o evento' },
+          nova_data:        { type: 'string', description: 'Nova data no formato YYYY-MM-DD' },
           nova_hora_inicio: { type: 'string', description: 'Novo horário de início HH:MM' },
-          nova_hora_fim: { type: 'string', description: 'Novo horário de fim HH:MM' },
+          nova_hora_fim:    { type: 'string', description: 'Novo horário de fim HH:MM' },
         },
         required: ['nome_cliente', 'nova_data', 'nova_hora_inicio', 'nova_hora_fim'],
       },
@@ -544,12 +561,12 @@ const APPOINTMENT_TOOLS: Tool[] = [
       parameters: {
         type: 'object',
         properties: {
-          contato_nome: { type: 'string', description: 'Nome do cliente' },
-          contato_telefone: { type: 'string', description: 'Telefone do cliente com DDI (ex: 5551999999999)' },
-          servico: { type: 'string', description: 'Serviço ou motivo do agendamento' },
-          data_hora: { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00. Ex: "2026-05-20T10:00:00-03:00"' },
+          contato_nome:       { type: 'string', description: 'Nome do cliente' },
+          contato_telefone:   { type: 'string', description: 'Telefone do cliente com DDI (ex: 5551999999999)' },
+          servico:            { type: 'string', description: 'Serviço ou motivo do agendamento' },
+          data_hora:          { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00.' },
           antecedencia_horas: { type: 'number', description: 'Horas de antecedência para o lembrete. Padrão: 24' },
-          profissional: { type: 'string', description: 'Nome do profissional responsável (opcional — use exatamente o nome da lista de profissionais)' },
+          profissional:       { type: 'string', description: 'Nome do profissional responsável (opcional)' },
         },
         required: ['contato_nome', 'contato_telefone', 'servico', 'data_hora'],
       },
@@ -559,7 +576,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
     type: 'function',
     function: {
       name: 'listar_agendamentos_cliente',
-      description: 'Busca todos os agendamentos ativos de um cliente pelo telefone. Use antes de reagendar ou cancelar para obter o ID correto.',
+      description: 'Busca todos os agendamentos ativos de um cliente pelo telefone.',
       parameters: {
         type: 'object',
         properties: {
@@ -587,12 +604,12 @@ const APPOINTMENT_TOOLS: Tool[] = [
     type: 'function',
     function: {
       name: 'reagendar_agendamento_hubtek',
-      description: 'Reagenda um agendamento existente para nova data e horário. Use o ID retornado por listar_agendamentos_cliente. NÃO cancele e recrie — use apenas esta tool.',
+      description: 'Reagenda um agendamento existente para nova data e horário.',
       parameters: {
         type: 'object',
         properties: {
-          appointment_id: { type: 'string', description: 'ID do agendamento a reagendar (obtido via listar_agendamentos_cliente)' },
-          nova_data_hora: { type: 'string', description: 'Nova data e hora ISO 8601 com offset -03:00. Ex: "2026-05-29T10:00:00-03:00"' },
+          appointment_id: { type: 'string', description: 'ID do agendamento a reagendar' },
+          nova_data_hora: { type: 'string', description: 'Nova data e hora ISO 8601 com offset -03:00.' },
         },
         required: ['appointment_id', 'nova_data_hora'],
       },
@@ -602,7 +619,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
     type: 'function',
     function: {
       name: 'cancelar_agendamento_hubtek',
-      description: 'Cancela um agendamento existente no sistema Hubtek. Use o ID retornado por listar_agendamentos_cliente.',
+      description: 'Cancela um agendamento existente no sistema Hubtek.',
       parameters: {
         type: 'object',
         properties: {
@@ -620,10 +637,10 @@ const APPOINTMENT_TOOLS: Tool[] = [
       parameters: {
         type: 'object',
         properties: {
-          contato_nome: { type: 'string', description: 'Nome do cliente' },
+          contato_nome:     { type: 'string', description: 'Nome do cliente' },
           contato_telefone: { type: 'string', description: 'Telefone do cliente com DDI' },
           mensagem_inicial: { type: 'string', description: 'Mensagem a enviar no recontato' },
-          agendado_para: { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00. Ex: "2026-05-20T10:00:00-03:00"' },
+          agendado_para:    { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00.' },
         },
         required: ['contato_nome', 'contato_telefone', 'mensagem_inicial', 'agendado_para'],
       },
@@ -644,8 +661,8 @@ function normalizarTelefone(tel: string, dddPadrao = '51'): string {
   if (digits.startsWith('55') && digits.length >= 12) return digits
   if (digits.length === 11) return `55${digits}`
   if (digits.length === 10) return `55${digits}`
-  if (digits.length === 9) return `55${dddPadrao}${digits}`
-  if (digits.length === 8) return `55${dddPadrao}${digits}`
+  if (digits.length === 9)  return `55${dddPadrao}${digits}`
+  if (digits.length === 8)  return `55${dddPadrao}${digits}`
   return digits
 }
 
@@ -667,7 +684,7 @@ async function expandirPergunta(pergunta: string, contextoAnterior?: string): Pr
       ? `Contexto da conversa anterior: "${contextoAnterior}"\nPergunta atual: "${pergunta}"`
       : pergunta
     const resposta = await openAIChatCompletion([
-      { role: 'system', content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema. Considere o contexto da conversa para enriquecer as palavras-chave quando a pergunta for curta ou ambígua. Inclua sinônimos, termos do domínio e variações relevantes. Retorne apenas as palavras separadas por espaço, sem pontuação.' },
+      { role: 'system', content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema. Retorne apenas as palavras separadas por espaço, sem pontuação.' },
       { role: 'user', content: contexto },
     ], { temperature: 0, maxTokens: 60 })
     const palavras = resposta.content.trim()
@@ -720,7 +737,7 @@ async function executarToolCall(
       const evento = await createEvent(calendarConfig, {
         summary: `Agendamento - ${args.nome_cliente}`,
         start: `${args.data}T${args.hora_inicio}:00-03:00`,
-        end: `${args.data}T${args.hora_fim}:00-03:00`,
+        end:   `${args.data}T${args.hora_fim}:00-03:00`,
         description: String(args.descricao ?? ''),
       })
       const d = new Date(evento.start)
@@ -810,25 +827,24 @@ async function executarAppointmentToolCall(
 
   try {
     if (toolName === 'criar_agendamento_hubtek') {
-      const dataHora = String(args.data_hora)
+      const dataHora    = String(args.data_hora)
       const profissional = args.profissional ? String(args.profissional) : null
       const { data, error } = await supabase
         .from('appointments')
         .insert({
-          tenant_id: tenantId,
-          instance_name: instanceName,
-          contato_nome: String(args.contato_nome),
-          contato_telefone: normalizarTelefone(String(args.contato_telefone)),
-          servico: String(args.servico),
-          data_hora: dataHora,
+          tenant_id:          tenantId,
+          instance_name:      instanceName,
+          contato_nome:       String(args.contato_nome),
+          contato_telefone:   normalizarTelefone(String(args.contato_telefone)),
+          servico:            String(args.servico),
+          data_hora:          dataHora,
           antecedencia_horas: Number(args.antecedencia_horas ?? 24),
-          status: 'pendente',
+          status:             'pendente',
           profissional,
         })
         .select('id, data_hora')
         .single()
       if (error) { console.error('[appointment tool] criar_agendamento_hubtek:', error); return 'Erro ao criar agendamento. Tente novamente.' }
-
       try {
         const calConfig = await getCalConfig()
         if (calConfig) {
@@ -851,7 +867,6 @@ async function executarAppointmentToolCall(
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar criar falhou (não crítico):', calErr)
       }
-
       const d = new Date(data.data_hora)
       const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
@@ -873,8 +888,7 @@ async function executarAppointmentToolCall(
         const d = new Date(a.data_hora)
         const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
         const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
-        const profStr = a.profissional ? ` — ${a.profissional}` : ''
-        return `[ID:${a.id}] ${dataFmt} às ${horaFmt} — ${a.servico}${profStr} (${a.status})`
+        return `[ID:${a.id}] ${dataFmt} às ${horaFmt} — ${a.servico}${a.profissional ? ` — ${a.profissional}` : ''} (${a.status})`
       }).join('\n')
       return `Agendamentos encontrados:\n${lista}`
     }
@@ -908,21 +922,18 @@ async function executarAppointmentToolCall(
 
     if (toolName === 'reagendar_agendamento_hubtek') {
       const novaDataHora = String(args.nova_data_hora)
-
       const { data: appt } = await supabase
         .from('appointments')
         .select('google_event_id, contato_nome, profissional')
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
         .maybeSingle()
-
       const { error } = await supabase
         .from('appointments')
         .update({ data_hora: novaDataHora, status: 'pendente' })
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
       if (error) { console.error('[appointment tool] reagendar_agendamento_hubtek:', error); return 'Erro ao reagendar agendamento.' }
-
       try {
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
@@ -933,7 +944,6 @@ async function executarAppointmentToolCall(
       } catch (calErr) {
         console.error('[appointment tool] sync Calendar reagendar falhou (não crítico):', calErr)
       }
-
       const d = new Date(novaDataHora)
       const dataFmt = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' })
       const horaFmt = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
@@ -969,15 +979,15 @@ async function executarAppointmentToolCall(
 
     if (toolName === 'criar_recontato') {
       const { error } = await supabase.from('scheduled_tasks').insert({
-        tenant_id: tenantId,
-        instance_name: instanceName,
+        tenant_id:        tenantId,
+        instance_name:    instanceName,
         contato_telefone: normalizarTelefone(String(args.contato_telefone)),
-        contato_nome: String(args.contato_nome),
-        tipo: 'me_chama_depois',
+        contato_nome:     String(args.contato_nome),
+        tipo:             'me_chama_depois',
         mensagem_inicial: String(args.mensagem_inicial),
-        agendado_para: String(args.agendado_para),
-        status: 'pendente',
-        criado_por: null,
+        agendado_para:    String(args.agendado_para),
+        status:           'pendente',
+        criado_por:       null,
       })
       if (error) { console.error('[appointment tool] criar_recontato:', error); return 'Erro ao criar recontato.' }
       const d = new Date(String(args.agendado_para))
@@ -1058,17 +1068,131 @@ async function escalarParaHumano(
 
     await supabase.from('notifications').insert(
       usuarios.map((u) => ({
-        user_id: u.id,
+        user_id:   u.id,
         tenant_id: tenantId,
-        tipo: 'atendimento_humano',
-        titulo: 'Cliente aguardando atendimento',
+        tipo:      'atendimento_humano',
+        titulo:    'Cliente aguardando atendimento',
         mensagem,
-        metadata: { conversation_id: conversationId, contato_nome: nomeContato, motivo },
-        lida: false,
+        metadata:  { conversation_id: conversationId, contato_nome: nomeContato, motivo },
+        lida:      false,
       }))
     )
   } catch (err) {
     console.error('[process-message] escalarParaHumano falhou:', err)
+  }
+}
+
+
+// ─── Classificação automática de etapa CRM ───────────────────────────────────
+
+async function classificarEtapaCRM({
+  tenantId,
+  conversationId,
+  funilTipo,
+  historicoRecente,
+  respostaAgente,
+  mensagemCliente,
+}: {
+  tenantId: string
+  conversationId: string
+  funilTipo: string
+  historicoRecente: string
+  respostaAgente: string
+  mensagemCliente: string
+}): Promise<void> {
+  const supabase = createServiceClient()
+
+  const { data: leadAtual } = await supabase
+    .from('crm_leads')
+    .select('id, etapa')
+    .eq('conversation_id', conversationId)
+    .eq('tenant_id', tenantId)
+    .maybeSingle()
+
+  if (!leadAtual) return
+
+  const { ETAPAS_FUNIL } = await import('@/lib/crm')
+  const etapas = ETAPAS_FUNIL[funilTipo] ?? []
+  const etapasFinais = etapas.slice(-2)
+
+  if (etapasFinais.includes(leadAtual.etapa)) return
+
+  try {
+    const OpenAI = (await import('openai')).default
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+
+    const { choices } = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      max_tokens: 30,
+      messages: [
+        {
+          role: 'system',
+          content: `Você analisa conversas de atendimento e decide se o lead avançou de etapa no funil de ${funilTipo}.\nEtapas disponíveis em ordem: ${etapas.join(' → ')}\nEtapa atual: ${leadAtual.etapa}\n\nRegras:\n- Responda APENAS com o nome exato de uma etapa da lista, ou "manter"\n- Só avance se houver sinal CLARO de progresso na conversa\n- Nunca vá para etapas finais (${etapasFinais.join(', ')}) automaticamente — essas são movidas apenas pelo humano\n- Se não tiver certeza, responda "manter"`,
+        },
+        {
+          role: 'user',
+          content: `Histórico recente:\n${historicoRecente}\n\nÚltima mensagem do cliente: ${mensagemCliente}\nResposta do agente: ${respostaAgente}\n\nQual deve ser a etapa agora?`,
+        },
+      ],
+    })
+
+    const novaEtapa = choices[0]?.message?.content?.trim().toLowerCase() ?? 'manter'
+
+    if (
+      novaEtapa === 'manter' ||
+      novaEtapa === leadAtual.etapa ||
+      !etapas.includes(novaEtapa) ||
+      etapasFinais.includes(novaEtapa)
+    ) return
+
+    await supabase
+      .from('crm_leads')
+      .update({
+        etapa:          novaEtapa,
+        etapa_anterior: leadAtual.etapa,
+        movido_por:     'agente',
+        atualizado_em:  new Date().toISOString(),
+      })
+      .eq('id', leadAtual.id)
+
+    console.log(`[CRM] Lead ${leadAtual.id} avançou: ${leadAtual.etapa} → ${novaEtapa}`)
+  } catch (err) {
+    console.error('[CRM] classificarEtapaCRM falhou:', err)
+  }
+}
+
+// ─── Upsert lead no CRM ───────────────────────────────────────────────────────
+
+async function upsertCRMLead(
+  supabase: ReturnType<typeof createServiceClient>,
+  tenantId: string,
+  conversationId: string,
+  contatoNome: string | null,
+  contatoTelefone: string,
+  funilTipo: string,
+): Promise<void> {
+  try {
+    const etapaInicial = ETAPA_INICIAL[funilTipo]
+    if (!etapaInicial) return
+    await supabase.from('crm_leads').upsert(
+      {
+        tenant_id:        tenantId,
+        conversation_id:  conversationId,
+        contato_nome:     contatoNome,
+        contato_telefone: contatoTelefone,
+        funil_tipo:       funilTipo,
+        etapa:            etapaInicial,
+        movido_por:       'agente',
+        atualizado_em:    new Date().toISOString(),
+      },
+      {
+        onConflict:       'conversation_id',
+        ignoreDuplicates: true,
+      }
+    )
+  } catch (err) {
+    console.error('[process-message] upsertCRMLead falhou (não crítico):', err)
   }
 }
 
@@ -1082,18 +1206,18 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   )
 
   let tipoDb = 'texto'
-  if (payload.messageType === 'audioMessage') tipoDb = 'audio'
-  else if (payload.messageType === 'imageMessage') tipoDb = 'imagem'
-  else if (payload.messageType === 'videoMessage') tipoDb = 'video'
+  if (payload.messageType === 'audioMessage')    tipoDb = 'audio'
+  else if (payload.messageType === 'imageMessage')    tipoDb = 'imagem'
+  else if (payload.messageType === 'videoMessage')    tipoDb = 'video'
   else if (payload.messageType === 'documentMessage') tipoDb = 'documento'
 
   const mensagemSalva = await saveMessage(supabase, {
     conversationId: conversa.id,
-    tenantId: payload.tenantId,
-    origem: 'cliente',
-    tipo: tipoDb,
-    conteudo: payload.conteudo,
-    metadata: { messageId: payload.messageId, pushName: payload.pushName },
+    tenantId:       payload.tenantId,
+    origem:         'cliente',
+    tipo:           tipoDb,
+    conteudo:       payload.conteudo,
+    metadata:       { messageId: payload.messageId, pushName: payload.pushName },
   })
 
   await updateConversationTimestamp(supabase, conversa.id)
@@ -1106,6 +1230,23 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   const config = await getAgentConfig(supabase, payload.tenantId)
   if (!config || !config.ativo) return
+
+  // ─── CRM: extrai função principal e cria lead automaticamente ─────────────
+  const configExtra     = config as unknown as Record<string, unknown>
+  const funcoesAtivas   = (configExtra.funcoes_ativas as string[]) ?? []
+  const funcaoPrincipal = funcoesAtivas[0] as FunilTipo | undefined
+
+  if (funcaoPrincipal && FUNIS_VALIDOS.includes(funcaoPrincipal)) {
+    upsertCRMLead(
+      supabase,
+      payload.tenantId,
+      conversa.id,
+      conversa.contato_nome ?? payload.pushName ?? null,
+      payload.phone,
+      funcaoPrincipal,
+    ).catch(() => {})
+  }
+  // ──────────────────────────────────────────────────────────────────────────
 
   const dentroDoHorario = isWithinOperatingHours(config.horario_inicio, config.horario_fim, config.dias_funcionamento)
   if (!dentroDoHorario) {
@@ -1181,11 +1322,11 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         perfil.contato_nome ? `Nome: ${perfil.contato_nome}` : '',
         perfil.cidade ? `Cidade: ${perfil.cidade}` : '',
         perfil.preferencias && Object.keys(perfil.preferencias).length > 0
-  ? `Preferências: ${Object.entries(perfil.preferencias)
-      .filter(([k]) => !/(data|hora|agendamento|pizza|sabor|produto|pagamento|reagendamento)/i.test(k))
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(', ')}`
-  : '',
+          ? `Preferências: ${Object.entries(perfil.preferencias)
+              .filter(([k]) => !/(data|hora|agendamento|pizza|sabor|produto|pagamento|reagendamento)/i.test(k))
+              .map(([k, v]) => `${k}: ${v}`)
+              .join(', ')}`
+          : '',
         perfil.historico_resumido ? `Histórico anterior: ${perfil.historico_resumido}` : '',
       ].filter(Boolean).join('\n')
     : ''
@@ -1194,9 +1335,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     salvarPerfilCliente(supabase, payload.tenantId, payload.phone, perfil, { nome: payload.pushName }).catch(() => {})
   }
 
-  const historico = await getRecentMessages(supabase, conversa.id, 20)
-  const historicoResumido = await gerarResumoHistorico(historico)
-  const historicoRecente = historico.slice(-10)
+  const historico          = await getRecentMessages(supabase, conversa.id, 20)
+  const historicoResumido  = await gerarResumoHistorico(historico)
+  const historicoRecente   = historico.slice(-10)
 
   const totalMensagensCliente = historico.filter(m => m.origem === 'cliente').length
   if (deveExtrairPerfil(totalMensagensCliente)) {
@@ -1207,9 +1348,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
           Object.keys(extraido.preferencias ?? {}).length > 0 || extraido.resumo_conversa
         if (!temDados) return
         await salvarPerfilCliente(supabase, payload.tenantId, payload.phone, perfil, {
-          nome: extraido.nome ?? undefined,
-          cidade: extraido.cidade ?? undefined,
-          preferencias: extraido.preferencias ?? {},
+          nome:            extraido.nome ?? undefined,
+          cidade:          extraido.cidade ?? undefined,
+          preferencias:    extraido.preferencias ?? {},
           resumo_conversa: extraido.resumo_conversa ?? undefined,
         })
         console.log(`[perfil] Atualizado para ${payload.phone} | msgs cliente: ${totalMensagensCliente}`)
@@ -1227,10 +1368,10 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       const textoParaEmbedding = await expandirPergunta(perguntaNormalizada, contextoAnterior)
       const embedding = await generateEmbedding(textoParaEmbedding)
       const { data: docs, error: ragError } = await supabase.rpc('match_knowledge', {
-        query_embedding: embedding,
-        match_tenant_id: payload.tenantId,
-        match_threshold: 0.35,
-        match_count: 10,
+        query_embedding:  embedding,
+        match_tenant_id:  payload.tenantId,
+        match_threshold:  0.35,
+        match_count:      10,
       })
       if (ragError) console.error('[RAG] Erro no match_knowledge:', ragError)
       knowledgeDocs = ((docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>)
@@ -1241,13 +1382,10 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     }
   }
 
-  const configExtra = config as unknown as Record<string, unknown>
-  const calendarConfig = configExtra.google_calendar_config as GoogleCalendarConfig | null
-  const funcoesAtivas = (configExtra.funcoes_ativas as string[]) ?? []
-  const temCalendar = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
+  const calendarConfig        = configExtra.google_calendar_config as GoogleCalendarConfig | null
+  const temCalendar           = !!(calendarConfig?.client_email && calendarConfig?.private_key && calendarConfig?.calendar_id)
   const temAgendamentosHubtek = funcoesAtivas.includes('agendamentos')
 
-  // Busca profissionais e feriados apenas quando agendamentos está ativo
   const profissionaisDoTenant = temAgendamentosHubtek
     ? await getProfissionaisDoTenant(supabase, payload.tenantId)
     : []
@@ -1255,9 +1393,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   const isPrimeiraMsg = historico.filter(m => m.origem === 'cliente').length === 1
   if (isPrimeiraMsg && config.prompt_principal) {
-    const saudacao = getSaudacao()
+    const saudacao    = getSaudacao()
     const nomeCliente = payload.pushName ? `, ${payload.pushName.split(' ')[0]}` : ''
-    const boasVindas = `${saudacao}${nomeCliente}! 👋 Em que posso ajudar?`
+    const boasVindas  = `${saudacao}${nomeCliente}! 👋 Em que posso ajudar?`
     await enviarResposta(payload.instanceName, payload.phone, boasVindas)
     await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: boasVindas })
     await updateConversationTimestamp(supabase, conversa.id)
@@ -1281,6 +1419,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         historicoResumido,
         profissionaisDoTenant,
         feriadosProximosStr,
+        funcaoPrincipal,
       ),
     },
     ...historicoRecente.slice(0, -1).map(m => ({
@@ -1291,21 +1430,19 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   ]
 
   const toolsAtivas: Tool[] = []
-  if (temAgendamentosHubtek) {
-    toolsAtivas.push(...APPOINTMENT_TOOLS)
-  } else if (temCalendar) {
-    toolsAtivas.push(...CALENDAR_TOOLS)
-  }
+  if (temAgendamentosHubtek) toolsAtivas.push(...APPOINTMENT_TOOLS)
+  else if (temCalendar)      toolsAtivas.push(...CALENDAR_TOOLS)
 
-  const usarTools = toolsAtivas.length > 0 
-  && config.motor_ia_principal === 'openai'
-  && intencao !== 'saudacao'
-  && intencao !== 'fora_escopo'
-  && intencao !== 'duvida'
+  const usarTools =
+    toolsAtivas.length > 0 &&
+    config.motor_ia_principal === 'openai' &&
+    intencao !== 'saudacao' &&
+    intencao !== 'fora_escopo' &&
+    intencao !== 'duvida'
 
   const temperaturaBase = Number(config.temperatura)
-  const temperatura = intencao === 'reclamacao' ? Math.min(temperaturaBase + 0.2, 1.0) : temperaturaBase
-  const chatConfig = { temperature: temperatura, maxTokens: config.max_tokens }
+  const temperatura     = intencao === 'reclamacao' ? Math.min(temperaturaBase + 0.2, 1.0) : temperaturaBase
+  const chatConfig      = { temperature: temperatura, maxTokens: config.max_tokens }
 
   const { data: ultimasMsgsAgente } = await supabase
     .from('messages')
@@ -1320,16 +1457,16 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   ).length
 
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
-  let motorUsado = config.motor_ia_principal
-  let recontotoCriadoPorTool = false
+  let motorUsado              = config.motor_ia_principal
+  let recontotoCriadoPorTool  = false
 
   try {
     if (usarTools) {
       let mensagensAcumuladas: ChatMessage[] = [...chatMessages]
-      const MAX_RODADAS = 5
-      let rodada = 0
-
+      const MAX_RODADAS     = 5
+      let rodada            = 0
       const toolsExecutadas = new Set<string>()
+
       while (rodada < MAX_RODADAS) {
         rodada++
         const respostaComTools = await openAIChatCompletionWithTools(
@@ -1339,22 +1476,23 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         )
 
         if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
-          const toolResults: ChatMessage[] = []
+          const toolResults: ChatMessage[]  = []
           const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
+
           for (const tc of toolCallsTyped) {
             const toolsUnicas = ['criar_agendamento_hubtek', 'cancelar_agendamento_hubtek', 'reagendar_agendamento_hubtek', 'criar_recontato']
-if (toolsUnicas.includes(tc.function.name)) {
-  if (toolsExecutadas.has(tc.function.name)) {
-    console.warn(`[tools] Tool ${tc.function.name} já executada nesta conversa — bloqueando duplicata`)
-    toolResults.push({
-      role: 'tool' as const,
-      content: 'Ação já executada anteriormente nesta conversa. Não execute novamente.',
-      tool_call_id: tc.id,
-    } as ChatMessage)
-    continue
-  }
-  toolsExecutadas.add(tc.function.name)
-} 
+            if (toolsUnicas.includes(tc.function.name)) {
+              if (toolsExecutadas.has(tc.function.name)) {
+                console.warn(`[tools] Tool ${tc.function.name} já executada — bloqueando duplicata`)
+                toolResults.push({
+                  role:         'tool' as const,
+                  content:      'Ação já executada anteriormente nesta conversa. Não execute novamente.',
+                  tool_call_id: tc.id,
+                } as ChatMessage)
+                continue
+              }
+              toolsExecutadas.add(tc.function.name)
+            }
             const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
             const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
             if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
@@ -1362,8 +1500,8 @@ if (toolsUnicas.includes(tc.function.name)) {
               ? await executarAppointmentToolCall(tc.function.name, args, payload.tenantId, payload.instanceName)
               : await executarToolCall(tc.function.name, args, calendarConfig!, config.horario_inicio, config.horario_fim)
             toolResults.push({
-              role: 'tool' as const,
-              content: toolResult,
+              role:         'tool' as const,
+              content:      toolResult,
               tool_call_id: tc.id,
             } as ChatMessage)
           }
@@ -1375,8 +1513,8 @@ if (toolsUnicas.includes(tc.function.name)) {
           ]
         } else {
           resultado = {
-            content: respostaComTools.content,
-            tokensIn: respostaComTools.tokensIn,
+            content:   respostaComTools.content,
+            tokensIn:  respostaComTools.tokensIn,
             tokensOut: respostaComTools.tokensOut,
           }
           break
@@ -1395,7 +1533,7 @@ if (toolsUnicas.includes(tc.function.name)) {
     console.error(`[process-message] Motor primário (${config.motor_ia_principal}) falhou:`, errPrimario)
     try {
       motorUsado = config.motor_ia_backup
-      resultado = config.motor_ia_backup === 'anthropic'
+      resultado  = config.motor_ia_backup === 'anthropic'
         ? await anthropicChatCompletion(chatMessages, chatConfig)
         : await openAIChatCompletion(chatMessages, chatConfig)
     } catch (errBackup) {
@@ -1418,33 +1556,48 @@ if (toolsUnicas.includes(tc.function.name)) {
 
   await saveMessage(supabase, {
     conversationId: conversa.id,
-    tenantId: payload.tenantId,
-    origem: 'agente',
-    tipo: 'texto',
-    conteudo: resultado.content,
-    metadata: { motor: motorUsado },
+    tenantId:       payload.tenantId,
+    origem:         'agente',
+    tipo:           'texto',
+    conteudo:       resultado.content,
+    metadata:       { motor: motorUsado },
   })
 
   await enviarResposta(payload.instanceName, payload.phone, resultado.content)
   await updateConversationTimestamp(supabase, conversa.id)
 
   await logAiUsage(supabase, {
-    tenantId: payload.tenantId,
+    tenantId:       payload.tenantId,
     conversationId: conversa.id,
-    tokensIn: resultado.tokensIn,
-    tokensOut: resultado.tokensOut,
-    motor: motorUsado,
-    custoReais: calcularCusto(motorUsado, resultado.tokensIn, resultado.tokensOut),
+    tokensIn:       resultado.tokensIn,
+    tokensOut:      resultado.tokensOut,
+    motor:          motorUsado,
+    custoReais:     calcularCusto(motorUsado, resultado.tokensIn, resultado.tokensOut),
   })
 
   if (!recontotoCriadoPorTool) {
     detectarMeChama({
-      mensagemCliente: conteudoProcessado,
-      conversationId: conversa.id,
-      tenantId: payload.tenantId,
-      instanceName: payload.instanceName,
-      contatoNome: conversa.contato_nome ?? payload.pushName ?? payload.phone,
-      contatoTelefone: payload.phone,
+      mensagemCliente:  conteudoProcessado,
+      conversationId:   conversa.id,
+      tenantId:         payload.tenantId,
+      instanceName:     payload.instanceName,
+      contatoNome:      conversa.contato_nome ?? payload.pushName ?? payload.phone,
+      contatoTelefone:  payload.phone,
     }).catch((err) => console.error('[process-message] detectarMeChama falhou:', err))
   }
+
+  // ─── CRM: classifica etapa automaticamente após resposta ─────────────────
+  if (funcaoPrincipal && FUNIS_VALIDOS.includes(funcaoPrincipal) && resultado?.content) {
+    classificarEtapaCRM({
+      tenantId:         payload.tenantId,
+      conversationId:   conversa.id,
+      funilTipo:        funcaoPrincipal,
+      historicoRecente: historicoRecente.map(m =>
+        `${m.origem === 'agente' ? 'Agente' : 'Cliente'}: ${m.transcricao || m.conteudo || ''}`
+      ).join('\n'),
+      respostaAgente:   resultado.content,
+      mensagemCliente:  conteudoProcessado,
+    }).catch((err) => console.error('[process-message] classificarEtapaCRM falhou:', err))
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 }
