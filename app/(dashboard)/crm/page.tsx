@@ -20,6 +20,7 @@ interface CRMLead {
   resumo: string | null
   criado_em: string
   atualizado_em: string
+  conversa_encerrada: boolean
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -52,6 +53,8 @@ function tempoRelativo(data: string): string {
   return `há ${Math.floor(diff / 86400)} d`
 }
 
+type FiltroVista = 'ativas' | 'todas'
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function CRMPage() {
@@ -61,6 +64,7 @@ export default function CRMPage() {
   const [funilAtivo, setFunilAtivo] = useState<string>('vendas')
   const [modalLead, setModalLead]   = useState<CRMLead | null>(null)
   const [movendo, setMovendo]       = useState(false)
+  const [filtro, setFiltro]         = useState<FiltroVista>('ativas')
 
   const fetchLeads = useCallback(async (tid: string) => {
     const res = await fetch(`/api/crm?tenant_id=${tid}`)
@@ -105,7 +109,8 @@ export default function CRMPage() {
     const { draggableId, destination } = result
     if (!destination) return
     const lead = leads.find(l => l.id === draggableId)
-    if (!lead || lead.etapa === destination.droppableId) return
+    // Não permite arrastar leads de conversas encerradas
+    if (!lead || lead.etapa === destination.droppableId || lead.conversa_encerrada) return
 
     setLeads(prev => prev.map(l =>
       l.id === draggableId
@@ -130,9 +135,17 @@ export default function CRMPage() {
     }
   }
 
-  const etapas        = ETAPAS_FUNIL[funilAtivo] ?? []
-  const labels        = LABELS_ETAPA[funilAtivo] ?? {}
-  const leadsDoFunil  = leads.filter(l => l.funil_tipo === funilAtivo)
+  const etapas       = ETAPAS_FUNIL[funilAtivo] ?? []
+  const labels       = LABELS_ETAPA[funilAtivo] ?? {}
+  const leadsDoFunil = leads.filter(l => l.funil_tipo === funilAtivo)
+
+  // Aplica filtro ativas/todas
+  const leadsFiltrados = filtro === 'ativas'
+    ? leadsDoFunil.filter(l => !l.conversa_encerrada)
+    : leadsDoFunil
+
+  const totalAtivas    = leadsDoFunil.filter(l => !l.conversa_encerrada).length
+  const totalEncerradas = leadsDoFunil.filter(l => l.conversa_encerrada).length
 
   if (carregando) {
     return (
@@ -155,11 +168,33 @@ export default function CRMPage() {
         <div>
           <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>CRM</h1>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {leadsDoFunil.length} contato{leadsDoFunil.length !== 1 ? 's' : ''}
+            Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAtivas} ativa{totalAtivas !== 1 ? 's' : ''}
+            {totalEncerradas > 0 && ` · ${totalEncerradas} encerrada${totalEncerradas !== 1 ? 's' : ''}`}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {movendo && <RefreshCw size={14} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+
+          {/* Toggle ativas / todas */}
+          <div className="flex items-center rounded-lg p-1" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+            {(['ativas', 'todas'] as FiltroVista[]).map(f => (
+              <button key={f} onClick={() => setFiltro(f)}
+                className="px-3 py-1 rounded-md text-xs font-medium transition-colors"
+                style={{
+                  background: filtro === f ? 'var(--bg-hover)' : 'transparent',
+                  color: filtro === f ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}>
+                {f === 'ativas' ? 'Ativas' : 'Todas'}
+                {f === 'todas' && totalEncerradas > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px]"
+                    style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                    +{totalEncerradas}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
             style={{ background: 'rgba(16,185,129,.1)', border: '1px solid rgba(16,185,129,.3)', color: '#10B981' }}>
             <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
@@ -175,7 +210,7 @@ export default function CRMPage() {
             {etapas.map((etapa) => {
               const isPositivo   = etapa === etapas[etapas.length - 2]
               const isNegativo   = etapa === etapas[etapas.length - 1]
-              const leadsNaEtapa = leadsDoFunil.filter(l => l.etapa === etapa)
+              const leadsNaEtapa = leadsFiltrados.filter(l => l.etapa === etapa)
 
               return (
                 <div key={etapa} className="flex flex-col rounded-xl flex-shrink-0"
@@ -216,23 +251,42 @@ export default function CRMPage() {
                         )}
                         {leadsNaEtapa.map((lead, index) => {
                           const av = avatarColor(lead.id)
+                          const encerrado = lead.conversa_encerrada
                           return (
-                            <Draggable key={lead.id} draggableId={lead.id} index={index}>
+                            <Draggable
+                              key={lead.id}
+                              draggableId={lead.id}
+                              index={index}
+                              isDragDisabled={encerrado}
+                            >
                               {(prov, snap) => (
                                 <div
                                   ref={prov.innerRef}
                                   {...prov.draggableProps}
                                   {...prov.dragHandleProps}
                                   onClick={() => setModalLead(lead)}
-                                  className="rounded-lg p-2.5 cursor-pointer select-none"
+                                  className="rounded-lg p-2.5 select-none"
                                   style={{
-                                    background:   snap.isDragging ? 'var(--bg-hover)' : 'var(--bg-surface-2)',
-                                    border:       `1px solid ${snap.isDragging ? 'var(--border-2)' : 'var(--border)'}`,
-                                    boxShadow:    snap.isDragging ? '0 8px 24px rgba(0,0,0,.4)' : 'none',
-                                    transform:    snap.isDragging ? 'rotate(1.5deg)' : 'none',
-                                    transition:   snap.isDragging ? 'none' : 'border-color .15s',
+                                    cursor:     encerrado ? 'pointer' : 'grab',
+                                    opacity:    encerrado ? 0.55 : 1,
+                                    background: snap.isDragging ? 'var(--bg-hover)' : 'var(--bg-surface-2)',
+                                    border:     `1px solid ${encerrado ? 'var(--border)' : snap.isDragging ? 'var(--border-2)' : 'var(--border)'}`,
+                                    boxShadow:  snap.isDragging ? '0 8px 24px rgba(0,0,0,.4)' : 'none',
+                                    transform:  snap.isDragging ? 'rotate(1.5deg)' : 'none',
+                                    transition: snap.isDragging ? 'none' : 'border-color .15s, opacity .15s',
                                     ...prov.draggableProps.style,
                                   }}>
+
+                                  {/* Badge encerrada */}
+                                  {encerrado && (
+                                    <div className="flex justify-end mb-1">
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold"
+                                        style={{ background: 'rgba(107,107,107,.15)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                                        Encerrada
+                                      </span>
+                                    </div>
+                                  )}
+
                                   <div className="flex items-center gap-2 mb-1.5">
                                     <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
                                       style={{ background: av.bg, color: av.color }}>
@@ -242,12 +296,14 @@ export default function CRMPage() {
                                       {lead.contato_nome || lead.contato_telefone}
                                     </span>
                                   </div>
+
                                   {lead.resumo && (
                                     <p className="text-[11px] leading-relaxed mb-1.5 line-clamp-2"
                                       style={{ color: 'var(--text-secondary)' }}>
                                       {lead.resumo}
                                     </p>
                                   )}
+
                                   <div className="flex items-center justify-between mt-1">
                                     <span className="text-[10px]" style={{ color: 'var(--text-label)' }}>
                                       {tempoRelativo(lead.atualizado_em)}

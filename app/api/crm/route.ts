@@ -15,14 +15,29 @@ export async function GET(req: NextRequest) {
     const tenantId = searchParams.get('tenant_id')
     if (!tenantId) return NextResponse.json({ error: 'tenant_id obrigatório' }, { status: 400 })
 
+    // Join com conversations para trazer o status da conversa
     const { data: leads, error } = await supabase
       .from('crm_leads')
-      .select('id, conversation_id, contato_nome, contato_telefone, funil_tipo, etapa, etapa_anterior, movido_por, resumo, criado_em, atualizado_em')
+      .select(`
+        id, conversation_id, contato_nome, contato_telefone,
+        funil_tipo, etapa, etapa_anterior, movido_por, resumo,
+        criado_em, atualizado_em,
+        conversations(status)
+      `)
       .eq('tenant_id', tenantId)
       .order('atualizado_em', { ascending: false })
 
     if (error) { console.error('[api/crm] GET error:', error); return NextResponse.json({ error: error.message }, { status: 500 }) }
-    return NextResponse.json({ leads: leads ?? [] })
+
+    // Normaliza o status da conversa
+    const leadsNormalizados = (leads ?? []).map((l: Record<string, unknown>) => {
+      const conv = l.conversations as { status?: string } | null
+      const status = conv?.status ?? 'ativa'
+      const encerrado = status === 'encerrado' || status === 'encerrada'
+      return { ...l, conversations: undefined, conversa_encerrada: encerrado }
+    })
+
+    return NextResponse.json({ leads: leadsNormalizados })
   } catch (err) {
     console.error('[api/crm] GET exception:', err)
     return NextResponse.json({ error: 'Erro interno' }, { status: 500 })

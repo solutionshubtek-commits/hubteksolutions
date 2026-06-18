@@ -1,6 +1,7 @@
 'use client'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { X, MessageSquare, ChevronRight } from 'lucide-react'
+import { X, MessageSquare, ChevronRight, Clock } from 'lucide-react'
 import { ETAPAS_FUNIL, LABELS_ETAPA, LABELS_FUNIL } from '@/lib/crm'
 
 interface CRMLead {
@@ -12,6 +13,17 @@ interface CRMLead {
   etapa: string
   etapa_anterior: string | null
   movido_por: string
+  resumo: string | null
+  criado_em: string
+  atualizado_em: string
+  conversa_encerrada: boolean
+}
+
+interface HistoricoItem {
+  id: string
+  conversation_id: string
+  etapa: string
+  funil_tipo: string
   resumo: string | null
   criado_em: string
   atualizado_em: string
@@ -43,8 +55,27 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
   const labels = LABELS_ETAPA[funilAtivo] ?? {}
   const idxAtual = etapas.indexOf(lead.etapa)
   const etapasFinais = etapas.slice(-2)
-  const isEncerrado = etapasFinais.includes(lead.etapa)
+  const isEncerrado = etapasFinais.includes(lead.etapa) || lead.conversa_encerrada
   const etapasParaMover = etapas.filter(e => e !== lead.etapa)
+  const [historico, setHistorico] = useState<HistoricoItem[]>([])
+  const [carregandoHistorico, setCarregandoHistorico] = useState(false)
+
+  // Busca histórico CRM do mesmo telefone (outras conversas encerradas)
+  useEffect(() => {
+    async function fetchHistorico() {
+      setCarregandoHistorico(true)
+      try {
+        const res = await fetch(`/api/crm/historico?telefone=${encodeURIComponent(lead.contato_telefone)}&excluir_id=${lead.id}`)
+        if (res.ok) {
+          const json = await res.json() as { historico: HistoricoItem[] }
+          setHistorico(json.historico ?? [])
+        }
+      } catch { /* silencioso */ } finally {
+        setCarregandoHistorico(false)
+      }
+    }
+    fetchHistorico()
+  }, [lead.id, lead.contato_telefone])
 
   return (
     <div
@@ -54,14 +85,22 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
     >
       <div
         className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl"
-        style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}
+        style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', maxHeight: '90vh', overflowY: 'auto' }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3"
-          style={{ borderBottom: '1px solid var(--border)' }}>
-          <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-            Detalhes do contato
-          </span>
+        <div className="flex items-center justify-between px-4 py-3 sticky top-0"
+          style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Detalhes do contato
+            </span>
+            {lead.conversa_encerrada && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                style={{ background: 'rgba(107,107,107,.15)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                Encerrada
+              </span>
+            )}
+          </div>
           <button onClick={onClose}
             className="w-6 h-6 flex items-center justify-center rounded-md"
             style={{ color: 'var(--text-muted)' }}
@@ -141,7 +180,7 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
             </span>
           </div>
 
-          {/* Mover manualmente */}
+          {/* Mover manualmente — só se conversa ativa e não em etapa final */}
           {!isEncerrado && (
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider mb-2"
@@ -163,6 +202,52 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
                   )
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Histórico CRM — negociações anteriores do mesmo telefone */}
+          {(historico.length > 0 || carregandoHistorico) && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Clock size={11} style={{ color: 'var(--text-label)' }} />
+                <p className="text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ color: 'var(--text-label)' }}>Histórico de negociações</p>
+              </div>
+              {carregandoHistorico ? (
+                <div className="h-8 rounded animate-pulse" style={{ background: 'var(--bg-surface-2)' }} />
+              ) : (
+                <div className="space-y-2">
+                  {historico.map(h => {
+                    const labelsH = LABELS_ETAPA[h.funil_tipo] ?? {}
+                    const funilLabel = LABELS_FUNIL[h.funil_tipo] ?? h.funil_tipo
+                    return (
+                      <div key={h.id} className="rounded-lg p-2.5"
+                        style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                            {funilLabel}
+                          </span>
+                          <span className="text-[10px]" style={{ color: 'var(--text-label)' }}>
+                            {formatarData(h.criado_em).split(',')[0]}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full"
+                            style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                            Parou em: {labelsH[h.etapa] ?? h.etapa}
+                          </span>
+                        </div>
+                        {h.resumo && (
+                          <p className="text-[10px] mt-1 leading-relaxed line-clamp-2"
+                            style={{ color: 'var(--text-label)' }}>
+                            {h.resumo}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
 
