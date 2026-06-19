@@ -42,7 +42,7 @@ const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
   anthropic: { entrada: 0.015, saida: 0.075 },
 }
 
-const MOTOR_PERFIL              = 'gpt-4o-mini'
+const MOTOR_PERFIL               = 'gpt-4o-mini'
 const PERFIL_EXTRACTION_INTERVAL = 5
 
 const SAUDACOES_REGEX = /^(oi|olá|ola|opa|hey|hello|bom dia|boa tarde|boa noite|e aí|eai|e ai|tudo bem|tudo bom|salve)[!?.,:]*$/i
@@ -65,43 +65,43 @@ Seu objetivo central é conduzir o cliente ao fechamento da venda.
 Entenda a necessidade, apresente valor, identifique objeções e responda com empatia.
 Nunca force a venda. Ao perceber interesse claro, avance para proposta de valor.
 Após cada interação, retorne ao objetivo de venda — não perca o fio condutor.
- 
+
 CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em vendas):
 - AGENDAMENTO: Se o cliente pedir para marcar uma reunião, demonstração ou visita, execute o agendamento normalmente usando as ferramentas disponíveis. Após confirmar, aproveite para avançar na conversa de venda.
 - SUPORTE BÁSICO: Se o cliente tiver uma dúvida ou problema simples relacionado ao produto/serviço, resolva de forma objetiva. Se não conseguir resolver, encaminhe para atendimento humano sem abandonar o contexto de venda.
 - QUALIFICAÇÃO: Você já faz isso naturalmente ao entender o perfil do cliente — não precisa mudar o tom.`,
- 
+
   suporte: `
 FOCO PRINCIPAL — SUPORTE E RESOLUÇÃO DE PROBLEMAS:
 Seu objetivo central é resolver o problema do cliente com clareza, agilidade e empatia.
 Confirme sempre se o problema foi resolvido antes de encerrar.
 Se não conseguir resolver, encaminhe para atendimento humano.
 Após cada interação, mantenha o foco em garantir que o cliente saia com o problema resolvido.
- 
+
 CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em suporte):
 - AGENDAMENTO: Se o cliente precisar agendar um atendimento técnico, visita ou retorno, execute o agendamento normalmente. Após confirmar, verifique se ainda há algum problema em aberto para resolver.
 - VENDAS BÁSICA: Se durante o suporte o cliente demonstrar interesse em um produto, serviço adicional ou upgrade, apresente a opção de forma natural e objetiva — sem forçar. Registre o interesse e siga resolvendo o problema principal.
 - QUALIFICAÇÃO: Se perceber que o cliente tem potencial para outros serviços, registre mentalmente para enriquecer o perfil — mas não mude o foco do atendimento.`,
- 
+
   agendamentos: `
 FOCO PRINCIPAL — AGENDAMENTOS:
 Seu objetivo central é encontrar o melhor horário, confirmar os dados e registrar o compromisso.
 Sempre confirme nome, data, hora e serviço antes de finalizar.
 Envie um resumo claro após cada agendamento criado.
 Após confirmar o agendamento, verifique se o cliente precisa de mais alguma coisa relacionada.
- 
+
 CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em agendamentos):
 - SUPORTE BÁSICO: Se o cliente tiver uma dúvida simples sobre o serviço que vai agendar, responda de forma objetiva. Se não souber, oriente a perguntar no dia do atendimento.
 - VENDAS BÁSICA: Se o cliente demonstrar interesse em serviços adicionais ao agendar, apresente as opções disponíveis de forma natural. Após esclarecer, conduza ao fechamento do agendamento.
 - QUALIFICAÇÃO: Ao coletar os dados para o agendamento, você naturalmente qualifica o cliente — aproveite para entender melhor o perfil e enriquecer o cadastro.`,
- 
+
   qualificacao: `
 FOCO PRINCIPAL — QUALIFICAÇÃO DE LEADS:
 Seu objetivo central é entender o perfil, a necessidade e o momento de compra do cliente.
 Faça perguntas estratégicas de forma natural — não pareça um questionário.
 Ao final, classifique internamente o lead como quente, morno ou frio e conduza para o próximo passo adequado.
 Após cada interação, retorne ao objetivo de qualificar — não perca informações valiosas sobre o cliente.
- 
+
 CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em qualificação):
 - AGENDAMENTO: Se o cliente demonstrar interesse em conhecer mais ou quiser uma conversa aprofundada, proponha e execute um agendamento. Use o agendamento como parte da qualificação — é um sinal forte de interesse.
 - SUPORTE BÁSICO: Se o cliente tiver uma dúvida simples, responda de forma objetiva e use a resposta como gancho para continuar qualificando.
@@ -138,27 +138,39 @@ function calcularDelayDigitacao(texto: string): number {
   return Math.min(Math.max(texto.length * 30, 1000), 4000)
 }
 
+// ─── Conversão Markdown → WhatsApp + quebra em blocos ────────────────────────
+
+function converterMarkdownParaWhatsApp(texto: string): string {
+  return texto
+    .replace(/\*\*\*(.+?)\*\*\*/g, '*$1*')   // ***bold+italic*** → *bold+italic*
+    .replace(/\*\*(.+?)\*\*/g, '*$1*')        // **negrito** → *negrito*
+    .replace(/\_\_(.+?)\_\_/g, '_$1_')        // __itálico__ → _itálico_
+    .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')    // # Título → *Título*
+    .replace(/^-{3,}$/gm, '')                 // remove linhas ---
+    .replace(/\n{3,}/g, '\n\n')               // normaliza espaços extras
+    .trim()
+}
+
 function quebrarEmBlocos(texto: string): string[] {
-  const paragrafos = texto.split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
-  if (paragrafos.length <= 1) return [texto]
+  const textoFormatado = converterMarkdownParaWhatsApp(texto)
+  const paragrafos = textoFormatado.split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
+  if (paragrafos.length <= 1) return [textoFormatado]
+
   const blocos: string[] = []
   let acumulado = ''
+
   for (const p of paragrafos) {
-    if (acumulado && (acumulado + '\n\n' + p).length > 600) {
+    if (acumulado && (acumulado + '\n\n' + p).length > 1200) {
       blocos.push(acumulado.trim())
       acumulado = p
     } else {
       acumulado = acumulado ? acumulado + '\n\n' + p : p
     }
-    if (blocos.length === 2) {
-      const idx = paragrafos.indexOf(p)
-      const resto = paragrafos.slice(idx + 1).join('\n\n')
-      if (resto) blocos.push(resto.trim())
-      return blocos.slice(0, 3)
-    }
   }
   if (acumulado) blocos.push(acumulado.trim())
-  return blocos.slice(0, 3)
+
+  // Máximo 5 blocos para suportar cardápios e respostas longas
+  return blocos.slice(0, 5)
 }
 
 // ─── Feriados nacionais Brasil ────────────────────────────────────────────────
@@ -426,7 +438,8 @@ REGRAS DE COMPORTAMENTO:
    - NUNCA mencione ferramentas internas, sistemas, IDs, ou processos técnicos ao cliente.
    - NUNCA confirme ou negue informações que não foram fornecidas pelo cliente nesta conversa.
    - Finalize com uma pergunta curta de continuidade apenas quando fizer sentido.
-   - Quebre respostas longas em parágrafos curtos — mais natural para WhatsApp.`
+   - Quebre respostas longas em parágrafos curtos — mais natural para WhatsApp.
+   - FORMATAÇÃO: Nunca use Markdown com ** ou ##. Para destacar algo, use *texto* (um asterisco só — formato nativo do WhatsApp). Para listas, use • ou - no início da linha.`
 
   if (knowledgeDocs.length > 0) {
     prompt += '\n\nBASE DE CONHECIMENTO (do mais recente para o mais antigo — priorize os primeiros em caso de conflito):\n'
@@ -851,7 +864,7 @@ async function executarAppointmentToolCall(
 
   try {
     if (toolName === 'criar_agendamento_hubtek') {
-      const dataHora    = String(args.data_hora)
+      const dataHora     = String(args.data_hora)
       const profissional = args.profissional ? String(args.profissional) : null
       const { data, error } = await supabase
         .from('appointments')
@@ -1106,7 +1119,6 @@ async function escalarParaHumano(
   }
 }
 
-
 // ─── Classificação automática de etapa CRM ───────────────────────────────────
 
 async function classificarEtapaCRM({
@@ -1152,7 +1164,19 @@ async function classificarEtapaCRM({
       messages: [
         {
           role: 'system',
-          content: `Você analisa conversas de atendimento e decide se o lead avançou de etapa no funil de ${funilTipo}.\nEtapas disponíveis em ordem: ${etapas.join(' → ')}\nEtapa atual: ${leadAtual.etapa}\n\nRegras:\n- Responda APENAS com o nome exato de uma etapa da lista, ou "manter"\n- Só avance se houver sinal CLARO de progresso na conversa\n- Nunca vá para etapas finais (${etapasFinais.join(', ')}) automaticamente — essas são movidas apenas pelo humano\n- Se não tiver certeza, responda "manter"`,
+          content: `Você analisa conversas de atendimento e decide se o lead avançou de etapa no funil de ${funilTipo}.
+Etapas disponíveis em ordem: ${etapas.join(' → ')}
+Etapa atual: ${leadAtual.etapa}
+
+Regras:
+- Responda APENAS com o nome exato de uma etapa da lista, ou "manter"
+- Avance quando houver qualquer sinal de progressão — não exija certeza absoluta
+- Exemplos de avanço em vendas: cliente pergunta sobre produtos/preços/opções = interesse_identificado; cliente pede proposta ou demonstra intenção de compra = proposta_enviada; cliente negocia condições = em_negociacao
+- Exemplos de avanço em suporte: cliente descreve o problema = em_analise; cliente aguarda retorno = aguardando_cliente; problema encaminhado = em_resolucao
+- Exemplos de avanço em agendamentos: cliente pergunta horários disponíveis = interesse_identificado; cliente confirma data e hora = agendado; cliente confirma presença = confirmado
+- Exemplos de avanço em qualificacao: cliente responde perguntas iniciais = contato_realizado; cliente demonstra fit com o produto = qualificado; cliente mostra intenção clara = oportunidade
+- Nunca vá para etapas finais (${etapasFinais.join(', ')}) automaticamente — essas são movidas apenas pelo humano
+- Se realmente não houver progressão nenhuma, responda "manter"`,
         },
         {
           role: 'user',
@@ -1230,7 +1254,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   )
 
   let tipoDb = 'texto'
-  if (payload.messageType === 'audioMessage')    tipoDb = 'audio'
+  if (payload.messageType === 'audioMessage')         tipoDb = 'audio'
   else if (payload.messageType === 'imageMessage')    tipoDb = 'imagem'
   else if (payload.messageType === 'videoMessage')    tipoDb = 'video'
   else if (payload.messageType === 'documentMessage') tipoDb = 'documento'
@@ -1359,9 +1383,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     salvarPerfilCliente(supabase, payload.tenantId, payload.phone, perfil, { nome: payload.pushName }).catch(() => {})
   }
 
-  const historico          = await getRecentMessages(supabase, conversa.id, 20)
-  const historicoResumido  = await gerarResumoHistorico(historico)
-  const historicoRecente   = historico.slice(-10)
+  const historico         = await getRecentMessages(supabase, conversa.id, 20)
+  const historicoResumido = await gerarResumoHistorico(historico)
+  const historicoRecente  = historico.slice(-10)
 
   const totalMensagensCliente = historico.filter(m => m.origem === 'cliente').length
   if (deveExtrairPerfil(totalMensagensCliente)) {
@@ -1480,8 +1504,8 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   ).length
 
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
-  let motorUsado              = config.motor_ia_principal
-  let recontotoCriadoPorTool  = false
+  let motorUsado             = config.motor_ia_principal
+  let recontotoCriadoPorTool = false
 
   try {
     if (usarTools) {
@@ -1499,7 +1523,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         )
 
         if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
-          const toolResults: ChatMessage[]  = []
+          const toolResults: ChatMessage[] = []
           const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
 
           for (const tc of toolCallsTyped) {
