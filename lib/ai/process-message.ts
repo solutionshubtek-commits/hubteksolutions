@@ -385,12 +385,24 @@ function buildSystemPrompt(
   profissionais: Array<{ nome: string; especialidade: string | null }>,
   feriadosProximos: string,
   funcaoPrincipal?: string,
+  funilAnterior?: string,
 ): string {
   let prompt = promptPrincipal || 'Você é um assistente de atendimento ao cliente prestativo e cordial.'
 
   // Prompt complementar dinâmico por função
   if (funcaoPrincipal && PROMPT_COMPLEMENTAR[funcaoPrincipal as FunilTipo]) {
     prompt += `\n\n${PROMPT_COMPLEMENTAR[funcaoPrincipal as FunilTipo]}`
+  }
+
+  // Instrução de transição quando o funil mudou durante uma conversa em andamento
+  if (funilAnterior && funcaoPrincipal && funilAnterior !== funcaoPrincipal) {
+    const LABELS: Record<string, string> = {
+      vendas: 'vendas', suporte: 'suporte',
+      agendamentos: 'agendamentos', qualificacao: 'qualificação',
+    }
+    prompt += `\n\nTRANSIÇÃO DE CONTEXTO: Esta conversa foi iniciada com foco em ${LABELS[funilAnterior] ?? funilAnterior}, mas o atendimento agora está focado em ${LABELS[funcaoPrincipal] ?? funcaoPrincipal}.`
+    prompt += `\nSe a conversa anterior ainda estava em aberto, conclua educadamente aquele assunto em uma frase antes de reposicionar o atendimento para o novo foco.`
+    prompt += `\nNão mencione ao cliente que houve troca de modo ou configuração — apenas conduza naturalmente.`
   }
 
   const saudacao = getSaudacao()
@@ -1439,6 +1451,24 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     : []
   const feriadosProximosStr = getFeriadosProximos()
 
+  // Detecta troca de funil: busca funil_tipo do lead existente desta conversa
+  let funilAnterior: string | undefined
+  if (funcaoPrincipal) {
+    try {
+      const { data: leadExistente } = await supabase
+        .from('crm_leads')
+        .select('funil_tipo')
+        .eq('conversation_id', conversa.id)
+        .maybeSingle()
+      if (leadExistente?.funil_tipo && leadExistente.funil_tipo !== funcaoPrincipal) {
+        funilAnterior = leadExistente.funil_tipo
+        console.log(`[CRM] Transição de funil detectada: ${funilAnterior} → ${funcaoPrincipal}`)
+      }
+    } catch {
+      // não crítico — segue sem instrução de transição
+    }
+  }
+
   const isPrimeiraMsg = historico.filter(m => m.origem === 'cliente').length === 1
   if (isPrimeiraMsg && config.prompt_principal) {
     const saudacao    = getSaudacao()
@@ -1468,6 +1498,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         profissionaisDoTenant,
         feriadosProximosStr,
         funcaoPrincipal,
+        funilAnterior,
       ),
     },
     ...historicoRecente.slice(0, -1).map(m => ({
