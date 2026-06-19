@@ -60,28 +60,52 @@ type FunilTipo = typeof FUNIS_VALIDOS[number]
 
 const PROMPT_COMPLEMENTAR: Record<FunilTipo, string> = {
   vendas: `
-MODO DE ATENDIMENTO: Vendas consultivas.
-Foque em entender a necessidade do cliente, apresentar valor e conduzir naturalmente para o fechamento.
-Nunca force a venda. Identifique objeções e responda com empatia.
-Ao perceber interesse claro, avance para proposta de valor.`,
-
+FOCO PRINCIPAL — VENDAS CONSULTIVAS:
+Seu objetivo central é conduzir o cliente ao fechamento da venda.
+Entenda a necessidade, apresente valor, identifique objeções e responda com empatia.
+Nunca force a venda. Ao perceber interesse claro, avance para proposta de valor.
+Após cada interação, retorne ao objetivo de venda — não perca o fio condutor.
+ 
+CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em vendas):
+- AGENDAMENTO: Se o cliente pedir para marcar uma reunião, demonstração ou visita, execute o agendamento normalmente usando as ferramentas disponíveis. Após confirmar, aproveite para avançar na conversa de venda.
+- SUPORTE BÁSICO: Se o cliente tiver uma dúvida ou problema simples relacionado ao produto/serviço, resolva de forma objetiva. Se não conseguir resolver, encaminhe para atendimento humano sem abandonar o contexto de venda.
+- QUALIFICAÇÃO: Você já faz isso naturalmente ao entender o perfil do cliente — não precisa mudar o tom.`,
+ 
   suporte: `
-MODO DE ATENDIMENTO: Suporte técnico e atendimento.
-Foque em resolver o problema do cliente com clareza e empatia.
+FOCO PRINCIPAL — SUPORTE E RESOLUÇÃO DE PROBLEMAS:
+Seu objetivo central é resolver o problema do cliente com clareza, agilidade e empatia.
 Confirme sempre se o problema foi resolvido antes de encerrar.
-Se não conseguir resolver, encaminhe para atendimento humano.`,
-
+Se não conseguir resolver, encaminhe para atendimento humano.
+Após cada interação, mantenha o foco em garantir que o cliente saia com o problema resolvido.
+ 
+CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em suporte):
+- AGENDAMENTO: Se o cliente precisar agendar um atendimento técnico, visita ou retorno, execute o agendamento normalmente. Após confirmar, verifique se ainda há algum problema em aberto para resolver.
+- VENDAS BÁSICA: Se durante o suporte o cliente demonstrar interesse em um produto, serviço adicional ou upgrade, apresente a opção de forma natural e objetiva — sem forçar. Registre o interesse e siga resolvendo o problema principal.
+- QUALIFICAÇÃO: Se perceber que o cliente tem potencial para outros serviços, registre mentalmente para enriquecer o perfil — mas não mude o foco do atendimento.`,
+ 
   agendamentos: `
-MODO DE ATENDIMENTO: Agendamentos.
-Foque em encontrar o melhor horário, confirmar dados e registrar o compromisso.
-Sempre confirme nome, data, hora e serviço antes de finalizar o agendamento.
-Envie um resumo claro após cada agendamento criado.`,
-
+FOCO PRINCIPAL — AGENDAMENTOS:
+Seu objetivo central é encontrar o melhor horário, confirmar os dados e registrar o compromisso.
+Sempre confirme nome, data, hora e serviço antes de finalizar.
+Envie um resumo claro após cada agendamento criado.
+Após confirmar o agendamento, verifique se o cliente precisa de mais alguma coisa relacionada.
+ 
+CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em agendamentos):
+- SUPORTE BÁSICO: Se o cliente tiver uma dúvida simples sobre o serviço que vai agendar, responda de forma objetiva. Se não souber, oriente a perguntar no dia do atendimento.
+- VENDAS BÁSICA: Se o cliente demonstrar interesse em serviços adicionais ao agendar, apresente as opções disponíveis de forma natural. Após esclarecer, conduza ao fechamento do agendamento.
+- QUALIFICAÇÃO: Ao coletar os dados para o agendamento, você naturalmente qualifica o cliente — aproveite para entender melhor o perfil e enriquecer o cadastro.`,
+ 
   qualificacao: `
-MODO DE ATENDIMENTO: Qualificação de leads.
-Faça perguntas estratégicas para entender perfil, necessidade e momento de compra do cliente.
-Seja natural — não pareça um questionário. Conduza como uma conversa.
-Ao final, classifique internamente o lead como quente, morno ou frio.`,
+FOCO PRINCIPAL — QUALIFICAÇÃO DE LEADS:
+Seu objetivo central é entender o perfil, a necessidade e o momento de compra do cliente.
+Faça perguntas estratégicas de forma natural — não pareça um questionário.
+Ao final, classifique internamente o lead como quente, morno ou frio e conduza para o próximo passo adequado.
+Após cada interação, retorne ao objetivo de qualificar — não perca informações valiosas sobre o cliente.
+ 
+CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em qualificação):
+- AGENDAMENTO: Se o cliente demonstrar interesse em conhecer mais ou quiser uma conversa aprofundada, proponha e execute um agendamento. Use o agendamento como parte da qualificação — é um sinal forte de interesse.
+- SUPORTE BÁSICO: Se o cliente tiver uma dúvida simples, responda de forma objetiva e use a resposta como gancho para continuar qualificando.
+- VENDAS BÁSICA: Se o cliente já demonstrar prontidão para comprar durante a qualificação, não bloqueie — apresente a proposta de valor e avance. Leads quentes não precisam de qualificação prolongada.`,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1437,8 +1461,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     toolsAtivas.length > 0 &&
     config.motor_ia_principal === 'openai' &&
     intencao !== 'saudacao' &&
-    intencao !== 'fora_escopo' &&
-    intencao !== 'duvida'
+    intencao !== 'fora_escopo'
 
   const temperaturaBase = Number(config.temperatura)
   const temperatura     = intencao === 'reclamacao' ? Math.min(temperaturaBase + 0.2, 1.0) : temperaturaBase
