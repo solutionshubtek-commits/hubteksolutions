@@ -90,7 +90,6 @@ export default function ConfiguracoesPage() {
   const [role, setRole] = useState<string>('')
   const [horario, setHorario] = useState<HorarioFuncionamento>(HORARIO_PADRAO)
   const [funcaoPrincipal, setFuncaoPrincipal] = useState<string>('')
-  const [funcaoOriginal, setFuncaoOriginal] = useState<string>('')
   const [arquivos, setArquivos] = useState<KnowledgeFile[]>([])
   const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
@@ -152,7 +151,6 @@ export default function ConfiguracoesPage() {
           setHorario(horarioSeguro)
           const funcaoAtual = horarioSeguro.funcoes[0] ?? ''
           setFuncaoPrincipal(funcaoAtual)
-          setFuncaoOriginal(funcaoAtual)
           const gc = tenantData.google_calendar_config as GoogleCalendarConfig | null
           setGcClientEmail(gc?.client_email ?? '')
           setGcPrivateKey(gc?.private_key ?? '')
@@ -208,7 +206,6 @@ export default function ConfiguracoesPage() {
     })
 
     setFuncaoPrincipal(bannerFunil.novaFuncao)
-    setFuncaoOriginal(bannerFunil.novaFuncao)
     setBannerFunil(null)
     setTrocandoFunil(false)
   }
@@ -323,7 +320,6 @@ export default function ConfiguracoesPage() {
       setErro('Configurações salvas parcialmente. Erro ao sincronizar com o agente: ' + agentErr.message)
       return
     }
-    setFuncaoOriginal(funcaoPrincipal)
     setSucesso(true)
     setTimeout(() => setSucesso(false), 3000)
   }
