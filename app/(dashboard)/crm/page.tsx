@@ -114,7 +114,7 @@ function MiniCalendario({
   }
 
   return (
-    <div style={{ minWidth: 200 }}>
+    <div style={{ minWidth: 0, width: '100%' }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
         <button onClick={() => onNavMes(-1)}
           style={{ width:24, height:24, borderRadius:6, border:'1px solid var(--border)', background:'transparent', color:'var(--text-muted)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -188,8 +188,9 @@ function CalendarioPopover({
         border: '1px solid var(--border)',
         padding: 16,
         // Mobile: largura que cabe na tela; desktop: 500px fixo
-        width: isMobile ? 'calc(100vw - 32px)' : 500,
-        maxWidth: isMobile ? 360 : undefined,
+        width: isMobile ? 'calc(100vw - 48px)' : 500,
+        maxWidth: isMobile ? 340 : undefined,
+        boxSizing: 'border-box' as const,
       }}>
       <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
         {selecionando === 'inicio' || !dataInicio
@@ -455,10 +456,8 @@ export default function CRMPage() {
             {movendo && <RefreshCw size={13} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
               style={{ background: 'rgba(16,185,129,.1)', border: '1px solid rgba(16,185,129,.3)', color: '#10B981' }}>
-              <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-              {/* No mobile mostra só o ícone; no sm+ mostra o label */}
-              <span className="hidden sm:inline">{LABELS_FUNIL[funilAtivo] ?? funilAtivo}</span>
-              <span className="sm:hidden">{(LABELS_FUNIL[funilAtivo] ?? funilAtivo).charAt(0).toUpperCase()}</span>
+              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#10B981]" />
+              {LABELS_FUNIL[funilAtivo] ?? funilAtivo}
             </div>
           </div>
         </div>
@@ -511,9 +510,10 @@ export default function CRMPage() {
               <div
                 className="absolute z-50"
                 style={{
-                  // Mobile: ancora à esquerda para não sair da tela
+                  // Mobile: ancora à esquerda do botão; desktop: alinha à direita
                   right: isMobile ? 'auto' : 0,
-                  left: isMobile ? 0 : 'auto',
+                  left: isMobile ? '50%' : 'auto',
+                  transform: isMobile ? 'translateX(-50%)' : 'none',
                   top: 38,
                 }}>
                 <CalendarioPopover
