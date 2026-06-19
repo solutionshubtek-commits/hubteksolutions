@@ -156,6 +156,7 @@ export default function AdminTreinamentoPage() {
   async function confirmarTrocaFunil() {
     if (!bannerFunil || !selectedId || !adminUserId) return
     setTrocandoFunil(true)
+
     await fetch('/api/crm/trocar-funil', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -166,7 +167,35 @@ export default function AdminTreinamentoPage() {
         user_id:        adminUserId,
       }),
     })
-    setFuncaoPrincipal(bannerFunil.novaFuncao)
+
+    // Persiste a nova função no banco imediatamente
+    const novaFuncao = bannerFunil.novaFuncao
+    const diasStr = dias.map((d: number) => DIAS_NUM_TO_STR[d]).filter(Boolean)
+    const gcConfig = gcClientEmail && gcPrivateKey && gcCalendarId
+      ? { client_email: gcClientEmail.trim(), private_key: gcPrivateKey.trim(), calendar_id: gcCalendarId.trim() }
+      : null
+
+    await supabase.from('tenants').update({
+      horario_funcionamento: { inicio: horaInicio, fim: horaFim, dias, funcoes: [novaFuncao] },
+    }).eq('id', selectedId)
+
+    await supabase.from('agent_config').upsert({
+      tenant_id:              selectedId,
+      prompt_principal:       prompt,
+      horario_inicio:         horaInicio,
+      horario_fim:            horaFim,
+      dias_funcionamento:     diasStr,
+      funcoes_ativas:         [novaFuncao],
+      google_calendar_config: gcConfig,
+      motor_ia_principal:     'openai',
+      motor_ia_backup:        'anthropic',
+      ativo:                  true,
+      temperatura:            0.7,
+      max_tokens:             1000,
+      atualizado_em:          new Date().toISOString(),
+    }, { onConflict: 'tenant_id' })
+
+    setFuncaoPrincipal(novaFuncao)
     setBannerFunil(null)
     setTrocandoFunil(false)
   }
