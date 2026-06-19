@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { GoogleCalendarGuide } from '@/components/dashboard/GoogleCalendarGuide'
 import { GestaoProfissionais } from '@/components/dashboard/GestaoProfissionais'
+import { LABELS_FUNIL } from '@/lib/crm'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
@@ -20,9 +21,7 @@ interface HorarioFuncionamento {
   inicio: string; fim: string; dias: number[]; funcoes?: string[]
 }
 interface GoogleCalendarConfig {
-  client_email: string
-  private_key: string
-  calendar_id: string
+  client_email: string; private_key: string; calendar_id: string
 }
 interface KbDoc {
   id: string; nome_arquivo: string; tipo: string
@@ -35,7 +34,7 @@ const FUNCOES = [
   { id: 'agendamentos', label: '📅 Agendamentos' },
   { id: 'suporte',      label: '💬 Suporte' },
   { id: 'vendas',       label: '🛒 Vendas' },
-  { id: 'leads',        label: '🎯 Qualif. de Lead' },
+  { id: 'qualificacao', label: '🎯 Qualif. de Lead' },
 ]
 const DOC_ICON: Record<string, string> = {
   pdf: '📄', docx: '📝', doc: '📝', txt: '📃', xlsx: '📊', xls: '📊',
@@ -75,11 +74,20 @@ export default function AdminTreinamentoPage() {
   const [erroUpload, setErroUpload] = useState('')
   const [deletando, setDeletando] = useState<string | null>(null)
   const [prompt, setPrompt] = useState('')
-  const [funcoes, setFuncoes] = useState<string[]>([])
+  const [funcaoPrincipal, setFuncaoPrincipal] = useState<string>('')
   const [horaInicio, setHoraInicio] = useState('08:00')
   const [horaFim, setHoraFim] = useState('18:00')
   const [dias, setDias] = useState<number[]>([1, 2, 3, 4, 5])
   const [agentOn, setAgentOn] = useState(true)
+  const [adminUserId, setAdminUserId] = useState<string>('')
+
+  // Banner de confirmação de troca de funil
+  const [bannerFunil, setBannerFunil] = useState<{
+    novaFuncao: string
+    leadsAtivos: number
+    carregando: boolean
+  } | null>(null)
+  const [trocandoFunil, setTrocandoFunil] = useState(false)
 
   const [gcClientEmail, setGcClientEmail] = useState('')
   const [gcPrivateKey, setGcPrivateKey] = useState('')
@@ -90,6 +98,8 @@ export default function AdminTreinamentoPage() {
 
   useEffect(() => {
     const load = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) setAdminUserId(user.id)
       const { data } = await supabase.from('tenants')
         .select('id, nome, slug, status, expira_em, agente_ativo, agente_pausado_em, prompt_agente, horario_funcionamento, mensagem_fora_horario, google_calendar_config')
         .order('nome')
@@ -111,12 +121,13 @@ export default function AdminTreinamentoPage() {
     setHoraInicio(h?.inicio ?? '08:00')
     setHoraFim(h?.fim ?? '18:00')
     setDias(h?.dias ?? [1, 2, 3, 4, 5])
-    setFuncoes(h?.funcoes ?? [])
+    setFuncaoPrincipal(h?.funcoes?.[0] ?? '')
     const gc = t.google_calendar_config
     setGcClientEmail(gc?.client_email ?? '')
     setGcPrivateKey(gc?.private_key ?? '')
     setGcCalendarId(gc?.calendar_id ?? '')
     setCalendarTestResult(null)
+    setBannerFunil(null)
     loadDocs(selectedId)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, tenants])
@@ -127,6 +138,44 @@ export default function AdminTreinamentoPage() {
       .eq('tenant_id', tenantId).order('criado_em', { ascending: false })
     setDocs(data ?? [])
   }
+
+  // ─── Seleção de função principal com verificação de leads ativos ──────────
+
+  async function handleSelecionarFuncao(novaFuncao: string) {
+    if (novaFuncao === funcaoPrincipal) return
+    if (!funcaoPrincipal || !selectedId) {
+      setFuncaoPrincipal(novaFuncao)
+      return
+    }
+    setBannerFunil({ novaFuncao, leadsAtivos: 0, carregando: true })
+    const res = await fetch(`/api/crm/trocar-funil?tenant_id=${selectedId}`)
+    const json = await res.json() as { leads_ativos: number }
+    setBannerFunil({ novaFuncao, leadsAtivos: json.leads_ativos ?? 0, carregando: false })
+  }
+
+  async function confirmarTrocaFunil() {
+    if (!bannerFunil || !selectedId || !adminUserId) return
+    setTrocandoFunil(true)
+    await fetch('/api/crm/trocar-funil', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenant_id:      selectedId,
+        novo_funil:     bannerFunil.novaFuncao,
+        funil_anterior: funcaoPrincipal,
+        user_id:        adminUserId,
+      }),
+    })
+    setFuncaoPrincipal(bannerFunil.novaFuncao)
+    setBannerFunil(null)
+    setTrocandoFunil(false)
+  }
+
+  function cancelarTrocaFunil() {
+    setBannerFunil(null)
+  }
+
+  // ─── Toggle agente ────────────────────────────────────────────────────────
 
   const handleToggleAgent = async () => {
     if (!tenant || tenant.status === 'bloqueado') return
@@ -143,6 +192,8 @@ export default function AdminTreinamentoPage() {
     0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab'
   }
 
+  // ─── Salvar ───────────────────────────────────────────────────────────────
+
   const handleSave = async () => {
     if (!tenant) return
     setSaving(true)
@@ -152,7 +203,10 @@ export default function AdminTreinamentoPage() {
 
     await supabase.from('tenants').update({
       prompt_agente: prompt,
-      horario_funcionamento: { inicio: horaInicio, fim: horaFim, dias, funcoes },
+      horario_funcionamento: {
+        inicio: horaInicio, fim: horaFim, dias,
+        funcoes: funcaoPrincipal ? [funcaoPrincipal] : [],
+      },
       google_calendar_config: gcConfig,
     }).eq('id', tenant.id)
 
@@ -163,7 +217,7 @@ export default function AdminTreinamentoPage() {
       horario_inicio: horaInicio,
       horario_fim: horaFim,
       dias_funcionamento: diasStr,
-      funcoes_ativas: funcoes,
+      funcoes_ativas: funcaoPrincipal ? [funcaoPrincipal] : [],
       google_calendar_config: gcConfig,
       motor_ia_principal: 'openai',
       motor_ia_backup: 'anthropic',
@@ -180,8 +234,7 @@ export default function AdminTreinamentoPage() {
 
   const handleTestCalendar = async () => {
     if (!gcClientEmail || !gcPrivateKey || !gcCalendarId) return
-    setTestingCalendar(true)
-    setCalendarTestResult(null)
+    setTestingCalendar(true); setCalendarTestResult(null)
     try {
       const res = await fetch('/api/admin/testar-calendar', {
         method: 'POST',
@@ -206,8 +259,7 @@ export default function AdminTreinamentoPage() {
 
   const handleUpload = async (files: FileList | null) => {
     if (!files || !tenant) return
-    setUploading(true)
-    setErroUpload('')
+    setUploading(true); setErroUpload('')
     for (const file of Array.from(files)) {
       const isImagem = ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)
       const limiteBytes = isImagem ? 5 * 1024 * 1024 : 50 * 1024 * 1024
@@ -225,8 +277,7 @@ export default function AdminTreinamentoPage() {
       const data = await res.json()
       if (!res.ok || !data.success) setErroUpload(data.error ?? `Erro ao enviar ${file.name}`)
     }
-    setUploading(false)
-    setUploadProgresso('')
+    setUploading(false); setUploadProgresso('')
     loadDocs(tenant.id)
   }
 
@@ -243,9 +294,7 @@ export default function AdminTreinamentoPage() {
   }
 
   const toggleDia = (d: number) => setDias((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d])
-  const toggleFuncao = (f: string) => setFuncoes((prev) => prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f])
-
-  const agendamentosAtivo = funcoes.includes('agendamentos')
+  const agendamentosAtivo = funcaoPrincipal === 'agendamentos'
 
   if (loading) {
     return (
@@ -259,7 +308,6 @@ export default function AdminTreinamentoPage() {
 
   return (
     <div className="p-8 w-full">
-
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
         <div>
@@ -284,6 +332,55 @@ export default function AdminTreinamentoPage() {
             <p className="text-sm font-medium text-red-400">Agente desconectado pelo administrador</p>
             <p className="text-xs text-red-400/70 mt-0.5">Para reativar, entre em contato com a HubTek Solutions.</p>
           </div>
+        </div>
+      )}
+
+      {/* Banner de confirmação de troca de funil */}
+      {bannerFunil && (
+        <div className="rounded-xl p-4 mb-4 space-y-3"
+          style={{ background: 'rgba(251,191,36,.06)', border: '1px solid rgba(251,191,36,.3)' }}>
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Alterar função principal do agente
+              </p>
+              {bannerFunil.carregando ? (
+                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Verificando leads ativos...</p>
+              ) : (
+                <div className="mt-1 space-y-1">
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    Trocando de <strong>{LABELS_FUNIL[funcaoPrincipal] ?? funcaoPrincipal}</strong> para{' '}
+                    <strong>{LABELS_FUNIL[bannerFunil.novaFuncao] ?? bannerFunil.novaFuncao}</strong>{' '}
+                    para o tenant <strong>{tenant?.nome}</strong>.
+                  </p>
+                  {bannerFunil.leadsAtivos > 0 ? (
+                    <p className="text-xs text-yellow-400 font-medium">
+                      ⚠ {bannerFunil.leadsAtivos} lead{bannerFunil.leadsAtivos !== 1 ? 's' : ''} ativo{bannerFunil.leadsAtivos !== 1 ? 's' : ''} será{bannerFunil.leadsAtivos !== 1 ? 'ão' : ''} movido{bannerFunil.leadsAtivos !== 1 ? 's' : ''} para a primeira etapa do novo funil. Leads encerrados mantêm o histórico.
+                    </p>
+                  ) : (
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      Nenhum lead ativo será afetado. Leads encerrados mantêm seu histórico.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          {!bannerFunil.carregando && (
+            <div className="flex gap-2 justify-end">
+              <button onClick={cancelarTrocaFunil}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium"
+                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--bg-surface-2)' }}>
+                Cancelar
+              </button>
+              <button onClick={confirmarTrocaFunil} disabled={trocandoFunil}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50"
+                style={{ background: '#F59E0B', color: '#000', border: 'none' }}>
+                {trocandoFunil ? 'Alterando...' : 'Confirmar alteração'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -321,10 +418,8 @@ export default function AdminTreinamentoPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
-
-        {/* Coluna esquerda — Prompt + Google Calendar */}
+        {/* Coluna esquerda */}
         <div className="flex flex-col gap-4">
-
           {/* Prompt */}
           <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
             <div className="flex items-start justify-between mb-4">
@@ -334,24 +429,27 @@ export default function AdminTreinamentoPage() {
                   Define personalidade, regras e contexto. Use {'{empresa}'} para o nome do cliente.
                 </p>
               </div>
-              <button className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-colors"
+              <button className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
                 style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
                 <History size={13} /> Histórico
               </button>
             </div>
 
+            {/* Função principal — seleção única */}
             <div className="mb-4">
               <p className="text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
-                Função principal do agente
+                Função principal do agente <span style={{ color: 'var(--text-label)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(escolha uma)</span>
               </p>
               <div className="flex flex-wrap gap-2">
                 {FUNCOES.map((f) => (
-                  <button key={f.id} onClick={() => toggleFuncao(f.id)}
+                  <button key={f.id} onClick={() => handleSelecionarFuncao(f.id)}
                     className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
                     style={{
-                      background: funcoes.includes(f.id) ? 'rgba(16,185,129,0.1)' : 'var(--bg-hover)',
-                      borderColor: funcoes.includes(f.id) ? 'rgba(16,185,129,0.4)' : 'var(--border)',
-                      color: funcoes.includes(f.id) ? '#10B981' : 'var(--text-muted)',
+                      background: funcaoPrincipal === f.id ? 'rgba(16,185,129,0.1)' : 'var(--bg-hover)',
+                      borderColor: funcaoPrincipal === f.id ? 'rgba(16,185,129,0.4)' : 'var(--border)',
+                      color: funcaoPrincipal === f.id ? '#10B981' : 'var(--text-muted)',
+                      outline: funcaoPrincipal === f.id ? '2px solid rgba(16,185,129,0.2)' : 'none',
+                      outlineOffset: 1,
                     }}>
                     {f.label}
                   </button>
@@ -361,9 +459,8 @@ export default function AdminTreinamentoPage() {
 
             <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)}
               placeholder="Digite aqui o prompt do agente..."
-              className="w-full min-h-[320px] rounded-xl p-4 text-[12.5px] leading-relaxed font-mono resize-y focus:outline-none transition-colors"
-              style={{ ...inputStyle, background: 'var(--bg-surface-2)' }}
-            />
+              className="w-full min-h-[320px] rounded-xl p-4 text-[12.5px] leading-relaxed font-mono resize-y focus:outline-none"
+              style={{ ...inputStyle, background: 'var(--bg-surface-2)' }} />
 
             <div className="flex items-center justify-between mt-3">
               <p className="text-xs" style={{ color: 'var(--text-label)' }}>
@@ -371,12 +468,12 @@ export default function AdminTreinamentoPage() {
               </p>
               <div className="flex gap-2">
                 <button onClick={() => setSelectedId((id) => id)}
-                  className="px-4 py-2 text-xs font-semibold rounded-lg transition-colors"
+                  className="px-4 py-2 text-xs font-semibold rounded-lg"
                   style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
                   Descartar
                 </button>
                 <button onClick={handleSave} disabled={saving}
-                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-[#10B981] hover:bg-[#059669] text-white rounded-lg transition-colors disabled:opacity-60">
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-[#10B981] hover:bg-[#059669] text-white rounded-lg disabled:opacity-60">
                   <CheckCircle size={13} />
                   {saving ? 'Salvando...' : saved ? 'Salvo!' : 'Salvar configurações'}
                 </button>
@@ -385,7 +482,8 @@ export default function AdminTreinamentoPage() {
           </div>
 
           {agendamentosAtivo && <GestaoProfissionais tenantId={selectedId} />}
-          {/* Google Calendar — aparece quando Agendamentos está ativo */}
+
+          {/* Google Calendar */}
           {agendamentosAtivo && (
             <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
               <div className="flex items-center gap-2 mb-1">
@@ -395,87 +493,57 @@ export default function AdminTreinamentoPage() {
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                 O agente usará estas credenciais para consultar, criar, reagendar e cancelar eventos automaticamente.
               </p>
-
-              {/* ── Passo a passo em modal ── */}
-              <div className="mb-4">
-                <GoogleCalendarGuide />
-              </div>
-
+              <div className="mb-4"><GoogleCalendarGuide /></div>
               <div className="space-y-3">
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
                     Client Email (Service Account)
                   </label>
-                  <input
-                    type="email"
-                    value={gcClientEmail}
-                    onChange={(e) => setGcClientEmail(e.target.value)}
+                  <input type="email" value={gcClientEmail} onChange={(e) => setGcClientEmail(e.target.value)}
                     placeholder="nome@projeto.iam.gserviceaccount.com"
-                    className="w-full rounded-lg px-3 py-2 text-xs focus:outline-none font-mono"
-                    style={inputStyle}
-                  />
+                    className="w-full rounded-lg px-3 py-2 text-xs focus:outline-none font-mono" style={inputStyle} />
                 </div>
-
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
                     Private Key
                   </label>
                   <div className="relative">
-                    <textarea
-                      value={gcPrivateKey}
-                      onChange={(e) => setGcPrivateKey(e.target.value)}
+                    <textarea value={gcPrivateKey} onChange={(e) => setGcPrivateKey(e.target.value)}
                       placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
                       rows={showPrivateKey ? 5 : 2}
                       className="w-full rounded-lg px-3 py-2 text-xs focus:outline-none font-mono resize-none pr-10"
-                      style={{ ...inputStyle, filter: showPrivateKey ? 'none' : 'blur(3px)', userSelect: showPrivateKey ? 'auto' : 'none' }}
-                    />
-                    <button
-                      onClick={() => setShowPrivateKey(v => !v)}
-                      className="absolute right-2 top-2 p-1 rounded transition-colors"
-                      style={{ color: 'var(--text-muted)' }}>
+                      style={{ ...inputStyle, filter: showPrivateKey ? 'none' : 'blur(3px)', userSelect: showPrivateKey ? 'auto' : 'none' }} />
+                    <button onClick={() => setShowPrivateKey(v => !v)}
+                      className="absolute right-2 top-2 p-1 rounded" style={{ color: 'var(--text-muted)' }}>
                       {showPrivateKey ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
                   </div>
-                  <p className="text-[10px] mt-1" style={{ color: 'var(--text-label)' }}>
-                    Cole a chave completa incluindo os cabeçalhos BEGIN/END. Será salva de forma segura.
-                  </p>
                 </div>
-
                 <div>
                   <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'var(--text-muted)' }}>
                     Calendar ID
                   </label>
-                  <input
-                    type="text"
-                    value={gcCalendarId}
-                    onChange={(e) => setGcCalendarId(e.target.value)}
+                  <input type="text" value={gcCalendarId} onChange={(e) => setGcCalendarId(e.target.value)}
                     placeholder="exemplo@group.calendar.google.com"
-                    className="w-full rounded-lg px-3 py-2 text-xs focus:outline-none font-mono"
-                    style={inputStyle}
-                  />
+                    className="w-full rounded-lg px-3 py-2 text-xs focus:outline-none font-mono" style={inputStyle} />
                 </div>
-
                 <div className="flex items-center gap-3 pt-1">
-                  <button
-                    onClick={handleTestCalendar}
+                  <button onClick={handleTestCalendar}
                     disabled={testingCalendar || !gcClientEmail || !gcPrivateKey || !gcCalendarId}
-                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40"
+                    className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg disabled:opacity-40"
                     style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'var(--bg-hover)' }}>
                     {testingCalendar
                       ? <><div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" /> Testando...</>
-                      : <><Calendar size={12} /> Testar conexão</>
-                    }
+                      : <><Calendar size={12} /> Testar conexão</>}
                   </button>
-
                   {calendarTestResult && (
                     <span className={`text-xs font-medium ${calendarTestResult.ok ? 'text-[#10B981]' : 'text-red-400'}`}>
                       {calendarTestResult.ok ? '✓' : '✗'} {calendarTestResult.msg}
                     </span>
                   )}
                 </div>
-
                 {gcClientEmail && gcPrivateKey && gcCalendarId && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg mt-1"
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
                     style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)' }}>
                     <div className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
                     <p className="text-[11px]" style={{ color: '#10B981' }}>
@@ -488,9 +556,8 @@ export default function AdminTreinamentoPage() {
           )}
         </div>
 
-        {/* Coluna direita — Horário + Base de conhecimento */}
+        {/* Coluna direita */}
         <div className="flex flex-col gap-4">
-
           {/* Horário */}
           <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
             <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Horário de funcionamento</p>
@@ -528,7 +595,7 @@ export default function AdminTreinamentoPage() {
                   {docs.length} documento{docs.length !== 1 ? 's' : ''} · contexto para respostas
                 </p>
               </div>
-              <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#10B981] hover:bg-[#059669] text-white rounded-lg cursor-pointer transition-colors">
+              <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#10B981] hover:bg-[#059669] text-white rounded-lg cursor-pointer">
                 <Upload size={12} />
                 {uploading ? 'Enviando...' : 'Upload'}
                 <input type="file" multiple
@@ -544,7 +611,6 @@ export default function AdminTreinamentoPage() {
                 <p className="text-xs text-[#10B981]">{uploadProgresso}</p>
               </div>
             )}
-
             {erroUpload && (
               <div className="flex items-center gap-2 p-3 rounded-lg mb-3"
                 style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
@@ -554,7 +620,7 @@ export default function AdminTreinamentoPage() {
 
             <div className="flex flex-col gap-2 mb-3">
               {docs.map((doc) => (
-                <div key={doc.id} className="flex items-center gap-2.5 p-3 rounded-xl transition-colors"
+                <div key={doc.id} className="flex items-center gap-2.5 p-3 rounded-xl"
                   style={{ border: '1px solid var(--border)', background: 'var(--bg-surface-2)' }}>
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm shrink-0"
                     style={{ background: 'var(--bg-hover)' }}>
@@ -567,7 +633,7 @@ export default function AdminTreinamentoPage() {
                     </p>
                   </div>
                   <button onClick={() => handleDeleteDoc(doc)} disabled={deletando === doc.id}
-                    className="w-6 h-6 rounded-md flex items-center justify-center hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                    className="w-6 h-6 rounded-md flex items-center justify-center hover:text-red-400 hover:bg-red-500/10 disabled:opacity-40"
                     style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
                     {deletando === doc.id
                       ? <div className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin" />
@@ -577,7 +643,7 @@ export default function AdminTreinamentoPage() {
               ))}
             </div>
 
-            <label className="flex flex-col items-center gap-2 p-4 rounded-xl cursor-pointer hover:border-[#10B981] transition-colors text-center"
+            <label className="flex flex-col items-center gap-2 p-4 rounded-xl cursor-pointer text-center"
               style={{ border: '1px dashed var(--border-2)' }}>
               <Upload size={20} style={{ color: 'var(--text-muted)' }} />
               <div>
@@ -589,7 +655,6 @@ export default function AdminTreinamentoPage() {
                 className="hidden" onChange={(e) => handleUpload(e.target.files)} />
             </label>
           </div>
-
         </div>
       </div>
     </div>
