@@ -62,6 +62,20 @@ const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Ag
 
 type FiltroVista = 'ativas' | 'todas'
 
+// ─── Hook: detectar mobile ────────────────────────────────────────────────────
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)')
+    setIsMobile(mq.matches)
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+  return isMobile
+}
+
 // ─── Mini calendário ──────────────────────────────────────────────────────────
 
 function MiniCalendario({
@@ -100,7 +114,7 @@ function MiniCalendario({
   }
 
   return (
-    <div style={{ minWidth: 220 }}>
+    <div style={{ minWidth: 200 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
         <button onClick={() => onNavMes(-1)}
           style={{ width:24, height:24, borderRadius:6, border:'1px solid var(--border)', background:'transparent', color:'var(--text-muted)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -146,6 +160,98 @@ function MiniCalendario({
   )
 }
 
+// ─── Popover calendário (desktop: dois lados; mobile: um calendário + nav) ────
+
+function CalendarioPopover({
+  dataInicio, dataFim, hoverDate, selecionando,
+  mesEsq, mesDir,
+  onSelectDia, onHoverDia, onNavMes, onLimpar, onAplicar,
+  isMobile,
+}: {
+  dataInicio: Date | null
+  dataFim: Date | null
+  hoverDate: Date | null
+  selecionando: 'inicio' | 'fim'
+  mesEsq: { ano: number; mes: number }
+  mesDir: { ano: number; mes: number }
+  onSelectDia: (d: Date) => void
+  onHoverDia: (d: Date | null) => void
+  onNavMes: (delta: number, lado: 'esq' | 'dir') => void
+  onLimpar: () => void
+  onAplicar: () => void
+  isMobile: boolean
+}) {
+  return (
+    <div className="rounded-xl shadow-2xl"
+      style={{
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border)',
+        padding: 16,
+        // Mobile: largura que cabe na tela; desktop: 500px fixo
+        width: isMobile ? 'calc(100vw - 32px)' : 500,
+        maxWidth: isMobile ? 360 : undefined,
+      }}>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+        {selecionando === 'inicio' || !dataInicio
+          ? 'Selecione a data inicial'
+          : 'Selecione a data final'}
+      </p>
+
+      {isMobile ? (
+        /* Mobile: único calendário com navegação */
+        <MiniCalendario
+          ano={mesDir.ano} mes={mesDir.mes}
+          dataInicio={dataInicio} dataFim={dataFim} hoverDate={hoverDate}
+          onSelectDia={onSelectDia}
+          onHoverDia={d => { if (dataInicio && !dataFim) onHoverDia(d) }}
+          onNavMes={d => onNavMes(d, 'dir')}
+        />
+      ) : (
+        /* Desktop: dois calendários lado a lado */
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          <MiniCalendario
+            ano={mesEsq.ano} mes={mesEsq.mes}
+            dataInicio={dataInicio} dataFim={dataFim} hoverDate={hoverDate}
+            onSelectDia={onSelectDia}
+            onHoverDia={d => { if (dataInicio && !dataFim) onHoverDia(d) }}
+            onNavMes={d => onNavMes(d, 'esq')}
+          />
+          <MiniCalendario
+            ano={mesDir.ano} mes={mesDir.mes}
+            dataInicio={dataInicio} dataFim={dataFim} hoverDate={hoverDate}
+            onSelectDia={onSelectDia}
+            onHoverDia={d => { if (dataInicio && !dataFim) onHoverDia(d) }}
+            onNavMes={d => onNavMes(d, 'dir')}
+          />
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mt-4 pt-3"
+        style={{ borderTop: '1px solid var(--border)' }}>
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          {dataInicio && dataFim
+            ? `${formatarDataBR(dataInicio)} – ${formatarDataBR(dataFim)}`
+            : dataInicio
+            ? `${formatarDataBR(dataInicio)} – selecione o fim`
+            : 'Nenhum período selecionado'}
+        </span>
+        <div className="flex gap-2">
+          <button onClick={onLimpar}
+            className="text-xs px-3 py-1.5 rounded-lg"
+            style={{ border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
+            Limpar
+          </button>
+          <button onClick={onAplicar}
+            className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+            style={{ background: '#10B981', color: '#000', border: 'none' }}>
+            Aplicar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function CRMPage() {
@@ -156,6 +262,7 @@ export default function CRMPage() {
   const [modalLead, setModalLead]   = useState<CRMLead | null>(null)
   const [movendo, setMovendo]       = useState(false)
   const [filtro, setFiltro]         = useState<FiltroVista>('ativas')
+  const isMobile = useIsMobile()
 
   // Calendário
   const [showCal, setShowCal]         = useState(false)
@@ -314,11 +421,12 @@ export default function CRMPage() {
 
   if (carregando) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <div className="h-8 w-48 rounded animate-pulse mb-6" style={{ background: 'var(--bg-surface)' }} />
-        <div className="flex gap-3">
+        <div className="flex gap-3 overflow-x-auto pb-2">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="w-48 h-64 rounded-xl animate-pulse flex-shrink-0" style={{ background: 'var(--bg-surface)' }} />
+            <div key={i} className="rounded-xl animate-pulse flex-shrink-0"
+              style={{ background: 'var(--bg-surface)', width: 180, height: 240 }} />
           ))}
         </div>
       </div>
@@ -327,34 +435,49 @@ export default function CRMPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 flex-shrink-0 gap-3 flex-wrap"
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="flex-shrink-0 px-3 sm:px-6 py-3"
         style={{ borderBottom: '1px solid var(--border)' }}>
-        <div>
-          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>CRM</h1>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAtivas} ativa{totalAtivas !== 1 ? 's' : ''}
-            {totalEncerradas > 0 && ` · ${totalEncerradas} encerrada${totalEncerradas !== 1 ? 's' : ''}`}
-            {periodoAtivo && ` · ${leadsFiltrados.length} no período`}
-          </p>
+
+        {/* Linha 1: título + badge funil */}
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div>
+            <h1 className="text-lg sm:text-xl font-bold" style={{ color: 'var(--text-primary)' }}>CRM</h1>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAtivas} ativa{totalAtivas !== 1 ? 's' : ''}
+              {totalEncerradas > 0 && ` · ${totalEncerradas} encerrada${totalEncerradas !== 1 ? 's' : ''}`}
+              {periodoAtivo && ` · ${leadsFiltrados.length} no período`}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {movendo && <RefreshCw size={13} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+              style={{ background: 'rgba(16,185,129,.1)', border: '1px solid rgba(16,185,129,.3)', color: '#10B981' }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+              {/* No mobile mostra só o ícone; no sm+ mostra o label */}
+              <span className="hidden sm:inline">{LABELS_FUNIL[funilAtivo] ?? funilAtivo}</span>
+              <span className="sm:hidden">{(LABELS_FUNIL[funilAtivo] ?? funilAtivo).charAt(0).toUpperCase()}</span>
+            </div>
+          </div>
         </div>
 
+        {/* Linha 2: filtros */}
         <div className="flex items-center gap-2 flex-wrap">
-          {movendo && <RefreshCw size={14} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
-
           {/* Toggle ativas/todas */}
-          <div className="flex items-center rounded-lg p-1"
+          <div className="flex items-center rounded-lg p-0.5"
             style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
             {(['ativas', 'todas'] as FiltroVista[]).map(f => (
               <button key={f} onClick={() => setFiltro(f)}
-                className="px-3 py-1 rounded-md text-xs font-medium transition-colors"
+                className="px-2.5 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors"
                 style={{
                   background: filtro === f ? 'var(--bg-hover)' : 'transparent',
                   color: filtro === f ? 'var(--text-primary)' : 'var(--text-muted)',
                 }}>
                 {f === 'ativas' ? 'Ativas' : 'Todas'}
                 {f === 'todas' && totalEncerradas > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px]"
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px]"
                     style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
                     +{totalEncerradas}
                   </span>
@@ -367,14 +490,15 @@ export default function CRMPage() {
           <div className="relative" ref={calRef}>
             <button
               onClick={() => setShowCal(prev => !prev)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
               style={{
                 background: periodoAtivo ? 'rgba(16,185,129,.1)' : 'var(--bg-surface-2)',
                 border: `1px solid ${periodoAtivo ? 'rgba(16,185,129,.3)' : 'var(--border)'}`,
                 color: periodoAtivo ? '#10B981' : 'var(--text-muted)',
               }}>
               <Calendar size={13} />
-              {labelPeriodo}
+              {/* Mobile: só ícone quando sem período ativo */}
+              <span className={periodoAtivo ? '' : 'hidden sm:inline'}>{labelPeriodo}</span>
               {periodoAtivo && (
                 <span onClick={(e) => { e.stopPropagation(); limparPeriodo() }}
                   className="ml-1 hover:opacity-70">
@@ -384,73 +508,47 @@ export default function CRMPage() {
             </button>
 
             {showCal && (
-              <div className="absolute right-0 top-9 z-50 rounded-xl shadow-2xl"
-                style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', padding: 16, width: 500 }}>
-
-                {/* Instrução */}
-                <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
-                  {selecionando === 'inicio' || !dataInicio
-                    ? 'Selecione a data inicial'
-                    : 'Selecione a data final'}
-                </p>
-
-                {/* Dois calendários */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-                  <MiniCalendario
-                    ano={mesEsq.ano} mes={mesEsq.mes}
-                    dataInicio={dataInicio} dataFim={dataFim} hoverDate={hoverDate}
-                    onSelectDia={selecionarDia}
-                    onHoverDia={d => { if (dataInicio && !dataFim) setHoverDate(d) }}
-                    onNavMes={d => navMes(d, 'esq')}
-                  />
-                  <MiniCalendario
-                    ano={mesDir.ano} mes={mesDir.mes}
-                    dataInicio={dataInicio} dataFim={dataFim} hoverDate={hoverDate}
-                    onSelectDia={selecionarDia}
-                    onHoverDia={d => { if (dataInicio && !dataFim) setHoverDate(d) }}
-                    onNavMes={d => navMes(d, 'dir')}
-                  />
-                </div>
-
-                {/* Footer */}
-                <div className="flex items-center justify-between mt-4 pt-3"
-                  style={{ borderTop: '1px solid var(--border)' }}>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {dataInicio && dataFim
-                      ? `${formatarDataBR(dataInicio)} – ${formatarDataBR(dataFim)}`
-                      : dataInicio
-                      ? `${formatarDataBR(dataInicio)} – selecione o fim`
-                      : 'Nenhum período selecionado'}
-                  </span>
-                  <div className="flex gap-2">
-                    <button onClick={limparPeriodo}
-                      className="text-xs px-3 py-1.5 rounded-lg"
-                      style={{ border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
-                      Limpar
-                    </button>
-                    <button onClick={() => setShowCal(false)}
-                      className="text-xs px-3 py-1.5 rounded-lg font-semibold"
-                      style={{ background: '#10B981', color: '#000', border: 'none' }}>
-                      Aplicar
-                    </button>
-                  </div>
-                </div>
+              <div
+                className="absolute z-50"
+                style={{
+                  // Mobile: ancora à esquerda para não sair da tela
+                  right: isMobile ? 'auto' : 0,
+                  left: isMobile ? 0 : 'auto',
+                  top: 38,
+                }}>
+                <CalendarioPopover
+                  dataInicio={dataInicio} dataFim={dataFim} hoverDate={hoverDate}
+                  selecionando={selecionando}
+                  mesEsq={mesEsq} mesDir={mesDir}
+                  onSelectDia={selecionarDia}
+                  onHoverDia={d => { if (dataInicio && !dataFim) setHoverDate(d) }}
+                  onNavMes={navMes}
+                  onLimpar={limparPeriodo}
+                  onAplicar={() => setShowCal(false)}
+                  isMobile={isMobile}
+                />
               </div>
             )}
-          </div>
-
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-            style={{ background: 'rgba(16,185,129,.1)', border: '1px solid rgba(16,185,129,.3)', color: '#10B981' }}>
-            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-            {LABELS_FUNIL[funilAtivo] ?? funilAtivo}
           </div>
         </div>
       </div>
 
-      {/* Board */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden">
+      {/* ── Board ──────────────────────────────────────────────────────────── */}
+      {/*
+        overflow-x-auto + -webkit-overflow-scrolling: touch = scroll suave no iOS
+        scroll-snap para alinhar colunas no mobile
+      */}
+      <div
+        className="flex-1 overflow-x-auto overflow-y-hidden"
+        style={{ WebkitOverflowScrolling: 'touch' }}>
         <DragDropContext onDragEnd={onDragEnd}>
-          <div className="flex gap-3 p-4 h-full" style={{ minWidth: 'max-content' }}>
+          <div
+            className="flex gap-3 p-3 sm:p-4 h-full"
+            style={{
+              minWidth: 'max-content',
+              // Snap horizontal no mobile para facilitar a navegação entre colunas
+              scrollSnapType: isMobile ? 'x mandatory' : 'none',
+            }}>
             {etapas.map((etapa) => {
               const isPositivo   = etapa === etapas[etapas.length - 2]
               const isNegativo   = etapa === etapas[etapas.length - 1]
@@ -459,7 +557,9 @@ export default function CRMPage() {
               return (
                 <div key={etapa} className="flex flex-col rounded-xl flex-shrink-0"
                   style={{
-                    width: 200,
+                    // Mobile: ~85vw por coluna; sm+: 200px fixo
+                    width: isMobile ? 'min(85vw, 240px)' : 200,
+                    scrollSnapAlign: isMobile ? 'start' : 'none',
                     background: 'var(--bg-surface)',
                     border: `1px solid ${isPositivo ? 'rgba(52,211,153,.25)' : isNegativo ? 'rgba(248,113,113,.25)' : 'var(--border)'}`,
                   }}>
@@ -505,13 +605,15 @@ export default function CRMPage() {
                                   onClick={() => setModalLead(lead)}
                                   className="rounded-lg p-2.5 select-none"
                                   style={{
-                                    cursor:     encerrado ? 'pointer' : 'grab',
+                                    cursor:     encerrado ? 'pointer' : snap.isDragging ? 'grabbing' : 'grab',
                                     opacity:    encerrado ? 0.55 : 1,
                                     background: snap.isDragging ? 'var(--bg-hover)' : 'var(--bg-surface-2)',
                                     border:     `1px solid ${snap.isDragging ? 'var(--border-2)' : 'var(--border)'}`,
                                     boxShadow:  snap.isDragging ? '0 8px 24px rgba(0,0,0,.4)' : 'none',
                                     transform:  snap.isDragging ? 'rotate(1.5deg)' : 'none',
                                     transition: snap.isDragging ? 'none' : 'border-color .15s, opacity .15s',
+                                    // Touch: área de toque maior
+                                    touchAction: encerrado ? 'auto' : 'none',
                                     ...prov.draggableProps.style,
                                   }}>
                                   {encerrado && (

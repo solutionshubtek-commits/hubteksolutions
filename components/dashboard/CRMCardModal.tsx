@@ -78,15 +78,39 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
   }, [lead.id, lead.contato_telefone])
 
   return (
+    /*
+      Overlay: em mobile ocupa a tela inteira com o modal ancorado na base (sheet),
+      em sm+ mantém o comportamento centralizado original.
+    */
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex sm:items-center sm:justify-center sm:p-4"
       style={{ background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(4px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
-        className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl"
-        style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', maxHeight: '90vh', overflowY: 'auto' }}
+        className={[
+          'w-full overflow-hidden shadow-2xl',
+          // Mobile: bottom sheet — sobe da base, raio só no topo
+          'sm:max-w-sm sm:rounded-2xl',
+          // No mobile empurra para a base da tela
+          'mt-auto sm:mt-0',
+        ].join(' ')}
+        style={{
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border)',
+          maxHeight: '92dvh',
+          overflowY: 'auto',
+          // Raio somente nos cantos superiores no mobile; sm+ usa rounded-2xl
+          borderRadius: 'var(--radius, 16px) var(--radius, 16px) 0 0',
+        }}
+        // Previne que o clique no modal feche o overlay
+        onClick={e => e.stopPropagation()}
       >
+        {/* Alça visual (só mobile) */}
+        <div className="flex justify-center pt-3 pb-1 sm:hidden">
+          <div className="w-10 h-1 rounded-full" style={{ background: 'var(--border)' }} />
+        </div>
+
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 sticky top-0"
           style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
@@ -102,7 +126,7 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
             )}
           </div>
           <button onClick={onClose}
-            className="w-6 h-6 flex items-center justify-center rounded-md"
+            className="w-7 h-7 flex items-center justify-center rounded-md"
             style={{ color: 'var(--text-muted)' }}
             onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
@@ -136,14 +160,14 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
             </span>
           </div>
 
-          {/* Trilha de etapas */}
+          {/* Trilha de etapas — scroll horizontal no mobile para não quebrar layout */}
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider mb-2"
               style={{ color: 'var(--text-label)' }}>Etapa atual</p>
-            <div className="flex items-center gap-1 flex-wrap">
+            <div className="flex items-center gap-1 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
               {etapas.slice(0, -2).map((e, idx) => (
-                <div key={e} className="flex items-center gap-1">
-                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium"
+                <div key={e} className="flex items-center gap-1 flex-shrink-0">
+                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap"
                     style={{
                       background: e === lead.etapa ? 'rgba(16,185,129,.12)' : idx < idxAtual ? 'rgba(16,185,129,.06)' : 'var(--bg-surface-2)',
                       border: `1px solid ${e === lead.etapa ? 'rgba(16,185,129,.4)' : 'var(--border)'}`,
@@ -257,7 +281,7 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
           </p>
 
           {/* Ações */}
-          <div className="flex gap-2 pt-1">
+          <div className="flex gap-2 pt-1 pb-safe">
             <button
               onClick={() => { onClose(); router.push(`/conversas/${lead.conversation_id}`) }}
               className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold"
