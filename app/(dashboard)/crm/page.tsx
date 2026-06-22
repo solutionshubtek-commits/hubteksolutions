@@ -441,9 +441,14 @@ export default function CRMPage() {
       <div className="flex-shrink-0 px-3 sm:px-6 py-3"
         style={{ borderBottom: '1px solid var(--border)' }}>
 
-        {/* Linha 1: título + badge funil */}
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div>
+        {/*
+          Desktop (sm+): linha única — título à esquerda, filtros + badge à direita
+          Mobile: duas linhas — título em cima, filtros embaixo
+        */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+
+          {/* Título + subtítulo */}
+          <div className="min-w-0">
             <h1 className="text-lg sm:text-xl font-bold" style={{ color: 'var(--text-primary)' }}>CRM</h1>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
               Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAtivas} ativa{totalAtivas !== 1 ? 's' : ''}
@@ -452,83 +457,83 @@ export default function CRMPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Filtros + badge — ficam à direita no desktop */}
+          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
             {movendo && <RefreshCw size={13} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+
+            {/* Toggle ativas/todas */}
+            <div className="flex items-center rounded-lg p-0.5"
+              style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
+              {(['ativas', 'todas'] as FiltroVista[]).map(f => (
+                <button key={f} onClick={() => setFiltro(f)}
+                  className="px-2.5 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors"
+                  style={{
+                    background: filtro === f ? 'var(--bg-hover)' : 'transparent',
+                    color: filtro === f ? 'var(--text-primary)' : 'var(--text-muted)',
+                  }}>
+                  {f === 'ativas' ? 'Ativas' : 'Todas'}
+                  {f === 'todas' && totalEncerradas > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px]"
+                      style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                      +{totalEncerradas}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Botão período com popover calendário */}
+            <div className="relative" ref={calRef}>
+              <button
+                onClick={() => setShowCal(prev => !prev)}
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                style={{
+                  background: periodoAtivo ? 'rgba(16,185,129,.1)' : 'var(--bg-surface-2)',
+                  border: `1px solid ${periodoAtivo ? 'rgba(16,185,129,.3)' : 'var(--border)'}`,
+                  color: periodoAtivo ? '#10B981' : 'var(--text-muted)',
+                }}>
+                <Calendar size={13} />
+                <span className={periodoAtivo ? '' : 'hidden sm:inline'}>{labelPeriodo}</span>
+                {periodoAtivo && (
+                  <span onClick={(e) => { e.stopPropagation(); limparPeriodo() }}
+                    className="ml-1 hover:opacity-70">
+                    <X size={11} />
+                  </span>
+                )}
+              </button>
+
+              {showCal && (
+                <div
+                  className="absolute z-50"
+                  style={{
+                    // Desktop: ancora à direita (popover não sai da tela)
+                    // Mobile: centraliza em relação ao botão
+                    right: isMobile ? 'auto' : 0,
+                    left: isMobile ? '50%' : 'auto',
+                    transform: isMobile ? 'translateX(-50%)' : 'none',
+                    top: 38,
+                  }}>
+                  <CalendarioPopover
+                    dataInicio={dataInicio} dataFim={dataFim} hoverDate={hoverDate}
+                    selecionando={selecionando}
+                    mesEsq={mesEsq} mesDir={mesDir}
+                    onSelectDia={selecionarDia}
+                    onHoverDia={d => { if (dataInicio && !dataFim) setHoverDate(d) }}
+                    onNavMes={navMes}
+                    onLimpar={limparPeriodo}
+                    onAplicar={() => setShowCal(false)}
+                    isMobile={isMobile}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Badge funil */}
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
               style={{ background: 'rgba(16,185,129,.1)', border: '1px solid rgba(16,185,129,.3)', color: '#10B981' }}>
               <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#10B981]" />
               {LABELS_FUNIL[funilAtivo] ?? funilAtivo}
             </div>
-          </div>
-        </div>
-
-        {/* Linha 2: filtros */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Toggle ativas/todas */}
-          <div className="flex items-center rounded-lg p-0.5"
-            style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
-            {(['ativas', 'todas'] as FiltroVista[]).map(f => (
-              <button key={f} onClick={() => setFiltro(f)}
-                className="px-2.5 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors"
-                style={{
-                  background: filtro === f ? 'var(--bg-hover)' : 'transparent',
-                  color: filtro === f ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}>
-                {f === 'ativas' ? 'Ativas' : 'Todas'}
-                {f === 'todas' && totalEncerradas > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px]"
-                    style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
-                    +{totalEncerradas}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Botão período com popover calendário */}
-          <div className="relative" ref={calRef}>
-            <button
-              onClick={() => setShowCal(prev => !prev)}
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-              style={{
-                background: periodoAtivo ? 'rgba(16,185,129,.1)' : 'var(--bg-surface-2)',
-                border: `1px solid ${periodoAtivo ? 'rgba(16,185,129,.3)' : 'var(--border)'}`,
-                color: periodoAtivo ? '#10B981' : 'var(--text-muted)',
-              }}>
-              <Calendar size={13} />
-              {/* Mobile: só ícone quando sem período ativo */}
-              <span className={periodoAtivo ? '' : 'hidden sm:inline'}>{labelPeriodo}</span>
-              {periodoAtivo && (
-                <span onClick={(e) => { e.stopPropagation(); limparPeriodo() }}
-                  className="ml-1 hover:opacity-70">
-                  <X size={11} />
-                </span>
-              )}
-            </button>
-
-            {showCal && (
-              <div
-                className="absolute z-50"
-                style={{
-                  // Mobile: ancora à esquerda do botão; desktop: alinha à direita
-                  right: isMobile ? 'auto' : 0,
-                  left: isMobile ? '50%' : 'auto',
-                  transform: isMobile ? 'translateX(-50%)' : 'none',
-                  top: 38,
-                }}>
-                <CalendarioPopover
-                  dataInicio={dataInicio} dataFim={dataFim} hoverDate={hoverDate}
-                  selecionando={selecionando}
-                  mesEsq={mesEsq} mesDir={mesDir}
-                  onSelectDia={selecionarDia}
-                  onHoverDia={d => { if (dataInicio && !dataFim) setHoverDate(d) }}
-                  onNavMes={navMes}
-                  onLimpar={limparPeriodo}
-                  onAplicar={() => setShowCal(false)}
-                  isMobile={isMobile}
-                />
-              </div>
-            )}
           </div>
         </div>
       </div>
