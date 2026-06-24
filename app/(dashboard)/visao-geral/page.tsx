@@ -426,42 +426,32 @@ function GraficoBarras({ dados, crmStats, onExport }: {
         </svg>
       </div>
 
-      {/* Mini gráfico de barras lado a lado por etapa CRM */}
+      {/* Distribuição do funil — barras horizontais elegantes */}
       {etapasGrafico.length > 0 && (
         <div className="mt-5 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-          <p className="text-[10px] font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-label)' }}>
-            Distribuição atual no funil de {LABELS_FUNIL[crmStats!.funilAtivo] ?? crmStats!.funilAtivo}
+          <p className="text-[10px] font-semibold uppercase tracking-wider mb-4" style={{ color: 'var(--text-label)' }}>
+            Distribuição atual · Funil de {LABELS_FUNIL[crmStats!.funilAtivo] ?? crmStats!.funilAtivo}
           </p>
-          {/* Barras lado a lado */}
-          <div className="flex items-end gap-2 h-20">
+          <div className="space-y-2">
             {etapasGrafico.map((e, i) => {
-              const pct = maxEtapa > 0 ? (e.valor / maxEtapa) * 100 : 0
+              const pct = maxEtapa > 0 ? Math.max((e.valor / maxEtapa) * 100, e.valor > 0 ? 3 : 0) : 0
               return (
-                <div key={i} className="flex flex-col items-center gap-1 flex-1 h-full justify-end">
-                  <span className="text-[10px] font-semibold" style={{ color: e.cor }}>
-                    {e.valor > 0 ? e.valor : ''}
+                <div key={i} className="flex items-center gap-3">
+                  <span className="text-[11px] flex-shrink-0 text-right truncate"
+                    style={{ width: 110, color: 'var(--text-secondary)' }}>
+                    {e.label}
                   </span>
-                  <div className="w-full rounded-t-sm transition-all"
-                    style={{
-                      height: `${Math.max(pct, e.valor > 0 ? 8 : 2)}%`,
-                      background: e.cor,
-                      opacity: e.valor > 0 ? 0.85 : 0.2,
-                      minHeight: 4,
-                    }} />
+                  <div className="flex-1 rounded-full overflow-hidden" style={{ height: 6, background: 'var(--bg-surface-2)' }}>
+                    <div className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${pct}%`, background: e.cor, opacity: e.valor > 0 ? 1 : 0, minWidth: e.valor > 0 ? 6 : 0 }} />
+                  </div>
+                  <span className="text-[11px] font-semibold tabular-nums flex-shrink-0"
+                    style={{ width: 18, textAlign: 'right', color: e.valor > 0 ? e.cor : 'var(--text-label)' }}>
+                    {e.valor}
+                  </span>
                 </div>
               )
             })}
-          </div>
-          {/* Legenda */}
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3">
-            {etapasGrafico.map((e, i) => (
-              <div key={i} className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: e.cor }} />
-                <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                  {e.label}: <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{e.valor}</span>
-                </span>
-              </div>
-            ))}
           </div>
         </div>
       )}
@@ -615,12 +605,12 @@ export default function VisaoGeralPage() {
     if (!userData?.tenant_id) return
     const dias = parseInt(p)
     const inicio = new Date(); inicio.setDate(inicio.getDate()-dias); inicio.setHours(0,0,0,0)
-    const { data } = await supabase.from('conversations').select('criado_em').eq('tenant_id',userData.tenant_id).gte('criado_em',inicio.toISOString())
+    const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',userData.tenant_id).gte('ultima_mensagem_em',inicio.toISOString())
     const porDia: Record<string,number> = {}
     const curr = new Date(inicio)
     const hoje = new Date(); hoje.setHours(23,59,59,999)
     while (curr<=hoje) { porDia[curr.toISOString().slice(0,10)]=0; curr.setDate(curr.getDate()+1) }
-    ;(data??[]).forEach(c => { const dia=c.criado_em.slice(0,10); if (porDia[dia]!==undefined) porDia[dia]++ })
+    ;(data??[]).forEach(c => { const dia=(c.ultima_mensagem_em??'').slice(0,10); if (porDia[dia]!==undefined) porDia[dia]++ })
     const resultado = Object.entries(porDia).map(([dia,total])=>({dia,total}))
     graficoCache.current[p] = resultado
     setGrafico(resultado)
