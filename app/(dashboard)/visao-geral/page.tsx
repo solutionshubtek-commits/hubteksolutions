@@ -5,8 +5,12 @@ import {
   MessageSquare, Users, Clock, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
   Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut, ChevronDown,
+  Bot, UserCheck, AlertCircle,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
+import { LABELS_FUNIL } from '@/lib/crm'
+
+// ─── Tipos ────────────────────────────────────────────────────────────────────
 
 interface Metrics {
   conversasHoje: number
@@ -17,6 +21,17 @@ interface Metrics {
   conversasMesAnterior: number
   pausadas: number
   pausadasAnterior: number
+}
+
+interface CRMStats {
+  funilAtivo: string
+  etapas: string[]
+  labels: Record<string, string>
+  contagemEtapa: Record<string, number>
+  resolvidosIA: number
+  resolvidosHumano: number
+  aguardandoHumano: number
+  transferidosHumano: number
 }
 
 interface ConversaRecente {
@@ -48,6 +63,8 @@ interface AtividadeItem {
   cor: string
   criado_em: string
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function delta(atual: number, anterior: number) {
   if (!anterior) return null
@@ -114,20 +131,32 @@ function exportarGraficoPDF(dados: DiaDado[], periodo: string) {
     titulo: `Volume de Conversas — últimos ${periodo} dias`,
     subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
     colunas: [
-      { label: 'Data',        key: 'data',  align: 'left' },
-      { label: 'Conversas',   key: 'total', align: 'right' },
+      { label: 'Data',      key: 'data',  align: 'left' },
+      { label: 'Conversas', key: 'total', align: 'right' },
     ],
     linhas: dados.map(d => ({
       data:  new Date(d.dia + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
       total: d.total,
     })),
-    totais: {
-      data:  'Total',
-      total: dados.reduce((s, d) => s + d.total, 0),
-    },
+    totais: { data: 'Total', total: dados.reduce((s, d) => s + d.total, 0) },
     nomeArquivo: `grafico_conversas_${periodo}d_${new Date().toISOString().slice(0, 10)}`,
   })
 }
+
+// ─── Paleta CRM por índice de etapa ──────────────────────────────────────────
+// Segue a paleta existente: verde (#10B981), azul (#3B82F6), roxo (#8B5CF6),
+// âmbar (#F59E0B), ciano (#06B6D4) — sem cores hardcoded fora do padrão
+
+const CRM_CORES = [
+  { bg: 'rgba(16,185,129,.12)',  border: 'rgba(16,185,129,.3)',  text: '#10B981' }, // verde
+  { bg: 'rgba(59,130,246,.12)',  border: 'rgba(59,130,246,.3)',  text: '#3B82F6' }, // azul
+  { bg: 'rgba(139,92,246,.12)',  border: 'rgba(139,92,246,.3)',  text: '#8B5CF6' }, // roxo
+  { bg: 'rgba(245,158,11,.12)',  border: 'rgba(245,158,11,.3)',  text: '#F59E0B' }, // âmbar
+  { bg: 'rgba(6,182,212,.12)',   border: 'rgba(6,182,212,.3)',   text: '#06B6D4' }, // ciano
+  { bg: 'rgba(236,72,153,.12)',  border: 'rgba(236,72,153,.3)',  text: '#EC4899' }, // rosa
+]
+
+// ─── Componentes ──────────────────────────────────────────────────────────────
 
 function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   label: string; valor: number; d: number | null; icon: React.ElementType; cor: string; alt?: boolean
@@ -155,7 +184,102 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   )
 }
 
-function GraficoBarras({ dados, periodo, onExport }: { dados: DiaDado[]; periodo: string; onExport: () => void }) {
+// Card CRM por etapa
+function CRMEtapaCard({ label, valor, cor, isEtapaFinal }: {
+  label: string; valor: number; cor: typeof CRM_CORES[0]; isEtapaFinal: boolean
+}) {
+  return (
+    <div className="rounded-xl p-3 md:p-4 flex flex-col gap-1.5"
+      style={{
+        background: isEtapaFinal ? cor.bg : 'var(--bg-surface)',
+        border: `1px solid ${isEtapaFinal ? cor.border : 'var(--border)'}`,
+      }}>
+      <p className="text-[11px] font-medium truncate" style={{ color: 'var(--text-secondary)' }}>{label}</p>
+      <p className="text-2xl font-bold" style={{ color: isEtapaFinal ? cor.text : 'var(--text-primary)' }}>
+        {valor.toLocaleString('pt-BR')}
+      </p>
+      <div className="w-full h-1 rounded-full" style={{ background: 'var(--bg-surface-2)' }}>
+        <div className="h-1 rounded-full transition-all" style={{ background: cor.text, width: valor > 0 ? '100%' : '0%' }} />
+      </div>
+    </div>
+  )
+}
+
+// Painel de insights CRM
+function InsightsCRM({ stats }: { stats: CRMStats }) {
+  const total = stats.resolvidosIA + stats.resolvidosHumano
+  const pctIA = total > 0 ? Math.round((stats.resolvidosIA / total) * 100) : 0
+  const pctHumano = total > 0 ? 100 - pctIA : 0
+
+  const insights = [
+    stats.aguardandoHumano > 0 && {
+      icone: AlertCircle,
+      cor: '#F59E0B',
+      texto: `${stats.aguardandoHumano} conversa${stats.aguardandoHumano !== 1 ? 's' : ''} aguardando atendimento humano`,
+    },
+    stats.transferidosHumano > 0 && {
+      icone: UserCheck,
+      cor: '#3B82F6',
+      texto: `${stats.transferidosHumano} transferência${stats.transferidosHumano !== 1 ? 's' : ''} para humano nos últimos 30 dias`,
+    },
+    stats.resolvidosIA > 0 && {
+      icone: Bot,
+      cor: '#10B981',
+      texto: `${stats.resolvidosIA} atendimento${stats.resolvidosIA !== 1 ? 's' : ''} concluído${stats.resolvidosIA !== 1 ? 's' : ''} pela IA`,
+    },
+    stats.resolvidosHumano > 0 && {
+      icone: UserCheck,
+      cor: '#8B5CF6',
+      texto: `${stats.resolvidosHumano} atendimento${stats.resolvidosHumano !== 1 ? 's' : ''} concluído${stats.resolvidosHumano !== 1 ? 's' : ''} por humano`,
+    },
+  ].filter(Boolean) as Array<{ icone: React.ElementType; cor: string; texto: string }>
+
+  return (
+    <div className="rounded-xl p-4 md:p-5 flex flex-col gap-4" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+      <div>
+        <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Insights do CRM</h2>
+        <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Últimos 30 dias · Funil de {LABELS_FUNIL[stats.funilAtivo] ?? stats.funilAtivo}</p>
+      </div>
+
+      {/* IA vs Humano */}
+      {total > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
+            <span className="flex items-center gap-1"><Bot size={11} color="#10B981" /> IA {pctIA}%</span>
+            <span className="flex items-center gap-1"><UserCheck size={11} color="#8B5CF6" /> Humano {pctHumano}%</span>
+          </div>
+          <div className="flex h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-surface-2)' }}>
+            <div className="h-full transition-all" style={{ width: `${pctIA}%`, background: '#10B981' }} />
+            <div className="h-full transition-all" style={{ width: `${pctHumano}%`, background: '#8B5CF6' }} />
+          </div>
+          <p className="text-[10px] mt-1" style={{ color: 'var(--text-label)' }}>{total} atendimento{total !== 1 ? 's' : ''} concluído{total !== 1 ? 's' : ''} no período</p>
+        </div>
+      )}
+
+      {/* Lista de insights */}
+      <div className="space-y-2.5">
+        {insights.length > 0 ? insights.map((item, i) => (
+          <div key={i} className="flex items-start gap-2.5">
+            <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5"
+              style={{ background: `${item.cor}18` }}>
+              <item.icone size={12} color={item.cor} />
+            </div>
+            <p className="text-xs leading-snug" style={{ color: 'var(--text-primary)' }}>{item.texto}</p>
+          </div>
+        )) : (
+          <p className="text-xs" style={{ color: 'var(--text-label)' }}>Nenhum atendimento concluído ainda neste período.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function GraficoBarras({ dados, periodo, crmStats, onExport }: {
+  dados: DiaDado[]
+  periodo: string
+  crmStats: CRMStats | null
+  onExport: () => void
+}) {
   const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
   const [isDark, setIsDark] = useState(true)
 
@@ -199,12 +323,21 @@ function GraficoBarras({ dados, periodo, onExport }: { dados: DiaDado[]; periodo
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
 
-  const textColor    = isDark ? '#6B6B6B' : '#71717A'
-  const gridColor    = isDark ? '#1F1F1F' : '#D4D4D8'
-  const labelColor   = isDark ? '#A3A3A3' : '#3F3F46'
-  const tooltipBg    = isDark ? '#111111' : '#FFFFFF'
+  const textColor     = isDark ? '#6B6B6B' : '#71717A'
+  const gridColor     = isDark ? '#1F1F1F' : '#D4D4D8'
+  const labelColor    = isDark ? '#A3A3A3' : '#3F3F46'
+  const tooltipBg     = isDark ? '#111111' : '#FFFFFF'
   const tooltipBorder = isDark ? '#2A2A2A' : '#D4D4D8'
-  const tooltipText  = isDark ? '#FFFFFF' : '#09090B'
+  const tooltipText   = isDark ? '#FFFFFF' : '#09090B'
+
+  // Etapas intermediárias para legenda (sem as 2 finais)
+  const etapasParaLegenda = crmStats
+    ? crmStats.etapas.slice(0, -2).map((e, idx) => ({
+        label: crmStats.labels[e] ?? e,
+        cor: CRM_CORES[idx % CRM_CORES.length].text,
+        valor: crmStats.contagemEtapa[e] ?? 0,
+      }))
+    : []
 
   return (
     <div>
@@ -225,8 +358,7 @@ function GraficoBarras({ dados, periodo, onExport }: { dados: DiaDado[]; periodo
           onClick={onExport}
           className="ml-auto flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5 transition-colors"
           style={{ color: 'var(--text-muted)', border: '1px solid var(--border)', background: 'var(--bg-surface-2)' }}
-          title={`Exportar gráfico ${periodo}d como PDF`}
-        >
+          title={`Exportar gráfico ${periodo}d como PDF`}>
           <Download size={12} /> PDF
         </button>
       </div>
@@ -284,6 +416,23 @@ function GraficoBarras({ dados, periodo, onExport }: { dados: DiaDado[]; periodo
           })()}
         </svg>
       </div>
+
+      {/* Legenda CRM abaixo do gráfico */}
+      {etapasParaLegenda.length > 0 && (
+        <div className="mt-4 pt-3 flex flex-wrap gap-3" style={{ borderTop: '1px solid var(--border)' }}>
+          <p className="w-full text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-label)' }}>
+            Distribuição atual no funil de {LABELS_FUNIL[crmStats!.funilAtivo] ?? crmStats!.funilAtivo}
+          </p>
+          {etapasParaLegenda.map((e, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: e.cor }} />
+              <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                {e.label}: <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{e.valor}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -298,8 +447,11 @@ function logParaAtividade(log: { id: string; acao: string; descricao: string; cr
 
 const CONV_LIMIT_STEP = 20
 
+// ─── Página principal ─────────────────────────────────────────────────────────
+
 export default function VisaoGeralPage() {
   const [metrics, setMetrics]               = useState<Metrics | null>(null)
+  const [crmStats, setCrmStats]             = useState<CRMStats | null>(null)
   const [conversas, setConversas]           = useState<ConversaRecente[]>([])
   const [conversasFiltradas, setConversasFiltradas] = useState<ConversaRecente[]>([])
   const [grafico, setGrafico]               = useState<DiaDado[]>([])
@@ -317,8 +469,6 @@ export default function VisaoGeralPage() {
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
   const [atividades, setAtividades]         = useState<AtividadeItem[]>([])
   const exportRef = useRef<HTMLDivElement>(null)
-
-  // Cache de gráfico por período — evita rebuscar ao trocar de volta
   const graficoCache = useRef<Partial<Record<'7' | '30' | '90', DiaDado[]>>>({})
 
   useEffect(() => {
@@ -329,7 +479,6 @@ export default function VisaoGeralPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ── Inicialização: dados do usuário + métricas + conversas ─────────────────
   useEffect(() => {
     async function fetchInicial() {
       const supabase = createClient()
@@ -342,18 +491,17 @@ export default function VisaoGeralPage() {
       setTenantId(userData.tenant_id)
       const tid = userData.tenant_id
 
-      const agora    = new Date()
-      const hoje     = new Date(agora); hoje.setHours(0, 0, 0, 0)
-      const ontem    = new Date(hoje);  ontem.setDate(ontem.getDate() - 1)
-      const semana   = new Date(agora); semana.setDate(semana.getDate() - 7)
-      const semAnt   = new Date(agora); semAnt.setDate(semAnt.getDate() - 14)
-      const mesIni   = new Date(agora.getFullYear(), agora.getMonth(), 1)
+      const agora     = new Date()
+      const hoje      = new Date(agora); hoje.setHours(0, 0, 0, 0)
+      const ontem     = new Date(hoje);  ontem.setDate(ontem.getDate() - 1)
+      const semana    = new Date(agora); semana.setDate(semana.getDate() - 7)
+      const semAnt    = new Date(agora); semAnt.setDate(semAnt.getDate() - 14)
+      const mesIni    = new Date(agora.getFullYear(), agora.getMonth(), 1)
       const mesAntIni = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
       const mesAntFim = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
 
-      // ── 5 queries consolidadas (era 10) ───────────────────────────────────
       const [
-        hojeOntemRes,   // conversas hoje + ontem em uma query
+        hojeOntemRes,
         semanaRes,
         semAntRes,
         mesRes,
@@ -362,81 +510,60 @@ export default function VisaoGeralPage() {
         convRes,
         bandasRes,
       ] = await Promise.all([
-        // Hoje e ontem: busca os dois dias e conta no front (1 query no lugar de 2)
         supabase.from('conversations')
           .select('criado_em', { count: 'exact' })
           .eq('tenant_id', tid)
           .gte('criado_em', ontem.toISOString())
           .limit(10000),
-
         supabase.from('conversations').select('id', { count: 'exact', head: true })
           .eq('tenant_id', tid).gte('criado_em', semana.toISOString()),
-
         supabase.from('conversations').select('id', { count: 'exact', head: true })
           .eq('tenant_id', tid)
           .gte('criado_em', semAnt.toISOString())
           .lt('criado_em', semana.toISOString()),
-
         supabase.from('conversations').select('id', { count: 'exact', head: true })
           .eq('tenant_id', tid).gte('criado_em', mesIni.toISOString()),
-
         supabase.from('conversations').select('id', { count: 'exact', head: true })
           .eq('tenant_id', tid)
           .gte('criado_em', mesAntIni.toISOString())
           .lte('criado_em', mesAntFim.toISOString()),
-
-        // Pausadas: uma query com count + dados para calcular "pausadas antes de hoje"
         supabase.from('conversations')
           .select('pausado_em')
           .eq('tenant_id', tid)
           .eq('agente_pausado', true)
           .limit(10000),
-
-        // Conversas recentes — sem N+1: última mensagem via messages ordenado
         supabase.from('conversations')
-          .select(`
-            id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em,
-            messages(conteudo, criado_em)
-          `)
+          .select(`id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em, messages(conteudo, criado_em)`)
           .eq('tenant_id', tid)
           .eq('status', 'ativa')
           .order('ultima_mensagem_em', { ascending: false })
           .limit(CONV_LIMIT_STEP),
-
         supabase.from('tenant_instances')
           .select('id, instance_name, apelido')
           .eq('tenant_id', tid)
           .eq('status', 'banido'),
       ])
 
-      // Conta hoje e ontem a partir dos dados retornados
-      const hojeIsoStr = hoje.toISOString()
+      const hojeIsoStr    = hoje.toISOString()
       const convHojeOntem = hojeOntemRes.data ?? []
-      const convHoje  = convHojeOntem.filter(c => c.criado_em >= hojeIsoStr).length
-      const convOntem = convHojeOntem.filter(c => c.criado_em < hojeIsoStr).length
-
-      // Pausadas hoje vs antes de hoje
+      const convHoje      = convHojeOntem.filter(c => c.criado_em >= hojeIsoStr).length
+      const convOntem     = convHojeOntem.filter(c => c.criado_em < hojeIsoStr).length
       const pausadasData  = pausadasRes.data ?? []
       const totalPausadas = pausadasData.length
       const pausadasAnt   = pausadasData.filter(c => c.pausado_em && c.pausado_em < hojeIsoStr).length
 
       setMetrics({
-        conversasHoje: convHoje,           conversasHojeAnterior: convOntem,
-        conversasSemana: semanaRes.count ?? 0,    conversasSemanaAnterior: semAntRes.count ?? 0,
-        conversasMes: mesRes.count ?? 0,          conversasMesAnterior: mesAntRes.count ?? 0,
-        pausadas: totalPausadas,           pausadasAnterior: pausadasAnt,
+        conversasHoje: convHoje,               conversasHojeAnterior: convOntem,
+        conversasSemana: semanaRes.count ?? 0, conversasSemanaAnterior: semAntRes.count ?? 0,
+        conversasMes: mesRes.count ?? 0,       conversasMesAnterior: mesAntRes.count ?? 0,
+        pausadas: totalPausadas,               pausadasAnterior: pausadasAnt,
       })
 
       setInstanciasBanidas((bandasRes.data ?? []) as InstanciaBanida[])
 
-      // ── Sem N+1: última mensagem já vem junto ─────────────────────────────
       type ConvRaw = {
-        id: string
-        contato_nome: string
-        contato_telefone: string
-        status: string
-        agente_pausado: boolean
-        ultima_mensagem_em: string
+        id: string; contato_nome: string; contato_telefone: string
+        status: string; agente_pausado: boolean; ultima_mensagem_em: string
         messages: Array<{ conteudo: string; criado_em: string }>
       }
       const convComMsg: ConversaRecente[] = ((convRes.data ?? []) as unknown as ConvRaw[]).map(c => {
@@ -445,62 +572,58 @@ export default function VisaoGeralPage() {
         )
         return { ...c, ultima_mensagem: msgs[0]?.conteudo ?? '—' }
       })
-
       setConversas(convComMsg)
       setConversasFiltradas(convComMsg)
       setConvLimit(CONV_LIMIT_STEP)
 
-      // Atividades
       const itensConversas: AtividadeItem[] = convComMsg.slice(0, 4).map(c => ({
         id: `conv_${c.id}`, tipo: 'conversa' as const,
         texto: `${c.contato_nome || c.contato_telefone} ${c.agente_pausado ? 'solicitou atendimento humano.' : 'está em conversa com o agente.'}`,
         cor: c.agente_pausado ? '#F59E0B' : '#10B981',
         criado_em: c.ultima_mensagem_em,
       }))
-
       let itensLogs: AtividadeItem[] = []
       if (['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userData.role)) {
-        const supabaseInner = createClient()
-        const { data: logsData } = await supabaseInner
+        const { data: logsData } = await supabase
           .from('conversation_logs').select('id, acao, descricao, criado_em')
           .eq('tenant_id', tid).order('criado_em', { ascending: false }).limit(6)
         itensLogs = (logsData ?? []).map(logParaAtividade)
       }
-
       const todos = [...itensConversas, ...itensLogs]
         .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
         .slice(0, 8)
       setAtividades(todos)
+
+      // CRM stats — fetch separado com cache 15min
+      try {
+        const crmRes = await fetch('/api/visao-geral/crm-stats')
+        if (crmRes.ok) {
+          const crmData = await crmRes.json() as CRMStats
+          setCrmStats(crmData)
+        }
+      } catch { /* não crítico */ }
+
       setCarregando(false)
     }
     fetchInicial()
   }, [])
 
-  // ── Gráfico com cache ──────────────────────────────────────────────────────
   const fetchGrafico = useCallback(async (p: '7' | '30' | '90') => {
-    // Retorna do cache se já foi carregado
-    if (graficoCache.current[p]) {
-      setGrafico(graficoCache.current[p]!)
-      return
-    }
-
+    if (graficoCache.current[p]) { setGrafico(graficoCache.current[p]!); return }
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
     if (!userData?.tenant_id) return
-
     const dias   = parseInt(p)
     const inicio = new Date(); inicio.setDate(inicio.getDate() - dias); inicio.setHours(0, 0, 0, 0)
     const { data } = await supabase.from('conversations').select('criado_em')
       .eq('tenant_id', userData.tenant_id).gte('criado_em', inicio.toISOString())
-
     const porDia: Record<string, number> = {}
     const curr = new Date(inicio)
     const hoje = new Date(); hoje.setHours(23, 59, 59, 999)
     while (curr <= hoje) { porDia[curr.toISOString().slice(0, 10)] = 0; curr.setDate(curr.getDate() + 1) }
     ;(data ?? []).forEach(c => { const dia = c.criado_em.slice(0, 10); if (porDia[dia] !== undefined) porDia[dia]++ })
-
     const resultado = Object.entries(porDia).map(([dia, total]) => ({ dia, total }))
     graficoCache.current[p] = resultado
     setGrafico(resultado)
@@ -508,41 +631,29 @@ export default function VisaoGeralPage() {
 
   useEffect(() => { fetchGrafico(periodo) }, [periodo, fetchGrafico])
 
-  // ── Carregar mais conversas ────────────────────────────────────────────────
   const handleCarregarMais = useCallback(async () => {
     if (!tenantId) return
     setCarregandoMais(true)
     const novoLimit = convLimit + CONV_LIMIT_STEP
     const supabase = createClient()
-
     type ConvRaw = {
-      id: string
-      contato_nome: string
-      contato_telefone: string
-      status: string
-      agente_pausado: boolean
-      ultima_mensagem_em: string
+      id: string; contato_nome: string; contato_telefone: string
+      status: string; agente_pausado: boolean; ultima_mensagem_em: string
       messages: Array<{ conteudo: string; criado_em: string }>
     }
-
     const { data } = await supabase
       .from('conversations')
-      .select(`
-        id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em,
-        messages(conteudo, criado_em)
-      `)
+      .select(`id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em, messages(conteudo, criado_em)`)
       .eq('tenant_id', tenantId)
       .eq('status', 'ativa')
       .order('ultima_mensagem_em', { ascending: false })
       .limit(novoLimit)
-
     const convComMsg: ConversaRecente[] = ((data ?? []) as unknown as ConvRaw[]).map(c => {
       const msgs = (c.messages ?? []).sort((a, b) =>
         new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime()
       )
       return { ...c, ultima_mensagem: msgs[0]?.conteudo ?? '—' }
     })
-
     setConversas(convComMsg)
     setConvLimit(novoLimit)
     setCarregandoMais(false)
@@ -601,6 +712,11 @@ export default function VisaoGeralPage() {
       <div className="p-4 md:p-8">
         <div className="h-8 rounded w-48 mb-2 animate-pulse" style={{ background: 'var(--bg-surface)' }} />
         <div className="h-4 rounded w-72 mb-8 animate-pulse" style={{ background: 'var(--bg-surface)' }} />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-24 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }} />
+          ))}
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-28 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }} />
@@ -614,6 +730,7 @@ export default function VisaoGeralPage() {
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6">
 
+      {/* Cabeçalho */}
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
@@ -633,6 +750,7 @@ export default function VisaoGeralPage() {
         </div>
       </div>
 
+      {/* Alerta instâncias banidas */}
       {instanciasBanidas.length > 0 && (
         <div className="rounded-xl p-4 space-y-3" style={{ background: '#EF444408', border: '1px solid #EF444430' }}>
           <div className="flex items-center gap-2">
@@ -690,6 +808,34 @@ export default function VisaoGeralPage() {
         </div>
       )}
 
+      {/* ── BLOCO CRM — etapas do funil ativo ─────────────────────────────── */}
+      {crmStats && crmStats.etapas.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-label)' }}>
+              CRM · Funil de {LABELS_FUNIL[crmStats.funilAtivo] ?? crmStats.funilAtivo}
+            </p>
+            <div className="flex-1 h-px" style={{ background: 'var(--border)' }} />
+          </div>
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${crmStats.etapas.length}, minmax(0, 1fr))` }}>
+            {crmStats.etapas.map((etapa, idx) => {
+              const cor = CRM_CORES[idx % CRM_CORES.length]
+              const isEtapaFinal = idx >= crmStats.etapas.length - 2
+              return (
+                <CRMEtapaCard
+                  key={etapa}
+                  label={crmStats.labels[etapa] ?? etapa}
+                  valor={crmStats.contagemEtapa[etapa] ?? 0}
+                  cor={cor}
+                  isEtapaFinal={isEtapaFinal}
+                />
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── KPIs de conversas ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <KpiCard label="Hoje"      valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
         <KpiCard label="Na semana" valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
@@ -697,6 +843,7 @@ export default function VisaoGeralPage() {
         <KpiCard label="Pausadas"  valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
       </div>
 
+      {/* ── Gráfico + Insights ────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           <div className="flex items-start justify-between mb-4">
@@ -708,30 +855,38 @@ export default function VisaoGeralPage() {
           <GraficoBarras
             dados={grafico}
             periodo={periodo}
+            crmStats={crmStats}
             onExport={() => exportarGraficoPDF(grafico, periodo)}
           />
         </div>
 
-        <div className="rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-          <h2 className="font-semibold mb-1 text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Atividade recente</h2>
-          <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>Eventos do agente e ações dos operadores.</p>
-          <div className="space-y-3">
-            {atividades.map(item => (
-              <div key={item.id} className="flex items-start gap-2.5">
-                <span className="w-2 h-2 rounded-full mt-1 flex-shrink-0" style={{ background: item.cor }} />
-                <div className="min-w-0">
-                  <p className="text-xs leading-snug" style={{ color: 'var(--text-primary)' }}>{item.texto}</p>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-label)' }}>{tempoRelativo(item.criado_em)}</p>
+        <div className="space-y-4">
+          {/* Insights CRM */}
+          {crmStats && <InsightsCRM stats={crmStats} />}
+
+          {/* Atividade recente */}
+          <div className="rounded-xl p-4 md:p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+            <h2 className="font-semibold mb-1 text-sm" style={{ color: 'var(--text-primary)' }}>Atividade recente</h2>
+            <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>Eventos do agente e ações dos operadores.</p>
+            <div className="space-y-2.5">
+              {atividades.map(item => (
+                <div key={item.id} className="flex items-start gap-2.5">
+                  <span className="w-2 h-2 rounded-full mt-1 flex-shrink-0" style={{ background: item.cor }} />
+                  <div className="min-w-0">
+                    <p className="text-xs leading-snug" style={{ color: 'var(--text-primary)' }}>{item.texto}</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-label)' }}>{tempoRelativo(item.criado_em)}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
-            {atividades.length === 0 && (
-              <p className="text-sm" style={{ color: 'var(--text-label)' }}>Nenhuma atividade recente.</p>
-            )}
+              ))}
+              {atividades.length === 0 && (
+                <p className="text-sm" style={{ color: 'var(--text-label)' }}>Nenhuma atividade recente.</p>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
+      {/* ── Conversas recentes ────────────────────────────────────────────── */}
       <div className="rounded-xl" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
         <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4 gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--border)' }}>
           <div>
@@ -786,7 +941,6 @@ export default function VisaoGeralPage() {
           </div>
         ) : (
           <>
-            {/* Desktop */}
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -850,7 +1004,6 @@ export default function VisaoGeralPage() {
               </table>
             </div>
 
-            {/* Mobile */}
             <div className="md:hidden divide-y" style={{ borderColor: 'var(--border)' }}>
               {conversasFiltradas.map(c => (
                 <div key={c.id} className="p-4 space-y-2">
@@ -887,16 +1040,13 @@ export default function VisaoGeralPage() {
               ))}
             </div>
 
-            {/* Carregar mais */}
             {temMaisConversas && (
               <div className="flex justify-center px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
-                <button
-                  onClick={handleCarregarMais}
-                  disabled={carregandoMais}
+                <button onClick={handleCarregarMais} disabled={carregandoMais}
                   className="flex items-center gap-2 text-xs font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
                   style={{ border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
                   <ChevronDown size={14} className={carregandoMais ? 'animate-bounce' : ''} />
-                  {carregandoMais ? 'Carregando...' : `Ver mais conversas`}
+                  {carregandoMais ? 'Carregando...' : 'Ver mais conversas'}
                 </button>
               </div>
             )}
