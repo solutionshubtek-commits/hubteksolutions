@@ -286,9 +286,8 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: string }) {
 }
 
 // Gráfico de barras — conversas por dia + gráfico de barras lado a lado por etapa CRM
-function GraficoBarras({ dados, periodo, crmStats, onExport }: {
+function GraficoBarras({ dados, crmStats, onExport }: {
   dados: DiaDado[]
-  periodo: string
   crmStats: CRMStats | null
   onExport: () => void
 }) {
@@ -827,7 +826,7 @@ export default function VisaoGeralPage() {
             </h2>
             <p className="text-xs mt-0.5" style={{ color:'var(--text-muted)' }}>Total agregado por dia.</p>
           </div>
-          <GraficoBarras dados={grafico} periodo={periodo} crmStats={crmStats} onExport={() => exportarGraficoPDF(grafico, periodo)} />
+          <GraficoBarras dados={grafico} crmStats={crmStats} onExport={() => exportarGraficoPDF(grafico, periodo)} />
         </div>
 
         <div className="space-y-4">

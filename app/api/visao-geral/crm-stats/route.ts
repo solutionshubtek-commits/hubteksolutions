@@ -45,7 +45,7 @@ export async function GET(request: Request) {
 
     // Busca status das conversas separadamente para evitar problema do inner join
     const convIds = (leadsData ?? []).map(l => l.conversation_id).filter(Boolean)
-    let convStatusMap: Record<string, string> = {}
+    const convStatusMap: Record<string, string> = {}
     if (convIds.length > 0) {
       const { data: convsData } = await supabase
         .from('conversations')
