@@ -4,10 +4,14 @@ import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { ETAPAS_FUNIL, LABELS_ETAPA } from '@/lib/crm'
 
-export const revalidate = 900 // cache 15 minutos
+// SEM revalidate — cache feito no client com localStorage + TTL 15min
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url)
+    const periodoParam = searchParams.get('periodo') ?? '30'
+    const dias = Math.min(Math.max(parseInt(periodoParam) || 30, 7), 90)
+
     const cookieStore = cookies()
     const supabaseAuth = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -24,7 +28,7 @@ export async function GET() {
 
     const tid = userData.tenant_id
 
-    // Funil ativo do tenant
+    // Funil ativo
     const { data: agentConfig } = await supabase
       .from('agent_config').select('funcoes_ativas').eq('tenant_id', tid).maybeSingle()
     const funcoesAtivas = (agentConfig?.funcoes_ativas as string[]) ?? []
@@ -32,35 +36,49 @@ export async function GET() {
     const etapas = ETAPAS_FUNIL[funilAtivo] ?? []
     const labels = LABELS_ETAPA[funilAtivo] ?? {}
 
-    // Leads ativos por etapa (ignora conversa encerrada)
+    // Leads ativos por etapa — LEFT join para não perder leads
     const { data: leadsData } = await supabase
       .from('crm_leads')
-      .select('etapa, conversations!inner(status)')
+      .select('etapa, conversation_id')
       .eq('tenant_id', tid)
       .eq('funil_tipo', funilAtivo)
 
-    // Contagem por etapa — só conversas ativas
+    // Busca status das conversas separadamente para evitar problema do inner join
+    const convIds = (leadsData ?? []).map(l => l.conversation_id).filter(Boolean)
+    let convStatusMap: Record<string, string> = {}
+    if (convIds.length > 0) {
+      const { data: convsData } = await supabase
+        .from('conversations')
+        .select('id, status')
+        .in('id', convIds)
+      ;(convsData ?? []).forEach((c: { id: string; status: string }) => {
+        convStatusMap[c.id] = c.status
+      })
+    }
+
+    // Contagem por etapa — todas as etapas, só ativas
     const contagemEtapa: Record<string, number> = {}
     etapas.forEach(e => { contagemEtapa[e] = 0 })
-    type LeadComConv = { etapa: string; conversations: { status: string } | null }
-    ;(leadsData ?? []).forEach((l) => {
-      const lead = l as unknown as LeadComConv
-      const ativa = lead.conversations?.status === 'ativa'
-      if (ativa && contagemEtapa[lead.etapa] !== undefined) {
-        contagemEtapa[lead.etapa]++
+    ;(leadsData ?? []).forEach((l: { etapa: string; conversation_id: string }) => {
+      const status = convStatusMap[l.conversation_id]
+      const ativa = status === 'ativa'
+      if (ativa && contagemEtapa[l.etapa] !== undefined) {
+        contagemEtapa[l.etapa]++
       }
     })
 
-    // Leads encerrados por movido_por (IA vs humano) — últimos 30 dias
-    const trintaDias = new Date()
-    trintaDias.setDate(trintaDias.getDate() - 30)
+    // Período para insights
+    const inicio = new Date()
+    inicio.setDate(inicio.getDate() - dias)
+
+    // Leads encerrados por movido_por no período
     const { data: encerrados } = await supabase
       .from('crm_leads')
       .select('movido_por, etapa')
       .eq('tenant_id', tid)
       .eq('funil_tipo', funilAtivo)
-      .in('etapa', etapas.slice(-2)) // etapas finais
-      .gte('atualizado_em', trintaDias.toISOString())
+      .in('etapa', etapas.slice(-2))
+      .gte('atualizado_em', inicio.toISOString())
 
     let resolvidosIA = 0
     let resolvidosHumano = 0
@@ -69,7 +87,7 @@ export async function GET() {
       else resolvidosHumano++
     })
 
-    // Aguardando resposta humana (agente pausado)
+    // Aguardando humano agora
     const { count: aguardandoHumano } = await supabase
       .from('conversations')
       .select('id', { count: 'exact', head: true })
@@ -77,22 +95,32 @@ export async function GET() {
       .eq('status', 'ativa')
       .eq('agente_pausado', true)
 
-    // Insights de atendimento humano nos últimos 30 dias
+    // Transferências para humano no período
     const { data: notifHumano } = await supabase
       .from('notifications')
-      .select('id, metadata, criado_em')
+      .select('id, metadata')
       .eq('tenant_id', tid)
       .eq('tipo', 'atendimento_humano')
-      .gte('criado_em', trintaDias.toISOString())
-      .limit(100)
+      .gte('criado_em', inicio.toISOString())
+      .limit(500)
 
-    // Deduplica por conversation_id (vários usuários recebem a mesma notificação)
     const convIdsHumano = new Set(
-      (notifHumano ?? []).map((n: { metadata: { conversation_id?: string } | null }) =>
-        n.metadata?.conversation_id
+      (notifHumano ?? []).map((n: { metadata: Record<string, unknown> | null }) =>
+        n.metadata?.conversation_id as string | undefined
       ).filter(Boolean)
     )
     const transferidosHumano = convIdsHumano.size
+
+    // Novas conversas no período (para o gráfico de barras CRM)
+    const { data: novasConvs } = await supabase
+      .from('conversations')
+      .select('criado_em')
+      .eq('tenant_id', tid)
+      .gte('criado_em', inicio.toISOString())
+
+    // Monta série temporal por etapa — simplificado: usa atualizado_em do lead
+    // Para o gráfico de barras laterais, retornamos a contagem atual por etapa
+    // (dados snapshot, suficiente para o visual pedido)
 
     return NextResponse.json({
       funilAtivo,
@@ -103,6 +131,8 @@ export async function GET() {
       resolvidosHumano,
       aguardandoHumano: aguardandoHumano ?? 0,
       transferidosHumano,
+      periodo: dias,
+      totalConversasPeriodo: (novasConvs ?? []).length,
     })
   } catch (err) {
     console.error('[crm-stats] erro:', err)

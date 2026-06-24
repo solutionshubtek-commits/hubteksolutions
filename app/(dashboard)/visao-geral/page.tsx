@@ -32,6 +32,8 @@ interface CRMStats {
   resolvidosHumano: number
   aguardandoHumano: number
   transferidosHumano: number
+  periodo: number
+  totalConversasPeriodo: number
 }
 
 interface ConversaRecente {
@@ -59,10 +61,20 @@ interface AtividadeItem {
   id: string
   tipo: 'conversa' | 'log'
   texto: string
-  subtexto?: string
   cor: string
   criado_em: string
 }
+
+// ─── Paleta CRM ───────────────────────────────────────────────────────────────
+
+const CRM_CORES = [
+  '#10B981', // verde
+  '#3B82F6', // azul
+  '#8B5CF6', // roxo
+  '#F59E0B', // âmbar
+  '#06B6D4', // ciano
+  '#EC4899', // rosa
+]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -80,8 +92,8 @@ function saudacao() {
 
 function formatFone(fone: string) {
   const d = fone.replace(/\D/g, '')
-  if (d.length === 13) return `+${d.slice(0, 2)} ${d.slice(2, 4)} ${d.slice(4, 9)}-${d.slice(9)}`
-  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
+  if (d.length === 13) return `+${d.slice(0,2)} ${d.slice(2,4)} ${d.slice(4,9)}-${d.slice(9)}`
+  if (d.length === 11) return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`
   return fone
 }
 
@@ -96,11 +108,11 @@ function tempoRelativo(data: string) {
 function exportarCSV(conversas: ConversaRecente[]) {
   const header = 'Contato,Telefone,Última mensagem,Status,Hora\n'
   const rows = conversas.map(c =>
-    `"${c.contato_nome || ''}","${c.contato_telefone}","${c.ultima_mensagem}","${c.agente_pausado ? 'Pausado' : 'Ativo'}","${tempoRelativo(c.ultima_mensagem_em)}"`
+    `"${c.contato_nome||''}","${c.contato_telefone}","${c.ultima_mensagem}","${c.agente_pausado?'Pausado':'Ativo'}","${tempoRelativo(c.ultima_mensagem_em)}"`
   ).join('\n')
-  const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
+  const blob = new Blob([header+rows], {type:'text/csv;charset=utf-8;'})
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'conversas.csv'; a.click()
+  const a = document.createElement('a'); a.href=url; a.download='conversas.csv'; a.click()
   URL.revokeObjectURL(url)
 }
 
@@ -109,20 +121,16 @@ function exportarConversasPDF(conversas: ConversaRecente[]) {
     titulo: 'Conversas Recentes',
     subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
     colunas: [
-      { label: 'Contato',         key: 'contato',  align: 'left' },
-      { label: 'Telefone',        key: 'telefone', align: 'left' },
-      { label: 'Última mensagem', key: 'msg',      align: 'left' },
-      { label: 'Status',          key: 'status',   align: 'left' },
-      { label: 'Hora',            key: 'hora',     align: 'left' },
+      {label:'Contato',key:'contato',align:'left'},{label:'Telefone',key:'telefone',align:'left'},
+      {label:'Última mensagem',key:'msg',align:'left'},{label:'Status',key:'status',align:'left'},
+      {label:'Hora',key:'hora',align:'left'},
     ],
     linhas: conversas.map(c => ({
-      contato:  c.contato_nome || '—',
-      telefone: c.contato_telefone,
-      msg:      c.ultima_mensagem.slice(0, 40) + (c.ultima_mensagem.length > 40 ? '...' : ''),
-      status:   c.agente_pausado ? 'Pausado' : 'Ativo',
-      hora:     tempoRelativo(c.ultima_mensagem_em),
+      contato: c.contato_nome||'—', telefone: c.contato_telefone,
+      msg: c.ultima_mensagem.slice(0,40)+(c.ultima_mensagem.length>40?'...':''),
+      status: c.agente_pausado?'Pausado':'Ativo', hora: tempoRelativo(c.ultima_mensagem_em),
     })),
-    nomeArquivo: `conversas_${new Date().toISOString().slice(0, 10)}`,
+    nomeArquivo: `conversas_${new Date().toISOString().slice(0,10)}`,
   })
 }
 
@@ -130,31 +138,33 @@ function exportarGraficoPDF(dados: DiaDado[], periodo: string) {
   exportPDF({
     titulo: `Volume de Conversas — últimos ${periodo} dias`,
     subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
-    colunas: [
-      { label: 'Data',      key: 'data',  align: 'left' },
-      { label: 'Conversas', key: 'total', align: 'right' },
-    ],
+    colunas: [{label:'Data',key:'data',align:'left'},{label:'Conversas',key:'total',align:'right'}],
     linhas: dados.map(d => ({
-      data:  new Date(d.dia + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+      data: new Date(d.dia+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}),
       total: d.total,
     })),
-    totais: { data: 'Total', total: dados.reduce((s, d) => s + d.total, 0) },
-    nomeArquivo: `grafico_conversas_${periodo}d_${new Date().toISOString().slice(0, 10)}`,
+    totais: {data:'Total',total:dados.reduce((s,d)=>s+d.total,0)},
+    nomeArquivo: `grafico_conversas_${periodo}d_${new Date().toISOString().slice(0,10)}`,
   })
 }
 
-// ─── Paleta CRM por índice de etapa ──────────────────────────────────────────
-// Segue a paleta existente: verde (#10B981), azul (#3B82F6), roxo (#8B5CF6),
-// âmbar (#F59E0B), ciano (#06B6D4) — sem cores hardcoded fora do padrão
+// ─── Cache client-side 15 minutos ─────────────────────────────────────────────
 
-const CRM_CORES = [
-  { bg: 'rgba(16,185,129,.12)',  border: 'rgba(16,185,129,.3)',  text: '#10B981' }, // verde
-  { bg: 'rgba(59,130,246,.12)',  border: 'rgba(59,130,246,.3)',  text: '#3B82F6' }, // azul
-  { bg: 'rgba(139,92,246,.12)',  border: 'rgba(139,92,246,.3)',  text: '#8B5CF6' }, // roxo
-  { bg: 'rgba(245,158,11,.12)',  border: 'rgba(245,158,11,.3)',  text: '#F59E0B' }, // âmbar
-  { bg: 'rgba(6,182,212,.12)',   border: 'rgba(6,182,212,.3)',   text: '#06B6D4' }, // ciano
-  { bg: 'rgba(236,72,153,.12)',  border: 'rgba(236,72,153,.3)',  text: '#EC4899' }, // rosa
-]
+const CRM_CACHE_TTL = 15 * 60 * 1000 // 15 min em ms
+
+function getCRMCache(periodo: string): CRMStats | null {
+  try {
+    const raw = localStorage.getItem(`crm_stats_${periodo}`)
+    if (!raw) return null
+    const { ts, data } = JSON.parse(raw) as { ts: number; data: CRMStats }
+    if (Date.now() - ts > CRM_CACHE_TTL) { localStorage.removeItem(`crm_stats_${periodo}`); return null }
+    return data
+  } catch { return null }
+}
+
+function setCRMCache(periodo: string, data: CRMStats) {
+  try { localStorage.setItem(`crm_stats_${periodo}`, JSON.stringify({ ts: Date.now(), data })) } catch { /* */ }
+}
 
 // ─── Componentes ──────────────────────────────────────────────────────────────
 
@@ -184,64 +194,62 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   )
 }
 
-// Card CRM por etapa
-function CRMEtapaCard({ label, valor, cor, isEtapaFinal }: {
-  label: string; valor: number; cor: typeof CRM_CORES[0]; isEtapaFinal: boolean
-}) {
+// Card CRM — sem destaque de cor nas etapas finais (visual padrão para todos)
+function CRMEtapaCard({ label, valor, cor }: { label: string; valor: number; cor: string }) {
   return (
     <div className="rounded-xl p-3 md:p-4 flex flex-col gap-1.5"
-      style={{
-        background: isEtapaFinal ? cor.bg : 'var(--bg-surface)',
-        border: `1px solid ${isEtapaFinal ? cor.border : 'var(--border)'}`,
-      }}>
-      <p className="text-[11px] font-medium truncate" style={{ color: 'var(--text-secondary)' }}>{label}</p>
-      <p className="text-2xl font-bold" style={{ color: isEtapaFinal ? cor.text : 'var(--text-primary)' }}>
+      style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+      <div className="flex items-center gap-1.5 mb-0.5">
+        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: cor }} />
+        <p className="text-[11px] font-medium truncate" style={{ color: 'var(--text-secondary)' }}>{label}</p>
+      </div>
+      <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
         {valor.toLocaleString('pt-BR')}
       </p>
-      <div className="w-full h-1 rounded-full" style={{ background: 'var(--bg-surface-2)' }}>
-        <div className="h-1 rounded-full transition-all" style={{ background: cor.text, width: valor > 0 ? '100%' : '0%' }} />
-      </div>
     </div>
   )
 }
 
-// Painel de insights CRM
-function InsightsCRM({ stats }: { stats: CRMStats }) {
+// Insights CRM — responde ao período selecionado
+function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: string }) {
   const total = stats.resolvidosIA + stats.resolvidosHumano
-  const pctIA = total > 0 ? Math.round((stats.resolvidosIA / total) * 100) : 0
+  const pctIA     = total > 0 ? Math.round((stats.resolvidosIA / total) * 100) : 0
   const pctHumano = total > 0 ? 100 - pctIA : 0
 
   const insights = [
     stats.aguardandoHumano > 0 && {
-      icone: AlertCircle,
-      cor: '#F59E0B',
-      texto: `${stats.aguardandoHumano} conversa${stats.aguardandoHumano !== 1 ? 's' : ''} aguardando atendimento humano`,
+      icone: AlertCircle, cor: '#F59E0B',
+      texto: `${stats.aguardandoHumano} conversa${stats.aguardandoHumano !== 1 ? 's' : ''} aguardando atendente agora`,
     },
     stats.transferidosHumano > 0 && {
-      icone: UserCheck,
-      cor: '#3B82F6',
-      texto: `${stats.transferidosHumano} transferência${stats.transferidosHumano !== 1 ? 's' : ''} para humano nos últimos 30 dias`,
+      icone: UserCheck, cor: '#3B82F6',
+      texto: `${stats.transferidosHumano} transferência${stats.transferidosHumano !== 1 ? 's' : ''} para humano nos últimos ${periodo} dias`,
     },
     stats.resolvidosIA > 0 && {
-      icone: Bot,
-      cor: '#10B981',
+      icone: Bot, cor: '#10B981',
       texto: `${stats.resolvidosIA} atendimento${stats.resolvidosIA !== 1 ? 's' : ''} concluído${stats.resolvidosIA !== 1 ? 's' : ''} pela IA`,
     },
     stats.resolvidosHumano > 0 && {
-      icone: UserCheck,
-      cor: '#8B5CF6',
+      icone: UserCheck, cor: '#8B5CF6',
       texto: `${stats.resolvidosHumano} atendimento${stats.resolvidosHumano !== 1 ? 's' : ''} concluído${stats.resolvidosHumano !== 1 ? 's' : ''} por humano`,
+    },
+    stats.totalConversasPeriodo > 0 && {
+      icone: MessageSquare, cor: '#06B6D4',
+      texto: `${stats.totalConversasPeriodo} nova${stats.totalConversasPeriodo !== 1 ? 's conversa iniciada' : ' conversa iniciada'}${stats.totalConversasPeriodo !== 1 ? 's' : ''} nos últimos ${periodo} dias`,
     },
   ].filter(Boolean) as Array<{ icone: React.ElementType; cor: string; texto: string }>
 
   return (
-    <div className="rounded-xl p-4 md:p-5 flex flex-col gap-4" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+    <div className="rounded-xl p-4 md:p-5 flex flex-col gap-4"
+      style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
       <div>
         <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Insights do CRM</h2>
-        <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Últimos 30 dias · Funil de {LABELS_FUNIL[stats.funilAtivo] ?? stats.funilAtivo}</p>
+        <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+          Últimos {periodo} dias · Funil de {LABELS_FUNIL[stats.funilAtivo] ?? stats.funilAtivo}
+        </p>
       </div>
 
-      {/* IA vs Humano */}
+      {/* Barra IA vs Humano */}
       {total > 0 && (
         <div>
           <div className="flex items-center justify-between mb-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
@@ -249,14 +257,15 @@ function InsightsCRM({ stats }: { stats: CRMStats }) {
             <span className="flex items-center gap-1"><UserCheck size={11} color="#8B5CF6" /> Humano {pctHumano}%</span>
           </div>
           <div className="flex h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-surface-2)' }}>
-            <div className="h-full transition-all" style={{ width: `${pctIA}%`, background: '#10B981' }} />
-            <div className="h-full transition-all" style={{ width: `${pctHumano}%`, background: '#8B5CF6' }} />
+            <div className="h-full" style={{ width: `${pctIA}%`, background: '#10B981' }} />
+            <div className="h-full" style={{ width: `${pctHumano}%`, background: '#8B5CF6' }} />
           </div>
-          <p className="text-[10px] mt-1" style={{ color: 'var(--text-label)' }}>{total} atendimento{total !== 1 ? 's' : ''} concluído{total !== 1 ? 's' : ''} no período</p>
+          <p className="text-[10px] mt-1" style={{ color: 'var(--text-label)' }}>
+            {total} atendimento{total !== 1 ? 's' : ''} concluído{total !== 1 ? 's' : ''} no período
+          </p>
         </div>
       )}
 
-      {/* Lista de insights */}
       <div className="space-y-2.5">
         {insights.length > 0 ? insights.map((item, i) => (
           <div key={i} className="flex items-start gap-2.5">
@@ -267,13 +276,16 @@ function InsightsCRM({ stats }: { stats: CRMStats }) {
             <p className="text-xs leading-snug" style={{ color: 'var(--text-primary)' }}>{item.texto}</p>
           </div>
         )) : (
-          <p className="text-xs" style={{ color: 'var(--text-label)' }}>Nenhum atendimento concluído ainda neste período.</p>
+          <p className="text-xs" style={{ color: 'var(--text-label)' }}>
+            Nenhum dado disponível para os últimos {periodo} dias.
+          </p>
         )}
       </div>
     </div>
   )
 }
 
+// Gráfico de barras — conversas por dia + gráfico de barras lado a lado por etapa CRM
 function GraficoBarras({ dados, periodo, crmStats, onExport }: {
   dados: DiaDado[]
   periodo: string
@@ -284,13 +296,11 @@ function GraficoBarras({ dados, periodo, crmStats, onExport }: {
   const [isDark, setIsDark] = useState(true)
 
   useEffect(() => {
-    function detectTheme() {
-      setIsDark(document.documentElement.getAttribute('data-theme') !== 'light')
-    }
+    function detectTheme() { setIsDark(document.documentElement.getAttribute('data-theme') !== 'light') }
     detectTheme()
-    const observer = new MutationObserver(detectTheme)
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
-    return () => observer.disconnect()
+    const obs = new MutationObserver(detectTheme)
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => obs.disconnect()
   }, [])
 
   const total = dados.reduce((s, d) => s + d.total, 0)
@@ -298,29 +308,21 @@ function GraficoBarras({ dados, periodo, crmStats, onExport }: {
   const pico  = Math.max(...dados.map(d => d.total), 0)
   const yMax  = Math.max(pico + 1, 5)
 
-  if (dados.length === 0) return (
-    <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--text-label)' }}>
-      Nenhum dado no período
-    </div>
-  )
-
   const W = 800, H = 200
   const padL = 32, padR = 8, padT = 28, padB = 32
   const innerW = W - padL - padR
   const innerH = H - padT - padB
-  const barW = Math.max(2, (innerW / dados.length) * 0.6)
-  const gap   = innerW / dados.length
+  const barW = Math.max(2, (innerW / Math.max(dados.length,1)) * 0.6)
+  const gap   = innerW / Math.max(dados.length, 1)
   const yTicks = [0, Math.round(yMax * 0.5), yMax]
   const step = Math.max(1, Math.floor(dados.length / 8))
-  const xLabelIdxs = new Set(
-    dados.map((_, i) => i).filter(i => i === 0 || i === dados.length - 1 || i % step === 0)
-  )
+  const xLabelIdxs = new Set(dados.map((_,i) => i).filter(i => i===0||i===dados.length-1||i%step===0))
 
   function barHeight(val: number) { return (val / yMax) * innerH }
   function barX(i: number) { return padL + i * gap + gap / 2 }
   function fmtDia(dia: string) {
     const d = new Date(dia + 'T12:00:00')
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+    return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' })
   }
 
   const textColor     = isDark ? '#6B6B6B' : '#71717A'
@@ -330,17 +332,26 @@ function GraficoBarras({ dados, periodo, crmStats, onExport }: {
   const tooltipBorder = isDark ? '#2A2A2A' : '#D4D4D8'
   const tooltipText   = isDark ? '#FFFFFF' : '#09090B'
 
-  // Etapas intermediárias para legenda (sem as 2 finais)
-  const etapasParaLegenda = crmStats
-    ? crmStats.etapas.slice(0, -2).map((e, idx) => ({
+  // Etapas para o mini gráfico de barras laterais (todas, incluindo finais)
+  const etapasGrafico = crmStats
+    ? crmStats.etapas.map((e, idx) => ({
         label: crmStats.labels[e] ?? e,
-        cor: CRM_CORES[idx % CRM_CORES.length].text,
         valor: crmStats.contagemEtapa[e] ?? 0,
+        cor: CRM_CORES[idx % CRM_CORES.length],
       }))
     : []
 
+  const maxEtapa = Math.max(...etapasGrafico.map(e => e.valor), 1)
+
+  if (dados.length === 0) return (
+    <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--text-label)' }}>
+      Nenhum dado no período
+    </div>
+  )
+
   return (
     <div>
+      {/* Stats + botão PDF */}
       <div className="flex items-center gap-6 md:gap-10 mb-4 flex-wrap">
         <div>
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Total</p>
@@ -354,61 +365,60 @@ function GraficoBarras({ dados, periodo, crmStats, onExport }: {
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Pico</p>
           <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{pico}</p>
         </div>
-        <button
-          onClick={onExport}
-          className="ml-auto flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5 transition-colors"
-          style={{ color: 'var(--text-muted)', border: '1px solid var(--border)', background: 'var(--bg-surface-2)' }}
-          title={`Exportar gráfico ${periodo}d como PDF`}>
+        <button onClick={onExport}
+          className="ml-auto flex items-center gap-1.5 text-xs rounded-lg px-3 py-1.5"
+          style={{ color:'var(--text-muted)', border:'1px solid var(--border)', background:'var(--bg-surface-2)' }}>
           <Download size={12} /> PDF
         </button>
       </div>
 
-      <div style={{ position: 'relative', width: '100%' }}>
+      {/* Gráfico de linha do tempo */}
+      <div style={{ position:'relative', width:'100%' }}>
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%"
-          style={{ display: 'block', overflow: 'visible' }}
+          style={{ display:'block', overflow:'visible' }}
           onMouseLeave={() => setTooltip(null)}>
           {yTicks.map(tick => {
-            const y = padT + innerH - (tick / yMax) * innerH
+            const y = padT + innerH - (tick/yMax)*innerH
             return (
               <g key={tick}>
-                <line x1={padL} y1={y} x2={padL + innerW} y2={y} stroke={gridColor} strokeWidth="1" strokeDasharray="3,3" />
-                <text x={padL - 4} y={y + 4} textAnchor="end" fontSize="10" fill={textColor}>{tick}</text>
+                <line x1={padL} y1={y} x2={padL+innerW} y2={y} stroke={gridColor} strokeWidth="1" strokeDasharray="3,3" />
+                <text x={padL-4} y={y+4} textAnchor="end" fontSize="10" fill={textColor}>{tick}</text>
               </g>
             )
           })}
-          <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke={gridColor} strokeWidth="1" />
+          <line x1={padL} y1={padT+innerH} x2={padL+innerW} y2={padT+innerH} stroke={gridColor} strokeWidth="1" />
           {dados.map((d, i) => {
             const x = barX(i)
-            const h = Math.max(barHeight(d.total), d.total > 0 ? 3 : 0)
+            const h = Math.max(barHeight(d.total), d.total>0?3:0)
             const y = padT + innerH - h
             const isHover = tooltip?.i === i
             return (
               <g key={i}>
-                <rect x={x - barW / 2} y={y} width={barW} height={h} fill="#10B981" opacity={isHover ? 1 : 0.85} rx="3" />
+                <rect x={x-barW/2} y={y} width={barW} height={h} fill="#10B981" opacity={isHover?1:0.85} rx="3" />
                 {d.total > 0 && (
-                  <text x={x} y={y - 4} textAnchor="middle" fontSize="10" fontWeight="600" fill={labelColor}>{d.total}</text>
+                  <text x={x} y={y-4} textAnchor="middle" fontSize="10" fontWeight="600" fill={labelColor}>{d.total}</text>
                 )}
-                <rect x={x - gap / 2} y={padT} width={gap} height={innerH} fill="transparent"
-                  style={{ cursor: 'crosshair' }} onMouseEnter={() => setTooltip({ i, x, y })} />
+                <rect x={x-gap/2} y={padT} width={gap} height={innerH} fill="transparent"
+                  style={{ cursor:'crosshair' }} onMouseEnter={() => setTooltip({i, x, y})} />
               </g>
             )
           })}
           {dados.map((d, i) => {
             if (!xLabelIdxs.has(i)) return null
             return (
-              <text key={i} x={barX(i)} y={padT + innerH + 18} textAnchor="middle" fontSize="10" fill={textColor}>
+              <text key={i} x={barX(i)} y={padT+innerH+18} textAnchor="middle" fontSize="10" fill={textColor}>
                 {fmtDia(d.dia)}
               </text>
             )
           })}
           {tooltip && (() => {
             const d = dados[tooltip.i]
-            const tx = Math.min(Math.max(barX(tooltip.i), padL + 36), W - padR - 36)
-            const ty = Math.max(tooltip.y - 10, padT + 2)
+            const tx = Math.min(Math.max(barX(tooltip.i), padL+36), W-padR-36)
+            const ty = Math.max(tooltip.y-10, padT+2)
             return (
               <g>
-                <rect x={tx - 38} y={ty - 14} width={76} height={20} rx="4" fill={tooltipBg} stroke={tooltipBorder} strokeWidth="1" />
-                <text x={tx} y={ty + 2} textAnchor="middle" fontSize="10" fontWeight="600" fill={tooltipText}>
+                <rect x={tx-38} y={ty-14} width={76} height={20} rx="4" fill={tooltipBg} stroke={tooltipBorder} strokeWidth="1" />
+                <text x={tx} y={ty+2} textAnchor="middle" fontSize="10" fontWeight="600" fill={tooltipText}>
                   {fmtDia(d.dia)}: {d.total} conv.
                 </text>
               </g>
@@ -417,20 +427,43 @@ function GraficoBarras({ dados, periodo, crmStats, onExport }: {
         </svg>
       </div>
 
-      {/* Legenda CRM abaixo do gráfico */}
-      {etapasParaLegenda.length > 0 && (
-        <div className="mt-4 pt-3 flex flex-wrap gap-3" style={{ borderTop: '1px solid var(--border)' }}>
-          <p className="w-full text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-label)' }}>
+      {/* Mini gráfico de barras lado a lado por etapa CRM */}
+      {etapasGrafico.length > 0 && (
+        <div className="mt-5 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
+          <p className="text-[10px] font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-label)' }}>
             Distribuição atual no funil de {LABELS_FUNIL[crmStats!.funilAtivo] ?? crmStats!.funilAtivo}
           </p>
-          {etapasParaLegenda.map((e, i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: e.cor }} />
-              <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                {e.label}: <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{e.valor}</span>
-              </span>
-            </div>
-          ))}
+          {/* Barras lado a lado */}
+          <div className="flex items-end gap-2 h-20">
+            {etapasGrafico.map((e, i) => {
+              const pct = maxEtapa > 0 ? (e.valor / maxEtapa) * 100 : 0
+              return (
+                <div key={i} className="flex flex-col items-center gap-1 flex-1 h-full justify-end">
+                  <span className="text-[10px] font-semibold" style={{ color: e.cor }}>
+                    {e.valor > 0 ? e.valor : ''}
+                  </span>
+                  <div className="w-full rounded-t-sm transition-all"
+                    style={{
+                      height: `${Math.max(pct, e.valor > 0 ? 8 : 2)}%`,
+                      background: e.cor,
+                      opacity: e.valor > 0 ? 0.85 : 0.2,
+                      minHeight: 4,
+                    }} />
+                </div>
+              )
+            })}
+          </div>
+          {/* Legenda */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3">
+            {etapasGrafico.map((e, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: e.cor }} />
+                <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                  {e.label}: <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{e.valor}</span>
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -439,10 +472,9 @@ function GraficoBarras({ dados, periodo, crmStats, onExport }: {
 
 function logParaAtividade(log: { id: string; acao: string; descricao: string; criado_em: string }): AtividadeItem {
   const corMap: Record<string, string> = {
-    pausou_ia: '#F59E0B', retomou_ia: '#10B981',
-    enviou_mensagem: '#818CF8', enviou_midia: '#818CF8',
+    pausou_ia:'#F59E0B', retomou_ia:'#10B981', enviou_mensagem:'#818CF8', enviou_midia:'#818CF8',
   }
-  return { id: `log_${log.id}`, tipo: 'log', texto: log.descricao, cor: corMap[log.acao] ?? 'var(--text-muted)', criado_em: log.criado_em }
+  return { id:`log_${log.id}`, tipo:'log', texto:log.descricao, cor:corMap[log.acao]??'var(--text-muted)', criado_em:log.criado_em }
 }
 
 const CONV_LIMIT_STEP = 20
@@ -452,6 +484,7 @@ const CONV_LIMIT_STEP = 20
 export default function VisaoGeralPage() {
   const [metrics, setMetrics]               = useState<Metrics | null>(null)
   const [crmStats, setCrmStats]             = useState<CRMStats | null>(null)
+  const [crmCarregando, setCrmCarregando]   = useState(false)
   const [conversas, setConversas]           = useState<ConversaRecente[]>([])
   const [conversasFiltradas, setConversasFiltradas] = useState<ConversaRecente[]>([])
   const [grafico, setGrafico]               = useState<DiaDado[]>([])
@@ -469,14 +502,31 @@ export default function VisaoGeralPage() {
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
   const [atividades, setAtividades]         = useState<AtividadeItem[]>([])
   const exportRef = useRef<HTMLDivElement>(null)
-  const graficoCache = useRef<Partial<Record<'7' | '30' | '90', DiaDado[]>>>({})
+  const graficoCache = useRef<Partial<Record<'7'|'30'|'90', DiaDado[]>>>({})
 
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
+    function h(e: MouseEvent) {
       if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExportModal(false)
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  // Busca CRM stats com cache localStorage 15min
+  const fetchCRMStats = useCallback(async (p: string) => {
+    const cached = getCRMCache(p)
+    if (cached) { setCrmStats(cached); return }
+    setCrmCarregando(true)
+    try {
+      const res = await fetch(`/api/visao-geral/crm-stats?periodo=${p}`)
+      if (res.ok) {
+        const data = await res.json() as CRMStats
+        setCRMCache(p, data)
+        setCrmStats(data)
+      }
+    } catch { /* não crítico */ } finally {
+      setCrmCarregando(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -492,57 +542,25 @@ export default function VisaoGeralPage() {
       const tid = userData.tenant_id
 
       const agora     = new Date()
-      const hoje      = new Date(agora); hoje.setHours(0, 0, 0, 0)
-      const ontem     = new Date(hoje);  ontem.setDate(ontem.getDate() - 1)
-      const semana    = new Date(agora); semana.setDate(semana.getDate() - 7)
-      const semAnt    = new Date(agora); semAnt.setDate(semAnt.getDate() - 14)
+      const hoje      = new Date(agora); hoje.setHours(0,0,0,0)
+      const ontem     = new Date(hoje);  ontem.setDate(ontem.getDate()-1)
+      const semana    = new Date(agora); semana.setDate(semana.getDate()-7)
+      const semAnt    = new Date(agora); semAnt.setDate(semAnt.getDate()-14)
       const mesIni    = new Date(agora.getFullYear(), agora.getMonth(), 1)
-      const mesAntIni = new Date(agora.getFullYear(), agora.getMonth() - 1, 1)
+      const mesAntIni = new Date(agora.getFullYear(), agora.getMonth()-1, 1)
       const mesAntFim = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
 
-      const [
-        hojeOntemRes,
-        semanaRes,
-        semAntRes,
-        mesRes,
-        mesAntRes,
-        pausadasRes,
-        convRes,
-        bandasRes,
-      ] = await Promise.all([
-        supabase.from('conversations')
-          .select('criado_em', { count: 'exact' })
-          .eq('tenant_id', tid)
-          .gte('criado_em', ontem.toISOString())
-          .limit(10000),
-        supabase.from('conversations').select('id', { count: 'exact', head: true })
-          .eq('tenant_id', tid).gte('criado_em', semana.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true })
-          .eq('tenant_id', tid)
-          .gte('criado_em', semAnt.toISOString())
-          .lt('criado_em', semana.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true })
-          .eq('tenant_id', tid).gte('criado_em', mesIni.toISOString()),
-        supabase.from('conversations').select('id', { count: 'exact', head: true })
-          .eq('tenant_id', tid)
-          .gte('criado_em', mesAntIni.toISOString())
-          .lte('criado_em', mesAntFim.toISOString()),
-        supabase.from('conversations')
-          .select('pausado_em')
-          .eq('tenant_id', tid)
-          .eq('agente_pausado', true)
-          .limit(10000),
-        supabase.from('conversations')
-          .select(`id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em, messages(conteudo, criado_em)`)
-          .eq('tenant_id', tid)
-          .eq('status', 'ativa')
-          .order('ultima_mensagem_em', { ascending: false })
-          .limit(CONV_LIMIT_STEP),
-        supabase.from('tenant_instances')
-          .select('id, instance_name, apelido')
-          .eq('tenant_id', tid)
-          .eq('status', 'banido'),
-      ])
+      const [hojeOntemRes, semanaRes, semAntRes, mesRes, mesAntRes, pausadasRes, convRes, bandasRes] =
+        await Promise.all([
+          supabase.from('conversations').select('criado_em',{count:'exact'}).eq('tenant_id',tid).gte('criado_em',ontem.toISOString()).limit(10000),
+          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',semana.toISOString()),
+          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',semAnt.toISOString()).lt('criado_em',semana.toISOString()),
+          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',mesIni.toISOString()),
+          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',mesAntIni.toISOString()).lte('criado_em',mesAntFim.toISOString()),
+          supabase.from('conversations').select('pausado_em').eq('tenant_id',tid).eq('agente_pausado',true).limit(10000),
+          supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tid).eq('status','ativa').order('ultima_mensagem_em',{ascending:false}).limit(CONV_LIMIT_STEP),
+          supabase.from('tenant_instances').select('id,instance_name,apelido').eq('tenant_id',tid).eq('status','banido'),
+        ])
 
       const hojeIsoStr    = hoje.toISOString()
       const convHojeOntem = hojeOntemRes.data ?? []
@@ -553,78 +571,58 @@ export default function VisaoGeralPage() {
       const pausadasAnt   = pausadasData.filter(c => c.pausado_em && c.pausado_em < hojeIsoStr).length
 
       setMetrics({
-        conversasHoje: convHoje,               conversasHojeAnterior: convOntem,
-        conversasSemana: semanaRes.count ?? 0, conversasSemanaAnterior: semAntRes.count ?? 0,
-        conversasMes: mesRes.count ?? 0,       conversasMesAnterior: mesAntRes.count ?? 0,
-        pausadas: totalPausadas,               pausadasAnterior: pausadasAnt,
+        conversasHoje:convHoje, conversasHojeAnterior:convOntem,
+        conversasSemana:semanaRes.count??0, conversasSemanaAnterior:semAntRes.count??0,
+        conversasMes:mesRes.count??0, conversasMesAnterior:mesAntRes.count??0,
+        pausadas:totalPausadas, pausadasAnterior:pausadasAnt,
       })
+      setInstanciasBanidas((bandasRes.data??[]) as InstanciaBanida[])
 
-      setInstanciasBanidas((bandasRes.data ?? []) as InstanciaBanida[])
-
-      type ConvRaw = {
-        id: string; contato_nome: string; contato_telefone: string
-        status: string; agente_pausado: boolean; ultima_mensagem_em: string
-        messages: Array<{ conteudo: string; criado_em: string }>
-      }
-      const convComMsg: ConversaRecente[] = ((convRes.data ?? []) as unknown as ConvRaw[]).map(c => {
-        const msgs = (c.messages ?? []).sort((a, b) =>
-          new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime()
-        )
-        return { ...c, ultima_mensagem: msgs[0]?.conteudo ?? '—' }
+      type ConvRaw = { id:string;contato_nome:string;contato_telefone:string;status:string;agente_pausado:boolean;ultima_mensagem_em:string;messages:Array<{conteudo:string;criado_em:string}> }
+      const convComMsg: ConversaRecente[] = ((convRes.data??[]) as unknown as ConvRaw[]).map(c => {
+        const msgs = (c.messages??[]).sort((a,b) => new Date(b.criado_em).getTime()-new Date(a.criado_em).getTime())
+        return { ...c, ultima_mensagem: msgs[0]?.conteudo??'—' }
       })
       setConversas(convComMsg)
       setConversasFiltradas(convComMsg)
       setConvLimit(CONV_LIMIT_STEP)
 
-      const itensConversas: AtividadeItem[] = convComMsg.slice(0, 4).map(c => ({
-        id: `conv_${c.id}`, tipo: 'conversa' as const,
-        texto: `${c.contato_nome || c.contato_telefone} ${c.agente_pausado ? 'solicitou atendimento humano.' : 'está em conversa com o agente.'}`,
-        cor: c.agente_pausado ? '#F59E0B' : '#10B981',
-        criado_em: c.ultima_mensagem_em,
+      const itensConversas: AtividadeItem[] = convComMsg.slice(0,4).map(c => ({
+        id:`conv_${c.id}`, tipo:'conversa' as const,
+        texto:`${c.contato_nome||c.contato_telefone} ${c.agente_pausado?'solicitou atendimento humano.':'está em conversa com o agente.'}`,
+        cor: c.agente_pausado?'#F59E0B':'#10B981', criado_em:c.ultima_mensagem_em,
       }))
       let itensLogs: AtividadeItem[] = []
-      if (['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userData.role)) {
-        const { data: logsData } = await supabase
-          .from('conversation_logs').select('id, acao, descricao, criado_em')
-          .eq('tenant_id', tid).order('criado_em', { ascending: false }).limit(6)
-        itensLogs = (logsData ?? []).map(logParaAtividade)
+      if (['admin_hubtek','admin_tenant','self_managed'].includes(userData.role)) {
+        const { data:logsData } = await supabase.from('conversation_logs').select('id,acao,descricao,criado_em').eq('tenant_id',tid).order('criado_em',{ascending:false}).limit(6)
+        itensLogs = (logsData??[]).map(logParaAtividade)
       }
-      const todos = [...itensConversas, ...itensLogs]
-        .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
-        .slice(0, 8)
+      const todos = [...itensConversas,...itensLogs].sort((a,b)=>new Date(b.criado_em).getTime()-new Date(a.criado_em).getTime()).slice(0,8)
       setAtividades(todos)
-
-      // CRM stats — fetch separado com cache 15min
-      try {
-        const crmRes = await fetch('/api/visao-geral/crm-stats')
-        if (crmRes.ok) {
-          const crmData = await crmRes.json() as CRMStats
-          setCrmStats(crmData)
-        }
-      } catch { /* não crítico */ }
-
       setCarregando(false)
     }
     fetchInicial()
   }, [])
 
-  const fetchGrafico = useCallback(async (p: '7' | '30' | '90') => {
+  // CRM stats — atualiza quando período muda
+  useEffect(() => { fetchCRMStats(periodo) }, [periodo, fetchCRMStats])
+
+  const fetchGrafico = useCallback(async (p: '7'|'30'|'90') => {
     if (graficoCache.current[p]) { setGrafico(graficoCache.current[p]!); return }
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data:{ user } } = await supabase.auth.getUser()
     if (!user) return
-    const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
+    const { data:userData } = await supabase.from('users').select('tenant_id').eq('id',user.id).single()
     if (!userData?.tenant_id) return
-    const dias   = parseInt(p)
-    const inicio = new Date(); inicio.setDate(inicio.getDate() - dias); inicio.setHours(0, 0, 0, 0)
-    const { data } = await supabase.from('conversations').select('criado_em')
-      .eq('tenant_id', userData.tenant_id).gte('criado_em', inicio.toISOString())
-    const porDia: Record<string, number> = {}
+    const dias = parseInt(p)
+    const inicio = new Date(); inicio.setDate(inicio.getDate()-dias); inicio.setHours(0,0,0,0)
+    const { data } = await supabase.from('conversations').select('criado_em').eq('tenant_id',userData.tenant_id).gte('criado_em',inicio.toISOString())
+    const porDia: Record<string,number> = {}
     const curr = new Date(inicio)
-    const hoje = new Date(); hoje.setHours(23, 59, 59, 999)
-    while (curr <= hoje) { porDia[curr.toISOString().slice(0, 10)] = 0; curr.setDate(curr.getDate() + 1) }
-    ;(data ?? []).forEach(c => { const dia = c.criado_em.slice(0, 10); if (porDia[dia] !== undefined) porDia[dia]++ })
-    const resultado = Object.entries(porDia).map(([dia, total]) => ({ dia, total }))
+    const hoje = new Date(); hoje.setHours(23,59,59,999)
+    while (curr<=hoje) { porDia[curr.toISOString().slice(0,10)]=0; curr.setDate(curr.getDate()+1) }
+    ;(data??[]).forEach(c => { const dia=c.criado_em.slice(0,10); if (porDia[dia]!==undefined) porDia[dia]++ })
+    const resultado = Object.entries(porDia).map(([dia,total])=>({dia,total}))
     graficoCache.current[p] = resultado
     setGrafico(resultado)
   }, [])
@@ -636,73 +634,45 @@ export default function VisaoGeralPage() {
     setCarregandoMais(true)
     const novoLimit = convLimit + CONV_LIMIT_STEP
     const supabase = createClient()
-    type ConvRaw = {
-      id: string; contato_nome: string; contato_telefone: string
-      status: string; agente_pausado: boolean; ultima_mensagem_em: string
-      messages: Array<{ conteudo: string; criado_em: string }>
-    }
-    const { data } = await supabase
-      .from('conversations')
-      .select(`id, contato_nome, contato_telefone, status, agente_pausado, ultima_mensagem_em, messages(conteudo, criado_em)`)
-      .eq('tenant_id', tenantId)
-      .eq('status', 'ativa')
-      .order('ultima_mensagem_em', { ascending: false })
-      .limit(novoLimit)
-    const convComMsg: ConversaRecente[] = ((data ?? []) as unknown as ConvRaw[]).map(c => {
-      const msgs = (c.messages ?? []).sort((a, b) =>
-        new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime()
-      )
-      return { ...c, ultima_mensagem: msgs[0]?.conteudo ?? '—' }
+    type ConvRaw = { id:string;contato_nome:string;contato_telefone:string;status:string;agente_pausado:boolean;ultima_mensagem_em:string;messages:Array<{conteudo:string;criado_em:string}> }
+    const { data } = await supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tenantId).eq('status','ativa').order('ultima_mensagem_em',{ascending:false}).limit(novoLimit)
+    const convComMsg: ConversaRecente[] = ((data??[]) as unknown as ConvRaw[]).map(c => {
+      const msgs = (c.messages??[]).sort((a,b)=>new Date(b.criado_em).getTime()-new Date(a.criado_em).getTime())
+      return { ...c, ultima_mensagem:msgs[0]?.conteudo??'—' }
     })
-    setConversas(convComMsg)
-    setConvLimit(novoLimit)
-    setCarregandoMais(false)
+    setConversas(convComMsg); setConvLimit(novoLimit); setCarregandoMais(false)
   }, [tenantId, convLimit])
 
   useEffect(() => {
-    if (filtroStatus === 'todos') setConversasFiltradas(conversas)
-    else if (filtroStatus === 'ativo') setConversasFiltradas(conversas.filter(c => !c.agente_pausado))
-    else setConversasFiltradas(conversas.filter(c => c.agente_pausado))
+    if (filtroStatus==='todos') setConversasFiltradas(conversas)
+    else if (filtroStatus==='ativo') setConversasFiltradas(conversas.filter(c=>!c.agente_pausado))
+    else setConversasFiltradas(conversas.filter(c=>c.agente_pausado))
   }, [filtroStatus, conversas])
 
   async function handlePausarRetomar(conversa: ConversaRecente) {
     setPausando(conversa.id)
     const supabase = createClient()
     const novoPausado = !conversa.agente_pausado
-    await supabase.from('conversations').update({
-      agente_pausado: novoPausado,
-      pausado_em: novoPausado ? new Date().toISOString() : null,
-    }).eq('id', conversa.id)
-    setConversas(prev => prev.map(c => c.id === conversa.id ? { ...c, agente_pausado: novoPausado } : c))
-    const { data: { session } } = await supabase.auth.getSession()
+    await supabase.from('conversations').update({ agente_pausado:novoPausado, pausado_em:novoPausado?new Date().toISOString():null }).eq('id',conversa.id)
+    setConversas(prev => prev.map(c => c.id===conversa.id?{...c,agente_pausado:novoPausado}:c))
+    const { data:{ session } } = await supabase.auth.getSession()
     if (session?.access_token) {
-      const { data: ud } = await supabase.from('users').select('nome, tenant_id').eq('id', session.user.id).single()
+      const { data:ud } = await supabase.from('users').select('nome,tenant_id').eq('id',session.user.id).single()
       await fetch('/api/conversas/registrar-log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body: JSON.stringify({
-          conversation_id: conversa.id, tenant_id: ud?.tenant_id,
-          acao: novoPausado ? 'pausou_ia' : 'retomou_ia',
-          contato_nome: conversa.contato_nome || conversa.contato_telefone,
-          operador_nome: ud?.nome,
-        }),
+        method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${session.access_token}`},
+        body: JSON.stringify({ conversation_id:conversa.id, tenant_id:ud?.tenant_id, acao:novoPausado?'pausou_ia':'retomou_ia', contato_nome:conversa.contato_nome||conversa.contato_telefone, operador_nome:ud?.nome }),
       })
     }
     setPausando(null)
   }
 
   async function handleDesconectar(instanceName: string) {
-    setDesconectando(prev => ({ ...prev, [instanceName]: true }))
+    setDesconectando(prev=>({...prev,[instanceName]:true}))
     setConfirmDesconectar(null)
     try {
-      const res = await fetch('/api/whatsapp/desconectar', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instance_name: instanceName }),
-      })
-      if (res.ok) setInstanciasBanidas(prev => prev.filter(i => i.instance_name !== instanceName))
-    } finally {
-      setDesconectando(prev => ({ ...prev, [instanceName]: false }))
-    }
+      const res = await fetch('/api/whatsapp/desconectar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_name:instanceName})})
+      if (res.ok) setInstanciasBanidas(prev=>prev.filter(i=>i.instance_name!==instanceName))
+    } finally { setDesconectando(prev=>({...prev,[instanceName]:false})) }
   }
 
   const temMaisConversas = conversas.length >= convLimit
@@ -710,19 +680,15 @@ export default function VisaoGeralPage() {
   if (carregando) {
     return (
       <div className="p-4 md:p-8">
-        <div className="h-8 rounded w-48 mb-2 animate-pulse" style={{ background: 'var(--bg-surface)' }} />
-        <div className="h-4 rounded w-72 mb-8 animate-pulse" style={{ background: 'var(--bg-surface)' }} />
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-24 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }} />
-          ))}
+        <div className="h-8 rounded w-48 mb-2 animate-pulse" style={{ background:'var(--bg-surface)' }} />
+        <div className="h-4 rounded w-72 mb-6 animate-pulse" style={{ background:'var(--bg-surface)' }} />
+        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 mb-4">
+          {[...Array(6)].map((_,i)=>(<div key={i} className="h-20 rounded-xl animate-pulse" style={{background:'var(--bg-surface)',border:'1px solid var(--border)'}} />))}
         </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-28 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }} />
-          ))}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+          {[...Array(4)].map((_,i)=>(<div key={i} className="h-28 rounded-xl animate-pulse" style={{background:'var(--bg-surface)',border:'1px solid var(--border)'}} />))}
         </div>
-        <div className="h-64 rounded-xl animate-pulse" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }} />
+        <div className="h-64 rounded-xl animate-pulse" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }} />
       </div>
     )
   }
@@ -733,17 +699,17 @@ export default function VisaoGeralPage() {
       {/* Cabeçalho */}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
-          <h1 className="text-xl md:text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Visão Geral</h1>
-          <p className="text-xs md:text-sm mt-0.5 hidden sm:block" style={{ color: 'var(--text-secondary)' }}>
+          <p className="text-sm" style={{ color:'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
+          <h1 className="text-xl md:text-2xl font-bold" style={{ color:'var(--text-primary)' }}>Visão Geral</h1>
+          <p className="text-xs md:text-sm mt-0.5 hidden sm:block" style={{ color:'var(--text-secondary)' }}>
             Como seu agente performou nos últimos {periodo} dias.
           </p>
         </div>
-        <div className="flex items-center gap-1 rounded-lg p-1 shrink-0" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-          {(['7', '30', '90'] as const).map(p => (
+        <div className="flex items-center gap-1 rounded-lg p-1 shrink-0" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
+          {(['7','30','90'] as const).map(p => (
             <button key={p} onClick={() => setPeriodo(p)}
               className="px-2 md:px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-              style={{ background: periodo === p ? '#10B981' : 'transparent', color: periodo === p ? '#fff' : 'var(--text-muted)' }}>
+              style={{ background:periodo===p?'#10B981':'transparent', color:periodo===p?'#fff':'var(--text-muted)' }}>
               {p}d
             </button>
           ))}
@@ -752,37 +718,37 @@ export default function VisaoGeralPage() {
 
       {/* Alerta instâncias banidas */}
       {instanciasBanidas.length > 0 && (
-        <div className="rounded-xl p-4 space-y-3" style={{ background: '#EF444408', border: '1px solid #EF444430' }}>
+        <div className="rounded-xl p-4 space-y-3" style={{ background:'#EF444408', border:'1px solid #EF444430' }}>
           <div className="flex items-center gap-2">
             <ShieldAlert size={16} className="text-red-400 flex-shrink-0" />
             <p className="text-sm font-semibold text-red-400">
-              {instanciasBanidas.length === 1 ? 'Número banido pelo WhatsApp' : `${instanciasBanidas.length} números banidos`}
+              {instanciasBanidas.length===1?'Número banido pelo WhatsApp':`${instanciasBanidas.length} números banidos`}
             </p>
           </div>
           <div className="space-y-2">
             {instanciasBanidas.map(inst => {
-              const estaDesconectando = desconectando[inst.instance_name] ?? false
-              const pedindoConfirm    = confirmDesconectar === inst.instance_name
+              const estaDesconectando = desconectando[inst.instance_name]??false
+              const pedindoConfirm    = confirmDesconectar===inst.instance_name
               return (
-                <div key={inst.id} className="rounded-lg p-3" style={{ background: '#EF444410', border: '1px solid #EF444425' }}>
+                <div key={inst.id} className="rounded-lg p-3" style={{ background:'#EF444410', border:'1px solid #EF444425' }}>
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2 min-w-0">
                       <ShieldAlert size={13} className="text-red-400 flex-shrink-0" />
                       <div className="min-w-0">
                         <span className="text-sm font-medium text-red-400">{inst.apelido}</span>
-                        <span className="text-xs font-mono ml-2 hidden sm:inline" style={{ color: 'var(--text-muted)' }}>{inst.instance_name}</span>
+                        <span className="text-xs font-mono ml-2 hidden sm:inline" style={{ color:'var(--text-muted)' }}>{inst.instance_name}</span>
                       </div>
                     </div>
                     {!pedindoConfirm ? (
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <button onClick={() => setConfirmDesconectar(inst.instance_name)}
                           className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg"
-                          style={{ background: 'var(--bg-surface)', border: '1px solid #EF444440', color: '#EF4444' }}>
+                          style={{ background:'var(--bg-surface)', border:'1px solid #EF444440', color:'#EF4444' }}>
                           <LogOut size={12} /> Desconectar
                         </button>
                         <a href="https://wa.me/5551980104924" target="_blank" rel="noopener noreferrer"
                           className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg"
-                          style={{ background: '#10B98115', border: '1px solid #10B98130', color: '#10B981' }}>
+                          style={{ background:'#10B98115', border:'1px solid #10B98130', color:'#10B981' }}>
                           <MessageCircle size={12} /> Suporte
                         </a>
                       </div>
@@ -790,13 +756,13 @@ export default function VisaoGeralPage() {
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <button onClick={() => setConfirmDesconectar(null)}
                           className="text-xs font-medium px-2.5 py-1.5 rounded-lg"
-                          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                          style={{ background:'var(--bg-surface)', border:'1px solid var(--border)', color:'var(--text-secondary)' }}>
                           Cancelar
                         </button>
                         <button onClick={() => handleDesconectar(inst.instance_name)} disabled={estaDesconectando}
                           className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg">
-                          <LogOut size={11} className={estaDesconectando ? 'animate-spin' : ''} />
-                          {estaDesconectando ? 'Aguarde...' : 'Confirmar'}
+                          <LogOut size={11} className={estaDesconectando?'animate-spin':''} />
+                          {estaDesconectando?'Aguarde...':'Confirmar'}
                         </button>
                       </div>
                     )}
@@ -808,78 +774,80 @@ export default function VisaoGeralPage() {
         </div>
       )}
 
-      {/* ── BLOCO CRM — etapas do funil ativo ─────────────────────────────── */}
+      {/* ── BLOCO CRM ──────────────────────────────────────────────────────── */}
       {crmStats && crmStats.etapas.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-label)' }}>
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color:'var(--text-label)' }}>
               CRM · Funil de {LABELS_FUNIL[crmStats.funilAtivo] ?? crmStats.funilAtivo}
             </p>
-            <div className="flex-1 h-px" style={{ background: 'var(--border)' }} />
+            <div className="flex-1 h-px" style={{ background:'var(--border)' }} />
+            {crmCarregando && <span className="text-[10px]" style={{ color:'var(--text-label)' }}>atualizando...</span>}
           </div>
-          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${crmStats.etapas.length}, minmax(0, 1fr))` }}>
-            {crmStats.etapas.map((etapa, idx) => {
-              const cor = CRM_CORES[idx % CRM_CORES.length]
-              const isEtapaFinal = idx >= crmStats.etapas.length - 2
-              return (
-                <CRMEtapaCard
-                  key={etapa}
-                  label={crmStats.labels[etapa] ?? etapa}
-                  valor={crmStats.contagemEtapa[etapa] ?? 0}
-                  cor={cor}
-                  isEtapaFinal={isEtapaFinal}
-                />
-              )
-            })}
+          <div className="grid gap-2" style={{ gridTemplateColumns:`repeat(${crmStats.etapas.length},minmax(0,1fr))` }}>
+            {crmStats.etapas.map((etapa, idx) => (
+              <CRMEtapaCard
+                key={etapa}
+                label={crmStats.labels[etapa] ?? etapa}
+                valor={crmStats.contagemEtapa[etapa] ?? 0}
+                cor={CRM_CORES[idx % CRM_CORES.length]}
+              />
+            ))}
           </div>
         </div>
       )}
+      {!crmStats && crmCarregando && (
+        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+          {[...Array(5)].map((_,i)=>(<div key={i} className="h-20 rounded-xl animate-pulse" style={{background:'var(--bg-surface)',border:'1px solid var(--border)'}} />))}
+        </div>
+      )}
+
+      {/* Separador com label */}
+      <div className="flex items-center gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wider flex-shrink-0" style={{ color:'var(--text-label)' }}>
+          Novas conversas abertas
+        </p>
+        <div className="flex-1 h-px" style={{ background:'var(--border)' }} />
+      </div>
 
       {/* ── KPIs de conversas ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <KpiCard label="Hoje"      valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje, metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
-        <KpiCard label="Na semana" valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana, metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
-        <KpiCard label="No mês"    valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes, metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
-        <KpiCard label="Pausadas"  valor={metrics!.pausadas}        d={delta(metrics!.pausadas, metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
+        <KpiCard label="Hoje"      valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje,metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
+        <KpiCard label="Na semana" valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana,metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
+        <KpiCard label="No mês"    valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes,metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
+        <KpiCard label="Pausadas"  valor={metrics!.pausadas}        d={delta(metrics!.pausadas,metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
       </div>
 
-      {/* ── Gráfico + Insights ────────────────────────────────────────────── */}
+      {/* ── Gráfico + coluna direita ───────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 rounded-xl p-4 md:p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Volume de conversas — {periodo} dias</h2>
-              <p className="text-xs mt-0.5 hidden sm:block" style={{ color: 'var(--text-muted)' }}>Total agregado por dia.</p>
-            </div>
+        <div className="lg:col-span-2 rounded-xl p-4 md:p-6" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
+          <div className="mb-4">
+            <h2 className="font-semibold text-sm md:text-base" style={{ color:'var(--text-primary)' }}>
+              Volume de conversas — {periodo} dias
+            </h2>
+            <p className="text-xs mt-0.5" style={{ color:'var(--text-muted)' }}>Total agregado por dia.</p>
           </div>
-          <GraficoBarras
-            dados={grafico}
-            periodo={periodo}
-            crmStats={crmStats}
-            onExport={() => exportarGraficoPDF(grafico, periodo)}
-          />
+          <GraficoBarras dados={grafico} periodo={periodo} crmStats={crmStats} onExport={() => exportarGraficoPDF(grafico, periodo)} />
         </div>
 
         <div className="space-y-4">
-          {/* Insights CRM */}
-          {crmStats && <InsightsCRM stats={crmStats} />}
+          {crmStats && <InsightsCRM stats={crmStats} periodo={periodo} />}
 
-          {/* Atividade recente */}
-          <div className="rounded-xl p-4 md:p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-            <h2 className="font-semibold mb-1 text-sm" style={{ color: 'var(--text-primary)' }}>Atividade recente</h2>
-            <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>Eventos do agente e ações dos operadores.</p>
+          <div className="rounded-xl p-4 md:p-5" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
+            <h2 className="font-semibold mb-1 text-sm" style={{ color:'var(--text-primary)' }}>Atividade recente</h2>
+            <p className="text-xs mb-3" style={{ color:'var(--text-muted)' }}>Eventos do agente e ações dos operadores.</p>
             <div className="space-y-2.5">
               {atividades.map(item => (
                 <div key={item.id} className="flex items-start gap-2.5">
-                  <span className="w-2 h-2 rounded-full mt-1 flex-shrink-0" style={{ background: item.cor }} />
+                  <span className="w-2 h-2 rounded-full mt-1 flex-shrink-0" style={{ background:item.cor }} />
                   <div className="min-w-0">
-                    <p className="text-xs leading-snug" style={{ color: 'var(--text-primary)' }}>{item.texto}</p>
-                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-label)' }}>{tempoRelativo(item.criado_em)}</p>
+                    <p className="text-xs leading-snug" style={{ color:'var(--text-primary)' }}>{item.texto}</p>
+                    <p className="text-xs mt-0.5" style={{ color:'var(--text-label)' }}>{tempoRelativo(item.criado_em)}</p>
                   </div>
                 </div>
               ))}
-              {atividades.length === 0 && (
-                <p className="text-sm" style={{ color: 'var(--text-label)' }}>Nenhuma atividade recente.</p>
+              {atividades.length===0 && (
+                <p className="text-sm" style={{ color:'var(--text-label)' }}>Nenhuma atividade recente.</p>
               )}
             </div>
           </div>
@@ -887,45 +855,43 @@ export default function VisaoGeralPage() {
       </div>
 
       {/* ── Conversas recentes ────────────────────────────────────────────── */}
-      <div className="rounded-xl" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-        <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4 gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--border)' }}>
+      <div className="rounded-xl" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
+        <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4 gap-3 flex-wrap" style={{ borderBottom:'1px solid var(--border)' }}>
           <div>
-            <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Conversas recentes</h2>
-            <p className="text-xs mt-0.5 hidden sm:block" style={{ color: 'var(--text-muted)' }}>
-              {conversasFiltradas.length} conversa{conversasFiltradas.length !== 1 ? 's' : ''} ativa{conversasFiltradas.length !== 1 ? 's' : ''}.
+            <h2 className="font-semibold text-sm md:text-base" style={{ color:'var(--text-primary)' }}>Conversas recentes</h2>
+            <p className="text-xs mt-0.5 hidden sm:block" style={{ color:'var(--text-muted)' }}>
+              {conversasFiltradas.length} conversa{conversasFiltradas.length!==1?'s':''} ativa{conversasFiltradas.length!==1?'s':''}.
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
-              {([['todos', 'Todos'], ['ativo', 'Ativos'], ['pausado', 'Pausados']] as const).map(([val, label]) => (
+            <div className="flex items-center gap-1 rounded-lg p-1" style={{ background:'var(--bg-surface-2)', border:'1px solid var(--border)' }}>
+              {([['todos','Todos'],['ativo','Ativos'],['pausado','Pausados']] as const).map(([val,label]) => (
                 <button key={val} onClick={() => setFiltroStatus(val)}
                   className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors"
-                  style={{ background: filtroStatus === val ? 'var(--bg-hover)' : 'transparent', color: filtroStatus === val ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  style={{ background:filtroStatus===val?'var(--bg-hover)':'transparent', color:filtroStatus===val?'var(--text-primary)':'var(--text-muted)' }}>
                   <Filter size={10} />{label}
                 </button>
               ))}
             </div>
             <div className="relative" ref={exportRef}>
-              <button onClick={() => setShowExportModal(prev => !prev)}
+              <button onClick={() => setShowExportModal(prev=>!prev)}
                 className="flex items-center gap-1.5 text-xs rounded-lg px-3 py-2"
-                style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                style={{ color:'var(--text-muted)', border:'1px solid var(--border)' }}>
                 <Download size={12} /> Exportar
               </button>
               {showExportModal && (
                 <div className="absolute right-0 top-9 w-36 rounded-xl shadow-xl z-50 overflow-hidden"
-                  style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                  style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
                   <button onClick={() => { exportarCSV(conversasFiltradas); setShowExportModal(false) }}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs"
-                    style={{ color: 'var(--text-secondary)' }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs" style={{ color:'var(--text-secondary)' }}
+                    onMouseEnter={e=>(e.currentTarget as HTMLElement).style.background='var(--bg-hover)'}
+                    onMouseLeave={e=>(e.currentTarget as HTMLElement).style.background='transparent'}>
                     <Download size={12} /> CSV
                   </button>
                   <button onClick={() => { exportarConversasPDF(conversasFiltradas); setShowExportModal(false) }}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs"
-                    style={{ color: 'var(--text-secondary)' }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs" style={{ color:'var(--text-secondary)' }}
+                    onMouseEnter={e=>(e.currentTarget as HTMLElement).style.background='var(--bg-hover)'}
+                    onMouseLeave={e=>(e.currentTarget as HTMLElement).style.background='transparent'}>
                     <FileText size={12} /> PDF
                   </button>
                 </div>
@@ -934,45 +900,43 @@ export default function VisaoGeralPage() {
           </div>
         </div>
 
-        {conversasFiltradas.length === 0 ? (
+        {conversasFiltradas.length===0 ? (
           <div className="p-12 text-center">
-            <MessageSquare size={24} className="mx-auto mb-2" style={{ color: 'var(--text-label)' }} />
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Nenhuma conversa encontrada.</p>
+            <MessageSquare size={24} className="mx-auto mb-2" style={{ color:'var(--text-label)' }} />
+            <p className="text-sm" style={{ color:'var(--text-muted)' }}>Nenhuma conversa encontrada.</p>
           </div>
         ) : (
           <>
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                    {['Contato', 'Telefone', 'Última mensagem', 'Status', 'Hora', 'Ações'].map(h => (
-                      <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
-                        style={{ color: 'var(--text-muted)' }}>{h}</th>
+                  <tr style={{ borderBottom:'1px solid var(--border)' }}>
+                    {['Contato','Telefone','Última mensagem','Status','Hora','Ações'].map(h => (
+                      <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider" style={{ color:'var(--text-muted)' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {conversasFiltradas.map(c => (
-                    <tr key={c.id} className="transition-colors last:border-0"
-                      style={{ borderBottom: '1px solid var(--border)' }}
-                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    <tr key={c.id} className="transition-colors last:border-0" style={{ borderBottom:'1px solid var(--border)' }}
+                      onMouseEnter={e=>(e.currentTarget as HTMLElement).style.background='var(--bg-hover)'}
+                      onMouseLeave={e=>(e.currentTarget as HTMLElement).style.background='transparent'}>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
-                            style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
-                            {(c.contato_nome || c.contato_telefone).slice(0, 2).toUpperCase()}
+                            style={{ background:'var(--bg-hover)', color:'var(--text-secondary)' }}>
+                            {(c.contato_nome||c.contato_telefone).slice(0,2).toUpperCase()}
                           </div>
-                          <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{c.contato_nome || '—'}</span>
+                          <span className="text-sm font-medium" style={{ color:'var(--text-primary)' }}>{c.contato_nome||'—'}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        <div className="flex items-center gap-1.5 text-sm" style={{ color:'var(--text-secondary)' }}>
                           <Phone size={12} />{formatFone(c.contato_telefone)}
                         </div>
                       </td>
                       <td className="px-6 py-4 max-w-xs">
-                        <p className="text-sm truncate" style={{ color: 'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
+                        <p className="text-sm truncate" style={{ color:'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
                       </td>
                       <td className="px-6 py-4">
                         {c.agente_pausado ? (
@@ -986,16 +950,12 @@ export default function VisaoGeralPage() {
                         )}
                       </td>
                       <td className="px-6 py-4">
-                        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
+                        <span className="text-sm" style={{ color:'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
                       </td>
                       <td className="px-6 py-4">
-                        <button onClick={() => handlePausarRetomar(c)} disabled={pausando === c.id}
-                          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
-                            c.agente_pausado
-                              ? 'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30'
-                              : 'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'
-                          }`}>
-                          {c.agente_pausado ? <><Play size={11} /> Retomar</> : <><Pause size={11} /> Pausar</>}
+                        <button onClick={() => handlePausarRetomar(c)} disabled={pausando===c.id}
+                          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${c.agente_pausado?'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30':'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'}`}>
+                          {c.agente_pausado?<><Play size={11} /> Retomar</>:<><Pause size={11} /> Pausar</>}
                         </button>
                       </td>
                     </tr>
@@ -1004,18 +964,18 @@ export default function VisaoGeralPage() {
               </table>
             </div>
 
-            <div className="md:hidden divide-y" style={{ borderColor: 'var(--border)' }}>
+            <div className="md:hidden divide-y" style={{ borderColor:'var(--border)' }}>
               {conversasFiltradas.map(c => (
                 <div key={c.id} className="p-4 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
-                        style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
-                        {(c.contato_nome || c.contato_telefone).slice(0, 2).toUpperCase()}
+                        style={{ background:'var(--bg-hover)', color:'var(--text-secondary)' }}>
+                        {(c.contato_nome||c.contato_telefone).slice(0,2).toUpperCase()}
                       </div>
                       <div>
-                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{c.contato_nome || '—'}</p>
-                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{formatFone(c.contato_telefone)}</p>
+                        <p className="text-sm font-medium" style={{ color:'var(--text-primary)' }}>{c.contato_nome||'—'}</p>
+                        <p className="text-xs" style={{ color:'var(--text-muted)' }}>{formatFone(c.contato_telefone)}</p>
                       </div>
                     </div>
                     {c.agente_pausado ? (
@@ -1024,16 +984,12 @@ export default function VisaoGeralPage() {
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981]">Ativo</span>
                     )}
                   </div>
-                  <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
+                  <p className="text-xs truncate" style={{ color:'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
-                    <button onClick={() => handlePausarRetomar(c)} disabled={pausando === c.id}
-                      className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 ${
-                        c.agente_pausado
-                          ? 'bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30'
-                          : 'bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/30'
-                      }`}>
-                      {c.agente_pausado ? <><Play size={10} /> Retomar</> : <><Pause size={10} /> Pausar</>}
+                    <span className="text-xs" style={{ color:'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
+                    <button onClick={() => handlePausarRetomar(c)} disabled={pausando===c.id}
+                      className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 ${c.agente_pausado?'bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30':'bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/30'}`}>
+                      {c.agente_pausado?<><Play size={10} /> Retomar</>:<><Pause size={10} /> Pausar</>}
                     </button>
                   </div>
                 </div>
@@ -1041,12 +997,12 @@ export default function VisaoGeralPage() {
             </div>
 
             {temMaisConversas && (
-              <div className="flex justify-center px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
+              <div className="flex justify-center px-4 py-3" style={{ borderTop:'1px solid var(--border)' }}>
                 <button onClick={handleCarregarMais} disabled={carregandoMais}
                   className="flex items-center gap-2 text-xs font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-                  style={{ border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}>
-                  <ChevronDown size={14} className={carregandoMais ? 'animate-bounce' : ''} />
-                  {carregandoMais ? 'Carregando...' : 'Ver mais conversas'}
+                  style={{ border:'1px solid var(--border)', background:'var(--bg-surface-2)', color:'var(--text-secondary)' }}>
+                  <ChevronDown size={14} className={carregandoMais?'animate-bounce':''} />
+                  {carregandoMais?'Carregando...':'Ver mais conversas'}
                 </button>
               </div>
             )}
