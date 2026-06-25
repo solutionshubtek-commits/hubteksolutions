@@ -541,9 +541,9 @@ export default function VisaoGeralPage() {
 
       const [hojeOntemRes, semanaRes, semAntRes, mesRes, mesAntRes, pausadasRes, convRes, bandasRes] =
         await Promise.all([
-          supabase.from('conversations').select('criado_em',{count:'exact'}).eq('tenant_id',tid).gte('criado_em',ontem.toISOString()).limit(10000),
-          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',semana.toISOString()),
-          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',semAnt.toISOString()).lt('criado_em',semana.toISOString()),
+          supabase.from('conversations').select('ultima_mensagem_em',{count:'exact'}).eq('tenant_id',tid).gte('ultima_mensagem_em',ontem.toISOString()).limit(10000),
+          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',semana.toISOString()),
+          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',semAnt.toISOString()).lt('ultima_mensagem_em',semana.toISOString()),
           supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',mesIni.toISOString()),
           supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',mesAntIni.toISOString()).lte('criado_em',mesAntFim.toISOString()),
           supabase.from('conversations').select('pausado_em').eq('tenant_id',tid).eq('agente_pausado',true).limit(10000),
@@ -553,8 +553,8 @@ export default function VisaoGeralPage() {
 
       const hojeIsoStr    = hoje.toISOString()
       const convHojeOntem = hojeOntemRes.data ?? []
-      const convHoje      = convHojeOntem.filter(c => c.criado_em >= hojeIsoStr).length
-      const convOntem     = convHojeOntem.filter(c => c.criado_em < hojeIsoStr).length
+      const convHoje      = convHojeOntem.filter(c => (c.ultima_mensagem_em ?? '') >= hojeIsoStr).length
+      const convOntem     = convHojeOntem.filter(c => (c.ultima_mensagem_em ?? '') < hojeIsoStr).length
       const pausadasData  = pausadasRes.data ?? []
       const totalPausadas = pausadasData.length
       const pausadasAnt   = pausadasData.filter(c => c.pausado_em && c.pausado_em < hojeIsoStr).length
