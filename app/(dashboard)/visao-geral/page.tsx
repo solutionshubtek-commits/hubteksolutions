@@ -503,14 +503,16 @@ export default function VisaoGeralPage() {
 
   // Busca CRM stats com cache localStorage 15min
   const fetchCRMStats = useCallback(async (p: string) => {
-    const cached = getCRMCache(p)
+    // Cache só para o período 30 (carga inicial) — insights mudam por período
+    const cached = p === '30' ? getCRMCache(p) : null
     if (cached) { setCrmStats(cached); return }
     setCrmCarregando(true)
     try {
       const res = await fetch(`/api/visao-geral/crm-stats?periodo=${p}`)
       if (res.ok) {
         const data = await res.json() as CRMStats
-        setCRMCache(p, data)
+        // Salva cache só para 30d
+        if (p === '30') setCRMCache(p, data)
         setCrmStats(data)
       }
     } catch { /* não crítico */ } finally {
@@ -535,17 +537,16 @@ export default function VisaoGeralPage() {
       const ontem     = new Date(hoje);  ontem.setDate(ontem.getDate()-1)
       const semana    = new Date(agora); semana.setDate(semana.getDate()-7)
       const semAnt    = new Date(agora); semAnt.setDate(semAnt.getDate()-14)
-      const mesIni    = new Date(agora.getFullYear(), agora.getMonth(), 1)
-      const mesAntIni = new Date(agora.getFullYear(), agora.getMonth()-1, 1)
-      const mesAntFim = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59)
+      const mes30     = new Date(agora); mes30.setDate(mes30.getDate()-30)
+      const mes60     = new Date(agora); mes60.setDate(mes60.getDate()-60)
 
       const [hojeOntemRes, semanaRes, semAntRes, mesRes, mesAntRes, pausadasRes, convRes, bandasRes] =
         await Promise.all([
           supabase.from('conversations').select('ultima_mensagem_em',{count:'exact'}).eq('tenant_id',tid).gte('ultima_mensagem_em',ontem.toISOString()).limit(10000),
           supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',semana.toISOString()),
           supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',semAnt.toISOString()).lt('ultima_mensagem_em',semana.toISOString()),
-          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',mesIni.toISOString()),
-          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('criado_em',mesAntIni.toISOString()).lte('criado_em',mesAntFim.toISOString()),
+          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',mes30.toISOString()),
+          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',mes60.toISOString()).lt('ultima_mensagem_em',mes30.toISOString()),
           supabase.from('conversations').select('pausado_em').eq('tenant_id',tid).eq('agente_pausado',true).limit(10000),
           supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tid).eq('status','ativa').order('ultima_mensagem_em',{ascending:false}).limit(CONV_LIMIT_STEP),
           supabase.from('tenant_instances').select('id,instance_name,apelido').eq('tenant_id',tid).eq('status','banido'),
