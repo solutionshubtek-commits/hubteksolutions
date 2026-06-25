@@ -148,23 +148,7 @@ function exportarGraficoPDF(dados: DiaDado[], periodo: string) {
   })
 }
 
-// ─── Cache client-side 15 minutos ─────────────────────────────────────────────
 
-const CRM_CACHE_TTL = 15 * 60 * 1000 // 15 min em ms
-
-function getCRMCache(periodo: string): CRMStats | null {
-  try {
-    const raw = localStorage.getItem(`crm_stats_${periodo}`)
-    if (!raw) return null
-    const { ts, data } = JSON.parse(raw) as { ts: number; data: CRMStats }
-    if (Date.now() - ts > CRM_CACHE_TTL) { localStorage.removeItem(`crm_stats_${periodo}`); return null }
-    return data
-  } catch { return null }
-}
-
-function setCRMCache(periodo: string, data: CRMStats) {
-  try { localStorage.setItem(`crm_stats_${periodo}`, JSON.stringify({ ts: Date.now(), data })) } catch { /* */ }
-}
 
 // ─── Componentes ──────────────────────────────────────────────────────────────
 
