@@ -503,16 +503,12 @@ export default function VisaoGeralPage() {
 
   // Busca CRM stats com cache localStorage 15min
   const fetchCRMStats = useCallback(async (p: string) => {
-    // Cache só para o período 30 (carga inicial) — insights mudam por período
-    const cached = p === '30' ? getCRMCache(p) : null
-    if (cached) { setCrmStats(cached); return }
     setCrmCarregando(true)
+    setCrmStats(null) // limpa antes de buscar — sem dados antigos
     try {
       const res = await fetch(`/api/visao-geral/crm-stats?periodo=${p}`)
       if (res.ok) {
         const data = await res.json() as CRMStats
-        // Salva cache só para 30d
-        if (p === '30') setCRMCache(p, data)
         setCrmStats(data)
       }
     } catch { /* não crítico */ } finally {
@@ -821,7 +817,22 @@ export default function VisaoGeralPage() {
         </div>
 
         <div className="space-y-4">
-          {crmStats && <InsightsCRM stats={crmStats} periodo={periodo} />}
+          {crmCarregando ? (
+          <div className="rounded-xl p-4 md:p-5" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
+            <div className="h-4 w-32 rounded animate-pulse mb-3" style={{ background:'var(--bg-surface-2)' }} />
+            <div className="h-3 w-48 rounded animate-pulse mb-4" style={{ background:'var(--bg-surface-2)' }} />
+            <div className="space-y-3">
+              {[...Array(3)].map((_,i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md animate-pulse flex-shrink-0" style={{ background:'var(--bg-surface-2)' }} />
+                  <div className="h-3 rounded animate-pulse flex-1" style={{ background:'var(--bg-surface-2)' }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : crmStats ? (
+          <InsightsCRM stats={crmStats} periodo={periodo} />
+        ) : null}
 
           <div className="rounded-xl p-4 md:p-5" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
             <h2 className="font-semibold mb-1 text-sm" style={{ color:'var(--text-primary)' }}>Atividade recente</h2>

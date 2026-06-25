@@ -95,32 +95,21 @@ export async function GET(request: Request) {
       .eq('status', 'ativa')
       .eq('agente_pausado', true)
 
-    // Transferências para humano no período
-    const { data: notifHumano } = await supabase
-      .from('notifications')
-      .select('id, metadata')
-      .eq('tenant_id', tid)
-      .eq('tipo', 'atendimento_humano')
-      .gte('criado_em', inicio.toISOString())
-      .limit(500)
-
-    const convIdsHumano = new Set(
-      (notifHumano ?? []).map((n: { metadata: Record<string, unknown> | null }) =>
-        n.metadata?.conversation_id as string | undefined
-      ).filter(Boolean)
-    )
-    const transferidosHumano = convIdsHumano.size
-
-    // Novas conversas no período (para o gráfico de barras CRM)
-    const { data: novasConvs } = await supabase
+    // Transferências para humano no período — conta direto em conversations
+    // (mais confiável que notifications que cria N registros por usuário)
+    const { count: transferidosHumano } = await supabase
       .from('conversations')
-      .select('criado_em')
+      .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tid)
-      .gte('criado_em', inicio.toISOString())
+      .eq('agente_pausado', true)
+      .gte('pausado_em', inicio.toISOString())
 
-    // Monta série temporal por etapa — simplificado: usa atualizado_em do lead
-    // Para o gráfico de barras laterais, retornamos a contagem atual por etapa
-    // (dados snapshot, suficiente para o visual pedido)
+    // Novas conversas com interação no período
+    const { count: totalConversasPeriodo } = await supabase
+      .from('conversations')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tid)
+      .gte('ultima_mensagem_em', inicio.toISOString())
 
     return NextResponse.json({
       funilAtivo,
@@ -130,9 +119,9 @@ export async function GET(request: Request) {
       resolvidosIA,
       resolvidosHumano,
       aguardandoHumano: aguardandoHumano ?? 0,
-      transferidosHumano,
+      transferidosHumano: transferidosHumano ?? 0,
       periodo: dias,
-      totalConversasPeriodo: (novasConvs ?? []).length,
+      totalConversasPeriodo: totalConversasPeriodo ?? 0,
     })
   } catch (err) {
     console.error('[crm-stats] erro:', err)
