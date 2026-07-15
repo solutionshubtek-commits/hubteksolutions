@@ -1026,6 +1026,59 @@ async function executarAppointmentToolCall(
     if (toolName === 'criar_agendamento_hubtek') {
       const dataHora     = String(args.data_hora)
       const profissional = args.profissional ? String(args.profissional) : null
+
+      // AJUSTE: verificação de conflito em TEMPO REAL antes de gravar.
+      // Fecha a janela entre a consulta de disponibilidade e a criação —
+      // se alguém ocupou o horário nesse meio tempo (pela dashboard ou
+      // direto no Google Calendar), o agendamento é recusado aqui.
+      const DURACAO_MS = 60 * 60 * 1000
+      const inicioMs   = new Date(dataHora).getTime()
+      const fimMs      = inicioMs + DURACAO_MS
+
+      if (Number.isNaN(inicioMs)) return 'Data ou horário inválido. Peça ao cliente para confirmar o horário desejado.'
+
+      // 1. Conflito na agenda interna (fonte primária)
+      const { data: possiveisConflitos } = await supabase
+        .from('appointments')
+        .select('data_hora, profissional, contato_nome')
+        .eq('tenant_id', tenantId)
+        .not('status', 'eq', 'cancelado')
+        .gte('data_hora', new Date(inicioMs - DURACAO_MS).toISOString())
+        .lte('data_hora', new Date(fimMs).toISOString())
+
+      const conflitoInterno = (possiveisConflitos ?? []).some(c => {
+        // Se há profissional definido, só conflita com a agenda dele
+        if (profissional && c.profissional && c.profissional !== profissional) return false
+        const cIni = new Date(c.data_hora).getTime()
+        return inicioMs < cIni + DURACAO_MS && fimMs > cIni
+      })
+
+      if (conflitoInterno) {
+        return 'CONFLITO: este horário acabou de ser ocupado na agenda. NÃO confirme ao cliente. Consulte listar_horarios_disponiveis_hubtek novamente e ofereça outras opções.'
+      }
+
+      // 2. Conflito no Google Calendar (verificação extra, não bloqueante em caso de falha)
+      let conflitoCalendar = false
+      try {
+        const calConfigCheck = await getCalConfig()
+        if (calConfigCheck) {
+          const dataStr = new Date(inicioMs - 3 * 60 * 60 * 1000).toISOString().slice(0, 10)
+          const eventosDoDia = await listEventsByDay(calConfigCheck, dataStr)
+          conflitoCalendar = eventosDoDia.some(ev => {
+            // Ignora eventos já cancelados (marcados no título pelo próprio sistema)
+            if (ev.summary?.startsWith('[CANCELADO]')) return false
+            const eIni = new Date(ev.start).getTime()
+            return inicioMs < eIni + DURACAO_MS && fimMs > eIni
+          })
+        }
+      } catch (calErr) {
+        console.warn('[appointment tool] Checagem de conflito no Calendar falhou (não crítico):', calErr)
+      }
+
+      if (conflitoCalendar) {
+        return 'CONFLITO: este horário já está ocupado na agenda do Google Calendar. NÃO confirme ao cliente. Consulte listar_horarios_disponiveis_hubtek novamente e ofereça outras opções.'
+      }
+
       const { data, error } = await supabase
         .from('appointments')
         .insert({
@@ -1714,7 +1767,16 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
           const toolCallsTyped = respostaComTools.toolCalls as unknown as ToolCall[]
 
           for (const tc of toolCallsTyped) {
-            const toolsUnicas = ['criar_agendamento_hubtek', 'cancelar_agendamento_hubtek', 'reagendar_agendamento_hubtek', 'criar_recontato']
+            // AJUSTE (bug quintuplicação 14/07): as tools do Google Calendar
+            // (criar_agendamento, reagendar, cancelar_agendamento) não estavam
+            // nesta lista. Sem a guarda, o modelo as chamava repetidamente e o
+            // loop rodava até MAX_RODADAS (5), criando 5 eventos idênticos no
+            // Google Calendar — depois importados pelo cron sync-calendar.
+            const toolsUnicas = [
+              'criar_agendamento_hubtek', 'cancelar_agendamento_hubtek',
+              'reagendar_agendamento_hubtek', 'criar_recontato',
+              'criar_agendamento', 'reagendar', 'cancelar_agendamento',
+            ]
             if (toolsUnicas.includes(tc.function.name)) {
               if (toolsExecutadas.has(tc.function.name)) {
                 console.warn(`[tools] Tool ${tc.function.name} já executada — bloqueando duplicata`)

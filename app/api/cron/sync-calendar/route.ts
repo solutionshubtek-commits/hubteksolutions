@@ -1,5 +1,7 @@
 // app/api/cron/sync-calendar/route.ts
-// Roda a cada hora — sincroniza Google Calendar → appointments (Service Account)
+// Sincroniza Google Calendar → appointments (Service Account)
+// Importa APENAS eventos externos (criados direto no Google Calendar por humanos).
+// Eventos criados pelo agente/dashboard já entram direto na tabela e são ignorados aqui.
 
 import { NextResponse } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
@@ -11,6 +13,13 @@ const supabase = createSupabaseClient(
 )
 
 export const maxDuration = 120
+
+// AJUSTE (bug quintuplicação 14/07): marcador gravado na descrição pelo fluxo
+// interno de agendamentos (criar_agendamento_hubtek). Eventos com este marcador
+// já foram inseridos na tabela `appointments` pelo próprio agente — importá-los
+// aqui criava duplicatas quando o cron rodava na janela entre o INSERT e o
+// UPDATE do google_event_id.
+const MARCADOR_AGENTE = 'Agendado via agente IA'
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization')
@@ -40,6 +49,8 @@ export async function GET(request: Request) {
   }
 
   let sincronizados = 0
+  let importados = 0
+  let ignorados = 0
   let erros = 0
 
   for (const cfg of configs) {
@@ -60,18 +71,28 @@ export async function GET(request: Request) {
         for (const evento of eventos) {
           if (!evento.id || !evento.start) continue
 
-          // Só sincroniza eventos que NÃO foram criados pela dashboard
-          // (os da dashboard já têm google_event_id no banco)
+          const descricao = evento.description ?? ''
+
+          // AJUSTE: pula eventos criados pelo próprio agente/dashboard.
+          // Eles já existem em `appointments` — o google_event_id pode ainda
+          // não ter sido gravado se o cron rodar durante a criação.
+          if (descricao.includes(MARCADOR_AGENTE)) {
+            ignorados++
+            continue
+          }
+
+          // Já importado anteriormente?
           const { data: existing } = await supabase
             .from('appointments')
             .select('id')
+            .eq('tenant_id', cfg.tenant_id)
             .eq('google_event_id', evento.id)
             .maybeSingle()
 
           if (existing) continue // já existe, não duplica
 
           // Extrai telefone da descrição
-          const telefone = extrairTelefone(evento.description ?? '')
+          const telefone = extrairTelefone(descricao)
           if (!telefone) continue
 
           // Mapeia status pelo título
@@ -79,19 +100,26 @@ export async function GET(request: Request) {
           const isConfirmado = evento.summary?.startsWith('✓')
           const status = isCancelado ? 'cancelado' : isConfirmado ? 'confirmado' : 'pendente'
 
-          // Insere apenas eventos externos (não criados pela dashboard)
-          await supabase.from('appointments').insert({
+          // Insere apenas eventos externos (não criados pela dashboard/agente)
+          const { error: insertErr } = await supabase.from('appointments').insert({
             tenant_id: cfg.tenant_id,
             instance_name: instanceName,
             contato_nome: evento.summary?.replace(/^\[CANCELADO\]\s*|^✓\s*/, '') ?? 'Cliente',
             contato_telefone: telefone,
-            servico: extrairServico(evento.description ?? ''),
+            servico: extrairServico(descricao),
             data_hora: evento.start,
             google_event_id: evento.id,
             status,
             lembrete_enviado: false,
             antecedencia_horas: 24,
           })
+
+          if (insertErr) {
+            console.error(`[sync-calendar] Falha ao inserir evento ${evento.id}:`, insertErr)
+            erros++
+          } else {
+            importados++
+          }
         }
       }
 
@@ -102,7 +130,9 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, sincronizados, erros })
+  console.log(`[sync-calendar] tenants: ${sincronizados} | importados: ${importados} | ignorados (agente): ${ignorados} | erros: ${erros}`)
+
+  return NextResponse.json({ ok: true, sincronizados, importados, ignorados, erros })
 }
 
 function extrairTelefone(description: string): string | null {
