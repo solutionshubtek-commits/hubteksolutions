@@ -51,6 +51,7 @@ export async function GET(request: Request) {
   let sincronizados = 0
   let importados = 0
   let ignorados = 0
+  let duplicados = 0
   let erros = 0
 
   for (const cfg of configs) {
@@ -95,6 +96,24 @@ export async function GET(request: Request) {
           const telefone = extrairTelefone(descricao)
           if (!telefone) continue
 
+          // AJUSTE (bug quintuplicação 14/07): trava contra eventos DIFERENTES
+          // no Google Calendar que representam o mesmo compromisso (mesmo
+          // telefone, mesmo horário). Sem isso, 5 eventos duplicados no
+          // Calendar viravam 5 registros na tabela — e 5 lembretes no WhatsApp.
+          const { data: mesmoHorario } = await supabase
+            .from('appointments')
+            .select('id')
+            .eq('tenant_id', cfg.tenant_id)
+            .eq('contato_telefone', telefone)
+            .eq('data_hora', evento.start)
+            .not('status', 'eq', 'cancelado')
+            .maybeSingle()
+
+          if (mesmoHorario) {
+            duplicados++
+            continue
+          }
+
           // Mapeia status pelo título
           const isCancelado = evento.summary?.startsWith('[CANCELADO]')
           const isConfirmado = evento.summary?.startsWith('✓')
@@ -130,9 +149,9 @@ export async function GET(request: Request) {
     }
   }
 
-  console.log(`[sync-calendar] tenants: ${sincronizados} | importados: ${importados} | ignorados (agente): ${ignorados} | erros: ${erros}`)
+  console.log(`[sync-calendar] tenants: ${sincronizados} | importados: ${importados} | ignorados (agente): ${ignorados} | duplicados evitados: ${duplicados} | erros: ${erros}`)
 
-  return NextResponse.json({ ok: true, sincronizados, importados, ignorados, erros })
+  return NextResponse.json({ ok: true, sincronizados, importados, ignorados, duplicados, erros })
 }
 
 function extrairTelefone(description: string): string | null {

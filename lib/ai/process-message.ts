@@ -515,6 +515,15 @@ REGRAS DE COMPORTAMENTO:
     prompt += '\n4. Aguarde a escolha explícita do cliente. NUNCA crie o agendamento sem essa confirmação.'
     prompt += '\n5. Só então chame criar_agendamento_hubtek com o horário escolhido.'
     prompt += '\nSe a ferramenta indicar que não há horários livres no dia, ofereça outra data — nunca sugira um horário que não veio no retorno.'
+
+    // AJUSTE (feedback Gabriel 15/07): o agente estava criando o agendamento
+    // logo após SUGERIR um horário, sem o cliente ter escolhido. Regra
+    // explícita e inequívoca sobre o que conta como confirmação.
+    prompt += `\n\nREGRA CRÍTICA DE CONFIRMAÇÃO:`
+    prompt += '\nSó considere um horário confirmado quando o CLIENTE escreveu, em uma mensagem dele, qual horário quer (ex: "pode ser às 13h", "prefiro quinta às 10h", "o primeiro").'
+    prompt += '\nVocê sugerir um horário NÃO é confirmação. O cliente perguntar sobre horários NÃO é confirmação. O cliente dizer que tem interesse NÃO é confirmação.'
+    prompt += '\nEnquanto não houver essa escolha explícita, sua única ação é conversar e oferecer opções — jamais chame criar_agendamento_hubtek.'
+    prompt += '\nDepois de criar, confirme ao cliente repetindo dia e horário exatos.'
   }
 
   if (feriadosProximos) {
@@ -654,7 +663,7 @@ const APPOINTMENT_TOOLS: Tool[] = [
     type: 'function',
     function: {
       name: 'criar_agendamento_hubtek',
-      description: 'Cria um agendamento interno no sistema Hubtek para o cliente',
+      description: 'Cria um agendamento interno no sistema Hubtek. SOMENTE chame esta ferramenta depois que o cliente tiver dito EXPLICITAMENTE, em uma mensagem dele, qual data e horário escolheu. Nunca chame com um horário que apenas você sugeriu.',
       parameters: {
         type: 'object',
         properties: {
@@ -1341,6 +1350,7 @@ async function classificarEtapaCRM({
   historicoRecente,
   respostaAgente,
   mensagemCliente,
+  agendamentoCriado,
 }: {
   tenantId: string
   conversationId: string
@@ -1348,6 +1358,10 @@ async function classificarEtapaCRM({
   historicoRecente: string
   respostaAgente: string
   mensagemCliente: string
+  // AJUSTE (feedback Gabriel 15/07): indica se um agendamento foi REALMENTE
+  // criado nesta interação. Sem isso o classificador avançava o lead para
+  // "agendado" só porque o cliente perguntou sobre horários.
+  agendamentoCriado: boolean
 }): Promise<void> {
   const supabase = createServiceClient()
 
@@ -1365,6 +1379,14 @@ async function classificarEtapaCRM({
   const etapasFinais = etapas.slice(-2)
 
   if (etapasFinais.includes(leadAtual.etapa)) return
+
+  // AJUSTE: no funil de agendamentos, as etapas "agendado" e "confirmado" só
+  // podem ser atingidas se um agendamento real foi criado no sistema.
+  // Consultar horários mantém o lead em "interesse_identificado".
+  const etapasBloqueadas: string[] = [...etapasFinais]
+  if (funilTipo === 'agendamentos' && !agendamentoCriado) {
+    etapasBloqueadas.push('agendado', 'confirmado')
+  }
 
   try {
     const OpenAI = (await import('openai')).default
@@ -1386,9 +1408,10 @@ Regras:
 - Avance quando houver qualquer sinal de progressão — não exija certeza absoluta
 - Exemplos de avanço em vendas: cliente pergunta sobre produtos/preços/opções = interesse_identificado; cliente pede proposta ou demonstra intenção de compra = proposta_enviada; cliente negocia condições = em_negociacao
 - Exemplos de avanço em suporte: cliente descreve o problema = em_analise; cliente aguarda retorno = aguardando_cliente; problema encaminhado = em_resolucao
-- Exemplos de avanço em agendamentos: cliente pergunta horários disponíveis = interesse_identificado; cliente confirma data e hora = agendado; cliente confirma presença = confirmado
+- Exemplos de avanço em agendamentos: cliente pergunta horários disponíveis = interesse_identificado; cliente teve um agendamento efetivamente registrado no sistema = agendado; cliente confirmou presença de um agendamento já registrado = confirmado
+- ATENÇÃO no funil de agendamentos: perguntar sobre datas, horários ou disponibilidade NÃO é agendar. O lead só sai de interesse_identificado quando o agendamento foi de fato registrado no sistema.
 - Exemplos de avanço em qualificacao: cliente responde perguntas iniciais = contato_realizado; cliente demonstra fit com o produto = qualificado; cliente mostra intenção clara = oportunidade
-- Nunca vá para etapas finais (${etapasFinais.join(', ')}) automaticamente — essas são movidas apenas pelo humano
+- Nunca vá para estas etapas automaticamente: ${etapasBloqueadas.join(', ')}
 - Se realmente não houver progressão nenhuma, responda "manter"`,
         },
         {
@@ -1404,7 +1427,7 @@ Regras:
       novaEtapa === 'manter' ||
       novaEtapa === leadAtual.etapa ||
       !etapas.includes(novaEtapa) ||
-      etapasFinais.includes(novaEtapa)
+      etapasBloqueadas.includes(novaEtapa)
     ) return
 
     await supabase
@@ -1746,6 +1769,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
   let motorUsado             = config.motor_ia_principal
   let recontotoCriadoPorTool = false
+  // AJUSTE (feedback Gabriel 15/07): rastreia se um agendamento foi de fato
+  // registrado nesta interação — usado para travar o avanço do lead no CRM.
+  let agendamentoCriadoPorTool = false
 
   try {
     if (usarTools) {
@@ -1798,6 +1824,15 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
                   config.horario_inicio, config.horario_fim, config.dias_funcionamento
                 )
               : await executarToolCall(tc.function.name, args, calendarConfig!, config.horario_inicio, config.horario_fim)
+
+            // AJUSTE: só marca como criado se a tool realmente confirmou sucesso
+            // (retornos de CONFLITO ou erro não contam).
+            if (
+              (tc.function.name === 'criar_agendamento_hubtek' || tc.function.name === 'criar_agendamento') &&
+              /^Agendamento criado/i.test(toolResult)
+            ) {
+              agendamentoCriadoPorTool = true
+            }
             toolResults.push({
               role:         'tool' as const,
               content:      toolResult,
@@ -1896,6 +1931,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       ).join('\n'),
       respostaAgente:   resultado.content,
       mensagemCliente:  conteudoProcessado,
+      agendamentoCriado: agendamentoCriadoPorTool,
     }).catch((err) => console.error('[process-message] classificarEtapaCRM falhou:', err))
   }
   // ─────────────────────────────────────────────────────────────────────────
