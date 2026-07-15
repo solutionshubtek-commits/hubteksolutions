@@ -120,10 +120,19 @@ export async function GET(request: Request) {
           const status = isCancelado ? 'cancelado' : isConfirmado ? 'confirmado' : 'pendente'
 
           // Insere apenas eventos externos (não criados pela dashboard/agente)
+          // AJUSTE: além de [CANCELADO] e ✓, remove o prefixo "Agendamento - "
+          // (formato da tool do Google Calendar) — sem isso o nome do contato
+          // virava "Agendamento - Fulano" e vazava nos lembretes do WhatsApp.
+          const nomeLimpo = (evento.summary ?? 'Cliente')
+            .replace(/^\[CANCELADO\]\s*/, '')
+            .replace(/^✓\s*/, '')
+            .replace(/^Agendamento\s*[-–]\s*/i, '')
+            .trim()
+
           const { error: insertErr } = await supabase.from('appointments').insert({
             tenant_id: cfg.tenant_id,
             instance_name: instanceName,
-            contato_nome: evento.summary?.replace(/^\[CANCELADO\]\s*|^✓\s*/, '') ?? 'Cliente',
+            contato_nome: nomeLimpo || 'Cliente',
             contato_telefone: telefone,
             servico: extrairServico(descricao),
             data_hora: evento.start,

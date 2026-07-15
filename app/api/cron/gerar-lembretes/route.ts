@@ -44,6 +44,14 @@ export async function GET(request: Request) {
   }
 
   let criadas = 0
+  let duplicadasEvitadas = 0
+
+  // AJUSTE (feedback Gabriel 15/07): trava de segurança em memória.
+  // Se a tabela `appointments` tiver registros duplicados do mesmo compromisso
+  // (mesmo tenant + telefone + horário), garante que apenas UM lembrete seja
+  // criado nesta rodada. A dedup por appointment_id abaixo não cobre esse caso,
+  // porque cada duplicata tem um id diferente.
+  const compromissosJaProcessados = new Set<string>()
 
   for (const appt of appointments) {
     const tenant = appt.tenants
@@ -59,6 +67,14 @@ export async function GET(request: Request) {
 
     if (disparoEm < quinzeMinAtras) continue // janela de disparo passou
 
+    // AJUSTE: chave única do compromisso — tenant + telefone + horário exato.
+    // Bloqueia duplicatas dentro desta mesma rodada do cron.
+    const chaveCompromisso = `${appt.tenant_id}|${appt.contato_telefone}|${dataAgendamento.toISOString()}`
+    if (compromissosJaProcessados.has(chaveCompromisso)) {
+      duplicadasEvitadas++
+      continue
+    }
+
     // Verifica se já existe task para este agendamento
     const { data: existing } = await supabase
       .from('scheduled_tasks')
@@ -67,13 +83,38 @@ export async function GET(request: Request) {
       .in('status', ['pendente', 'enviado'])
       .maybeSingle()
 
-    if (existing) continue // já tem task criada
+    if (existing) {
+      compromissosJaProcessados.add(chaveCompromisso)
+      continue // já tem task criada
+    }
+
+    // AJUSTE: trava de segurança no banco — verifica se já existe lembrete
+    // pendente/enviado para o mesmo contato no mesmo horário, mesmo que
+    // vinculado a outro appointment_id (caso de registros duplicados).
+    const { data: lembreteMesmoHorario } = await supabase
+      .from('scheduled_tasks')
+      .select('id')
+      .eq('tenant_id', appt.tenant_id)
+      .eq('contato_telefone', appt.contato_telefone)
+      .eq('tipo', 'lembrete_agendamento')
+      .eq('agendado_para', disparoEm.toISOString())
+      .in('status', ['pendente', 'enviado'])
+      .maybeSingle()
+
+    if (lembreteMesmoHorario) {
+      compromissosJaProcessados.add(chaveCompromisso)
+      duplicadasEvitadas++
+      continue
+    }
 
     // Formata data/hora em português para a mensagem
+    // AJUSTE: timeZone estava ausente na data (só a hora tinha) — perto da
+    // meia-noite o lembrete podia anunciar o dia errado.
     const dataFormatada = dataAgendamento.toLocaleDateString('pt-BR', {
       weekday: 'long',
       day: '2-digit',
       month: 'long',
+      timeZone: 'America/Sao_Paulo',
     })
     const horaFormatada = dataAgendamento.toLocaleTimeString('pt-BR', {
       hour: '2-digit',
@@ -103,9 +144,17 @@ export async function GET(request: Request) {
       appointment_id: appt.id,
     })
 
-    if (!insertErr) criadas++
-    else console.error('[cron:gerar-lembretes] Erro ao inserir task:', insertErr)
+    if (!insertErr) {
+      criadas++
+      compromissosJaProcessados.add(chaveCompromisso)
+    } else {
+      console.error('[cron:gerar-lembretes] Erro ao inserir task:', insertErr)
+    }
   }
 
-  return NextResponse.json({ ok: true, criadas })
+  if (duplicadasEvitadas > 0) {
+    console.warn(`[cron:gerar-lembretes] ${duplicadasEvitadas} lembrete(s) duplicado(s) evitado(s) — verifique agendamentos duplicados na tabela`)
+  }
+
+  return NextResponse.json({ ok: true, criadas, duplicadasEvitadas })
 }

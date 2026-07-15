@@ -667,12 +667,11 @@ const APPOINTMENT_TOOLS: Tool[] = [
       parameters: {
         type: 'object',
         properties: {
-          contato_nome:       { type: 'string', description: 'Nome do cliente' },
-          contato_telefone:   { type: 'string', description: 'Telefone do cliente com DDI (ex: 5551999999999)' },
-          servico:            { type: 'string', description: 'Serviço ou motivo do agendamento' },
-          data_hora:          { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00.' },
-          antecedencia_horas: { type: 'number', description: 'Horas de antecedência para o lembrete. Padrão: 24' },
-          profissional:       { type: 'string', description: 'Nome do profissional responsável (opcional)' },
+          contato_nome:     { type: 'string', description: 'Nome do cliente' },
+          contato_telefone: { type: 'string', description: 'Telefone do cliente com DDI (ex: 5551999999999)' },
+          servico:          { type: 'string', description: 'Serviço ou motivo do agendamento' },
+          data_hora:        { type: 'string', description: 'Data e hora ISO 8601 com offset -03:00.' },
+          profissional:     { type: 'string', description: 'Nome do profissional responsável (opcional)' },
         },
         required: ['contato_nome', 'contato_telefone', 'servico', 'data_hora'],
       },
@@ -1097,7 +1096,11 @@ async function executarAppointmentToolCall(
           contato_telefone:   normalizarTelefone(String(args.contato_telefone)),
           servico:            String(args.servico),
           data_hora:          dataHora,
-          antecedencia_horas: Number(args.antecedencia_horas ?? 24),
+          // AJUSTE: a antecedência do lembrete é configuração do tenant
+          // (tenants.lembrete_antecedencia_horas, lida pelo cron gerar-lembretes),
+          // não decisão do agente. Grava-se o default apenas para manter a
+          // coluna preenchida — o cron não usa este valor.
+          antecedencia_horas: 24,
           status:             'pendente',
           profissional,
         })
