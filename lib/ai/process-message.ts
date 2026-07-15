@@ -151,25 +151,31 @@ function converterMarkdownParaWhatsApp(texto: string): string {
     .trim()
 }
 
+// AJUSTE (F6-17 / feedback Gabriel): cada parágrafo separado por linha em
+// branco agora vira sua própria mensagem no WhatsApp, em vez de ser
+// reagrupado em blocos de até 1200 caracteres. Isso permite que o prompt
+// controle diretamente o tamanho e a quantidade de mensagens enviadas —
+// essencial para o comportamento de "várias mensagens curtas" da Nina.
+// Parágrafos individuais muito longos (ex: um cardápio extenso em um único
+// parágrafo) ainda são fatiados em pedaços de até 1200 caracteres para não
+// estourar o limite prático de uma mensagem de WhatsApp.
 function quebrarEmBlocos(texto: string): string[] {
   const textoFormatado = converterMarkdownParaWhatsApp(texto)
   const paragrafos = textoFormatado.split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
   if (paragrafos.length <= 1) return [textoFormatado]
 
   const blocos: string[] = []
-  let acumulado = ''
-
   for (const p of paragrafos) {
-    if (acumulado && (acumulado + '\n\n' + p).length > 1200) {
-      blocos.push(acumulado.trim())
-      acumulado = p
+    if (p.length <= 1200) {
+      blocos.push(p)
     } else {
-      acumulado = acumulado ? acumulado + '\n\n' + p : p
+      for (let i = 0; i < p.length; i += 1200) {
+        blocos.push(p.slice(i, i + 1200).trim())
+      }
     }
   }
-  if (acumulado) blocos.push(acumulado.trim())
 
-  // Máximo 5 blocos para suportar cardápios e respostas longas
+  // Máximo 5 blocos por resposta para evitar spam de mensagens sequenciais
   return blocos.slice(0, 5)
 }
 
@@ -460,7 +466,13 @@ REGRAS DE COMPORTAMENTO:
     prompt += '\n\nBase de conhecimento: nenhum trecho relevante encontrado. Use seu conhecimento geral para responder perguntas simples de atendimento.'
   }
 
-  if (temCalendar) {
+  // AJUSTE: o bloco genérico de "AGENDA" (linguagem/tools do Google Calendar
+  // puro) só é injetado quando o tenant NÃO usa o sistema interno de
+  // Agendamentos Hubtek. Antes esse bloco era injetado sempre que temCalendar
+  // era true, mesmo com Agendamentos Hubtek ativo — o que confundia o modelo,
+  // pois ele passava a citar nomes de tools (ex: "criar_agendamento") que não
+  // estavam disponíveis nesse fluxo (o fluxo Hubtek usa "criar_agendamento_hubtek").
+  if (temCalendar && !temAgendamentosHubtek) {
     prompt += `\n\nAGENDA: Você tem acesso à agenda da empresa. Horário: ${horarioInicio} às ${horarioFim}.`
     prompt += '\nAgendamento: consulte slots disponíveis, confirme data/hora e crie o evento.'
     prompt += '\nReagendamento: localize pelo nome do cliente e reagende.'
@@ -489,6 +501,20 @@ REGRAS DE COMPORTAMENTO:
       prompt += `\nSEMPRE pergunte o profissional de preferência ANTES de criar o agendamento.`
     }
     prompt += `\nAntes de criar um agendamento, use listar_agendamentos_cliente para verificar conflitos de horário.`
+
+    // AJUSTE (F6-17 / feedback Gabriel, item 3): instrução de consulta de
+    // disponibilidade sempre presente no fluxo Hubtek — não depende do
+    // Google Calendar estar integrado.
+    prompt += `\n\nCONSULTA DE HORÁRIOS LIVRES: use SEMPRE listar_horarios_disponiveis_hubtek antes de sugerir qualquer data ou horário ao cliente.`
+    prompt += '\nEssa ferramenta já cruza a agenda interna da empresa com o horário de funcionamento cadastrado e retorna apenas horários realmente livres.'
+    prompt += '\nNunca invente, suponha ou estime horários disponíveis — baseie toda sugestão estritamente no retorno dessa ferramenta.'
+    prompt += '\nFLUXO OBRIGATÓRIO DE AGENDAMENTO:'
+    prompt += '\n1. Pergunte ao cliente qual período prefere (manhã ou tarde).'
+    prompt += '\n2. Chame listar_horarios_disponiveis_hubtek para o dia adequado.'
+    prompt += '\n3. Ofereça exatamente 2 horários específicos, escolhidos dentro do retorno da ferramenta e dentro do período que o cliente pediu.'
+    prompt += '\n4. Aguarde a escolha explícita do cliente. NUNCA crie o agendamento sem essa confirmação.'
+    prompt += '\n5. Só então chame criar_agendamento_hubtek com o horário escolhido.'
+    prompt += '\nSe a ferramenta indicar que não há horários livres no dia, ofereça outra data — nunca sugira um horário que não veio no retorno.'
   }
 
   if (feriadosProximos) {
@@ -602,6 +628,28 @@ const CALENDAR_TOOLS: Tool[] = [
 // ─── Tools de Agendamentos Hubtek ─────────────────────────────────────────────
 
 const APPOINTMENT_TOOLS: Tool[] = [
+  // AJUSTE (F6-17 / feedback Gabriel, item 3): tool de consulta de
+  // disponibilidade baseada na fonte primária do sistema — a tabela
+  // `appointments` (aba Agendamentos da dashboard) cruzada com o horário de
+  // funcionamento cadastrado em agent_config. O Google Calendar é usado
+  // apenas como verificação extra e opcional dentro do executor: se não
+  // estiver integrado ou falhar, a consulta segue normalmente sem travar.
+  {
+    type: 'function',
+    function: {
+      name: 'listar_horarios_disponiveis_hubtek',
+      description: 'Consulta os horários realmente livres na agenda da empresa para uma data. Use SEMPRE antes de sugerir qualquer horário ao cliente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          data:            { type: 'string', description: 'Data no formato YYYY-MM-DD ou texto como "amanhã", "hoje", "15/06"' },
+          duracao_minutos: { type: 'number', description: 'Duração do atendimento em minutos. Padrão: 60' },
+          profissional:    { type: 'string', description: 'Nome do profissional para filtrar a disponibilidade (opcional)' },
+        },
+        required: ['data'],
+      },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -839,7 +887,12 @@ async function executarAppointmentToolCall(
   toolName: string,
   args: Record<string, unknown>,
   tenantId: string,
-  instanceName: string
+  instanceName: string,
+  // AJUSTE (F6-17): horário de funcionamento cadastrado na dashboard —
+  // usado como fonte da janela de atendimento na consulta de disponibilidade.
+  horarioInicio: string,
+  horarioFim: string,
+  diasFuncionamento: string[]
 ): Promise<string> {
   const supabase = createServiceClient()
 
@@ -875,6 +928,101 @@ async function executarAppointmentToolCall(
   }
 
   try {
+    // AJUSTE (F6-17 / feedback Gabriel, item 3)
+    // Fonte primária: tabela `appointments` + horário de funcionamento cadastrado.
+    // Google Calendar entra apenas como verificação extra e NÃO bloqueante.
+    if (toolName === 'listar_horarios_disponiveis_hubtek') {
+      const dataRaw = String(args.data ?? 'hoje')
+      const data    = dataRaw.match(/^\d{4}-\d{2}-\d{2}$/) ? dataRaw : parseDateFromText(dataRaw)
+      const duracao = Number(args.duracao_minutos ?? 60)
+      const profissionalFiltro = args.profissional ? String(args.profissional) : null
+
+      // 1. Valida se a data cai em um dia de funcionamento cadastrado
+      const diaSemana = DIAS_PT[new Date(`${data}T12:00:00-03:00`).getUTCDay()]
+      if (!diasFuncionamento.includes(diaSemana)) {
+        return `A empresa não atende em ${data} (fora dos dias de funcionamento cadastrados). Ofereça outra data ao cliente.`
+      }
+
+      // 2. Gera os slots possíveis dentro do horário de funcionamento
+      const [hI, mI] = horarioInicio.split(':').map(Number)
+      const [hF, mF] = horarioFim.split(':').map(Number)
+      const inicioMin = hI * 60 + mI
+      const fimMin    = hF * 60 + mF
+
+      const slots: Array<{ inicio: number; fim: number }> = []
+      for (let t = inicioMin; t + duracao <= fimMin; t += duracao) {
+        slots.push({ inicio: t, fim: t + duracao })
+      }
+      if (slots.length === 0) return `Não há janela de atendimento configurada para ${data}.`
+
+      const minutosParaMs = (min: number): number =>
+        new Date(`${data}T${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}:00-03:00`).getTime()
+
+      const ocupados: Array<{ inicio: number; fim: number }> = []
+
+      // 3. FONTE PRIMÁRIA — agendamentos internos (aba Agendamentos da dashboard)
+      const inicioDiaISO = new Date(`${data}T00:00:00-03:00`).toISOString()
+      const fimDiaISO    = new Date(`${data}T23:59:59-03:00`).toISOString()
+
+      const { data: agendamentos, error: agErr } = await supabase
+        .from('appointments')
+        .select('data_hora, profissional, status')
+        .eq('tenant_id', tenantId)
+        .not('status', 'eq', 'cancelado')
+        .gte('data_hora', inicioDiaISO)
+        .lte('data_hora', fimDiaISO)
+
+      if (agErr) {
+        console.error('[appointment tool] listar_horarios_disponiveis_hubtek:', agErr)
+        return 'Erro ao consultar a agenda. Tente novamente.'
+      }
+
+      for (const ag of agendamentos ?? []) {
+        // Se o cliente escolheu um profissional, só bloqueia os compromissos dele
+        if (profissionalFiltro && ag.profissional && ag.profissional !== profissionalFiltro) continue
+        const ini = new Date(ag.data_hora).getTime()
+        ocupados.push({ inicio: ini, fim: ini + duracao * 60000 })
+      }
+
+      // 4. VERIFICAÇÃO EXTRA (opcional) — Google Calendar.
+      //    Se não estiver integrado ou falhar, seguimos apenas com a fonte primária.
+      let calendarConsultado = false
+      try {
+        const calConfig = await getCalConfig()
+        if (calConfig) {
+          const eventos = await listEventsByDay(calConfig, data)
+          for (const ev of eventos) {
+            const ini = new Date(ev.start).getTime()
+            ocupados.push({ inicio: ini, fim: ini + duracao * 60000 })
+          }
+          calendarConsultado = true
+        }
+      } catch (calErr) {
+        console.warn('[appointment tool] Consulta ao Google Calendar falhou (não crítico):', calErr)
+      }
+
+      // 5. Filtra slots ocupados e slots já passados (se for hoje)
+      const agoraMs = Date.now()
+      const livres = slots.filter(s => {
+        const sIni = minutosParaMs(s.inicio)
+        const sFim = minutosParaMs(s.fim)
+        if (sIni <= agoraMs) return false
+        return !ocupados.some(o => sIni < o.fim && sFim > o.inicio)
+      })
+
+      if (livres.length === 0) {
+        return `Não há horários livres em ${data}${profissionalFiltro ? ` para ${profissionalFiltro}` : ''}. Ofereça outra data ao cliente.`
+      }
+
+      const lista = livres.map(s => {
+        const h = String(Math.floor(s.inicio / 60)).padStart(2, '0')
+        const m = String(s.inicio % 60).padStart(2, '0')
+        return `• ${h}:${m}`
+      }).join('\n')
+
+      return `Horários livres em ${data}${profissionalFiltro ? ` com ${profissionalFiltro}` : ''}:\n${lista}\n(Fonte: agenda interna${calendarConsultado ? ' + Google Calendar' : ''}. Ofereça 2 destas opções ao cliente e aguarde a escolha dele.)`
+    }
+
     if (toolName === 'criar_agendamento_hubtek') {
       const dataHora     = String(args.data_hora)
       const profissional = args.profissional ? String(args.profissional) : null
@@ -1508,9 +1656,17 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     { role: 'user', content: conteudoProcessado },
   ]
 
+  // AJUSTE (F6-17 / feedback Gabriel, item 3): a consulta de disponibilidade
+  // do fluxo Hubtek agora é feita por listar_horarios_disponiveis_hubtek, que
+  // já faz parte de APPOINTMENT_TOOLS e não depende do Google Calendar —
+  // ela usa a agenda interna + horário de funcionamento cadastrado, e apenas
+  // cruza com o Calendar como verificação extra quando ele estiver integrado.
   const toolsAtivas: Tool[] = []
-  if (temAgendamentosHubtek) toolsAtivas.push(...APPOINTMENT_TOOLS)
-  else if (temCalendar)      toolsAtivas.push(...CALENDAR_TOOLS)
+  if (temAgendamentosHubtek) {
+    toolsAtivas.push(...APPOINTMENT_TOOLS)
+  } else if (temCalendar) {
+    toolsAtivas.push(...CALENDAR_TOOLS)
+  }
 
   const usarTools =
     toolsAtivas.length > 0 &&
@@ -1575,7 +1731,10 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
             const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
             if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
             const toolResult = isAppointmentTool
-              ? await executarAppointmentToolCall(tc.function.name, args, payload.tenantId, payload.instanceName)
+              ? await executarAppointmentToolCall(
+                  tc.function.name, args, payload.tenantId, payload.instanceName,
+                  config.horario_inicio, config.horario_fim, config.dias_funcionamento
+                )
               : await executarToolCall(tc.function.name, args, calendarConfig!, config.horario_inicio, config.horario_fim)
             toolResults.push({
               role:         'tool' as const,
