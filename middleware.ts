@@ -26,11 +26,12 @@ function getClientIp(request: NextRequest): string {
 // extraímos do body somente quando necessário (veja abaixo).
 
 // ─── Rotas públicas (não exigem sessão) ───────────────────────────────────────
-// AJUSTE (F7 — recuperação de senha): /auth/callback e /nova-senha precisam
-// ser públicas. O link do e-mail chega SEM sessão estabelecida — o callback é
-// justamente quem troca o `code` por sessão. Antes, o middleware interceptava
-// e redirecionava para /login, e o usuário nunca conseguia trocar a senha.
-const ROTAS_PUBLICAS = ['/trocar-senha', '/auth/callback', '/nova-senha']
+// AJUSTE (F7 — recuperação de senha): o prefixo /auth inteiro e /nova-senha
+// precisam ser públicos. O link do e-mail chega SEM sessão estabelecida — as
+// rotas /auth/confirm e /auth/callback são justamente quem validam o token e
+// criam a sessão. Antes, o middleware interceptava e redirecionava para /login,
+// e o usuário nunca conseguia trocar a senha.
+const ROTAS_PUBLICAS = ['/trocar-senha', '/auth', '/nova-senha']
 
 // ─── Middleware principal ─────────────────────────────────────────────────────
 
