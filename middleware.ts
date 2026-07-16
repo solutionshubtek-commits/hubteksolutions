@@ -25,6 +25,13 @@ function getClientIp(request: NextRequest): string {
 // está em `public.users`. Para rotas que precisam de tenant_id no rate limit,
 // extraímos do body somente quando necessário (veja abaixo).
 
+// ─── Rotas públicas (não exigem sessão) ───────────────────────────────────────
+// AJUSTE (F7 — recuperação de senha): /auth/callback e /nova-senha precisam
+// ser públicas. O link do e-mail chega SEM sessão estabelecida — o callback é
+// justamente quem troca o `code` por sessão. Antes, o middleware interceptava
+// e redirecionava para /login, e o usuário nunca conseguia trocar a senha.
+const ROTAS_PUBLICAS = ['/trocar-senha', '/auth/callback', '/nova-senha']
+
 // ─── Middleware principal ─────────────────────────────────────────────────────
 
 export async function middleware(request: NextRequest) {
@@ -73,6 +80,13 @@ export async function middleware(request: NextRequest) {
       if (!result.allowed) return rateLimitResponse(result)
     }
 
+    // AJUSTE: troca de senha própria — limite mais restrito por IP para
+    // dificultar tentativa de descobrir a senha atual por força bruta.
+    else if (pathname === '/api/conta/alterar-senha') {
+      const result = await rateLimitLogin(ip)
+      if (!result.allowed) return rateLimitResponse(result)
+    }
+
     // Todas as outras rotas de API — limite geral por IP
     else {
       const result = await rateLimitGeral(ip)
@@ -117,8 +131,8 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Rotas públicas
-  if (pathname === '/trocar-senha') {
+  // Rotas públicas — checadas ANTES de qualquer redirecionamento por sessão
+  if (ROTAS_PUBLICAS.some(r => pathname === r || pathname.startsWith(r + '/'))) {
     return supabaseResponse
   }
 
@@ -157,6 +171,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Rotas bloqueadas para operador
+  // Nota: /minha-conta NÃO entra aqui — todo usuário gerencia a própria conta.
   const ROTAS_BLOQUEADAS_OPERADOR = ['/configuracoes', '/renovar-plano']
   if (role === 'operador' && ROTAS_BLOQUEADAS_OPERADOR.some(r => pathname.startsWith(r))) {
     return NextResponse.redirect(new URL('/visao-geral', request.url))

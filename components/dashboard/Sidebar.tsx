@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight, RefreshCw, X, Calendar, BarChart2 } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, History, Smartphone, Settings, ArrowRight, RefreshCw, X, Calendar, BarChart2, UserCog } from 'lucide-react'
 import { useSidebar } from '@/contexts/SidebarContext'
 
 const WHATSAPP_SUPORTE = 'https://wa.me/5551980104924?text=Ol%C3%A1%2C+preciso+de+suporte+HubTek'
@@ -147,6 +147,9 @@ export function Sidebar() {
         {ITEMS_BASE.map(item => <NavLink key={item.href} {...item} />)}
         {mostrarConfig && <NavLink href="/configuracoes"  label="Configurações" icon={Settings}  />}
         {mostrarPlano  && <NavLink href="/renovar-plano"  label="Renovar Plano" icon={RefreshCw} />}
+        {/* AJUSTE (F7): disponível para TODOS os roles, inclusive operador —
+            cada usuário gerencia a própria senha de forma isolada. */}
+        <NavLink href="/minha-conta" label="Minha Conta" icon={UserCog} />
       </nav>
 
       {/* Suporte */}

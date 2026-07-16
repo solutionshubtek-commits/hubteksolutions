@@ -1,5 +1,6 @@
+// app/(auth)/login/page.tsx
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
@@ -12,6 +13,24 @@ export default function LoginPage() {
   const [esqueceuSenha, setEsqueceuSenha] = useState(false)
   const [emailEnviado, setEmailEnviado] = useState(false)
   const router = useRouter()
+
+  // AJUSTE (F7 — recuperação de senha): o callback redireciona para cá com
+  // ?erro=link_expirado ou ?erro=link_invalido quando o link do e-mail falha.
+  // Lido via window.location para evitar useSearchParams (exigiria Suspense).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const erroParam = params.get('erro')
+    if (erroParam === 'link_expirado') {
+      setErro('Este link de recuperação expirou. Solicite um novo abaixo.')
+      setEsqueceuSenha(true)
+    } else if (erroParam === 'link_invalido') {
+      setErro('Link de recuperação inválido. Solicite um novo abaixo.')
+      setEsqueceuSenha(true)
+    }
+    if (erroParam) {
+      window.history.replaceState({}, '', '/login')
+    }
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -33,8 +52,14 @@ export default function LoginPage() {
     setCarregando(true)
     setErro('')
     const supabase = createClient()
+
+    // AJUSTE: aponta para /auth/callback, que troca o `code` por sessão antes
+    // de mandar o usuário para /nova-senha. Antes ia direto para /nova-senha,
+    // sem sessão — o middleware barrava e jogava de volta no login.
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? window.location.origin
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `https://app.hubteksolutions.tech/nova-senha`,
+      redirectTo: `${baseUrl}/auth/callback?next=/nova-senha`,
     })
     if (error) {
       setErro('Erro ao enviar email. Verifique o endereço informado.')
@@ -136,6 +161,10 @@ export default function LoginPage() {
               <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-4">
                 <p className="text-[#10B981] text-sm">
                   ✅ Email enviado! Verifique sua caixa de entrada e siga as instruções.
+                </p>
+                <p className="text-[#A3A3A3] text-xs mt-2">
+                  O link é válido por 1 hora e só pode ser usado uma vez. Se não encontrar,
+                  confira a caixa de spam.
                 </p>
               </div>
             ) : (
