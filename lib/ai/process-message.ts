@@ -30,6 +30,13 @@ import {
 } from '@/lib/google-calendar'
 import { detectarMeChama } from './detect-me-chama'
 import { ETAPA_INICIAL } from '@/lib/crm'
+import {
+  buscarOperadoresDisponiveis,
+  interpretarEscolhaOperador,
+  iniciarTransferenciaComEscolha,
+  confirmarTransferencia,
+  limparTransferenciaPendente,
+} from './transferencia-humana'
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -1592,11 +1599,78 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (!conteudoProcessado.trim()) return
 
+  // ─── F7: resposta a uma oferta de transferência em aberto ─────────────────
+  // Se na mensagem anterior o cliente recebeu uma lista de operadores para
+  // escolher, esta mensagem é interpretada PRIMEIRO como a escolha dele —
+  // antes de qualquer outra classificação. Lógica determinística, não
+  // depende do modelo perceber que está respondendo a uma pergunta anterior.
+  const conversaExtra = conversa as unknown as Record<string, unknown>
+  const transferenciaPendente = conversaExtra.transferencia_pendente as
+    | { operadores: Array<{ id: string; nome: string }>; criado_em: string }
+    | null
+
+  if (transferenciaPendente?.operadores?.length) {
+    const escolha = interpretarEscolhaOperador(conteudoProcessado, transferenciaPendente.operadores)
+
+    if (escolha && escolha !== 'ambiguo') {
+      await confirmarTransferencia(supabase, conversa.id, payload.tenantId, escolha)
+      const msgConfirma = `Prontinho! Vou te transferir para ${escolha.nome}. Só um instante que ${escolha.nome} já te chama por aqui. 🙋`
+      await enviarResposta(payload.instanceName, payload.phone, msgConfirma)
+      await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgConfirma })
+      await updateConversationTimestamp(supabase, conversa.id)
+      return
+    }
+
+    // Não identificou a escolha — tenta mais uma vez antes de desistir e cair na fila
+    const tentativas = ((conversaExtra.transferencia_tentativas as number) ?? 0) + 1
+    if (tentativas >= 2) {
+      await limparTransferenciaPendente(supabase, conversa.id)
+      const msgFila = 'Sem problemas! Vou deixar você na fila e assim que um atendente ficar livre, ele te chama por aqui. 🙋'
+      await enviarResposta(payload.instanceName, payload.phone, msgFila)
+      await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgFila })
+      await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
+      await updateConversationTimestamp(supabase, conversa.id)
+      return
+    }
+
+    await supabase.from('conversations').update({ transferencia_tentativas: tentativas }).eq('id', conversa.id)
+    const lista = transferenciaPendente.operadores.map((op, i) => `${i + 1}. ${op.nome}`).join('\n')
+    const msgRetry = `Não consegui identificar qual atendente você prefere. Pode responder com o número ou o nome?\n\n${lista}`
+    await enviarResposta(payload.instanceName, payload.phone, msgRetry)
+    await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgRetry })
+    await updateConversationTimestamp(supabase, conversa.id)
+    return
+  }
+
+  // ─── F7: cliente pediu para falar com humano — consulta disponibilidade ──
+  // Fila (comportamento antigo) só acontece quando NENHUM operador está
+  // disponível agora. Com operadores disponíveis, o cliente é direcionado
+  // especificamente — sem depender do modelo, funciona igual em qualquer motor.
   if (HUMANO_REGEX.test(conteudoProcessado)) {
-    const msgTransferencia = 'Claro! Vou transferir você para um de nossos atendentes. Um momento, por favor. 🙋'
-    await enviarResposta(payload.instanceName, payload.phone, msgTransferencia)
-    await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgTransferencia })
-    await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
+    const operadoresDisponiveis = await buscarOperadoresDisponiveis(supabase, payload.tenantId)
+
+    if (operadoresDisponiveis.length === 0) {
+      const msgTransferencia = 'Claro! Vou transferir você para um de nossos atendentes. Um momento, por favor. 🙋'
+      await enviarResposta(payload.instanceName, payload.phone, msgTransferencia)
+      await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgTransferencia })
+      await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
+      await updateConversationTimestamp(supabase, conversa.id)
+      return
+    }
+
+    if (operadoresDisponiveis.length === 1) {
+      const unico = operadoresDisponiveis[0]
+      await confirmarTransferencia(supabase, conversa.id, payload.tenantId, unico)
+      const msgUnico = `Claro! Vou te transferir para ${unico.nome}, que está disponível agora. Só um instante! 🙋`
+      await enviarResposta(payload.instanceName, payload.phone, msgUnico)
+      await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgUnico })
+      await updateConversationTimestamp(supabase, conversa.id)
+      return
+    }
+
+    const msgLista = await iniciarTransferenciaComEscolha(supabase, conversa.id, operadoresDisponiveis)
+    await enviarResposta(payload.instanceName, payload.phone, msgLista)
+    await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgLista })
     await updateConversationTimestamp(supabase, conversa.id)
     return
   }
