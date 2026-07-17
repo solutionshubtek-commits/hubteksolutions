@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check, TrendingUp, Camera, Menu } from 'lucide-react'
 import { useSidebar } from '@/contexts/SidebarContext'
+import { StatusAtendimento } from './StatusAtendimento'
 
 interface HeaderProps {
   nomeUsuario: string | null
@@ -320,6 +321,11 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
             </button>
           )}
 
+          {/* AJUSTE (F7 — presença de operadores): badge Disponível/Ausente.
+              Só renderiza algo quando o usuário logado é role='operador' —
+              admin_tenant, self_managed e admin_hubtek não veem nada aqui. */}
+          <StatusAtendimento />
+
           <button
             onClick={handleToggleTema}
             className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
@@ -492,4 +498,4 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
       </header>
     </>
   )
-} 
+}
