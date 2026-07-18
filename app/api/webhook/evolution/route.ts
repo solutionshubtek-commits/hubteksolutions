@@ -17,8 +17,16 @@ const WHATSAPP_STATUS: Record<string, string> = {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Durante a rotação do segredo o valor anterior continua aceito, para que os
+  // webhooks não sejam rejeitados na janela entre o deploy e a troca na Evolution.
+  // Remova EVOLUTION_WEBHOOK_SECRET_ANTERIOR assim que a rotação terminar.
   const apikey = request.headers.get('apikey')
-  if (apikey !== process.env.EVOLUTION_WEBHOOK_SECRET) {
+  const segredosAceitos = [
+    process.env.EVOLUTION_WEBHOOK_SECRET,
+    process.env.EVOLUTION_WEBHOOK_SECRET_ANTERIOR,
+  ].filter((s): s is string => Boolean(s))
+
+  if (!apikey || !segredosAceitos.includes(apikey)) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
 

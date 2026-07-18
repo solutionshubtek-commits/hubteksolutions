@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient as createServiceClient } from '@supabase/supabase-js'
+import { createClient } from '@/lib/supabase/server'
 import OpenAI from 'openai'
 
 export const runtime = 'nodejs'
@@ -97,12 +98,41 @@ async function extractXlsxText(buffer: Buffer): Promise<string> {
 
 export async function POST(request: NextRequest) {
   try {
+    // Sem esta checagem qualquer requisição poderia injetar documentos na base
+    // de qualquer cliente — e a base alimenta as respostas do agente.
+    const supabaseAuth = createClient()
+    const { data: { session } } = await supabaseAuth.auth.getSession()
+    if (!session) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
+
+    const { data: usuarioLogado } = await supabaseAuth
+      .from('users')
+      .select('role, tenant_id')
+      .eq('id', session.user.id)
+      .single()
+
+    if (!usuarioLogado) {
+      return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 })
+    }
+
     const formData = await request.formData()
     const file = formData.get('file') as File | null
-    const tenantId = formData.get('tenant_id') as string | null
+    const tenantIdInformado = formData.get('tenant_id') as string | null
 
-    if (!file || !tenantId) {
-      return NextResponse.json({ error: 'Arquivo e tenant_id são obrigatórios' }, { status: 400 })
+    // admin_hubtek envia para qualquer tenant; os demais ficam restritos ao próprio,
+    // independentemente do que vier no FormData.
+    const tenantId =
+      usuarioLogado.role === 'admin_hubtek'
+        ? (tenantIdInformado ?? usuarioLogado.tenant_id)
+        : usuarioLogado.tenant_id
+
+    if (!file) {
+      return NextResponse.json({ error: 'Arquivo é obrigatório' }, { status: 400 })
+    }
+
+    if (!tenantId) {
+      return NextResponse.json({ error: 'Tenant não definido para este usuário' }, { status: 400 })
     }
 
     const isImagem = TIPOS_IMAGEM.includes(file.type)
@@ -113,7 +143,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Arquivo muito grande. Limite: ${limite}` }, { status: 400 })
     }
 
-    const supabase = createClient(
+    const supabase = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
       { auth: { autoRefreshToken: false, persistSession: false } }
