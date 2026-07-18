@@ -69,7 +69,7 @@ export async function middleware(request: NextRequest) {
     }
 
     // Upload knowledge base — limite por tenant_id (vem no FormData)
-    else if (pathname === '/api/knowledge-base/upload') {
+    else if (pathname === '/api/knowledge/upload') {
       // FormData não é clonável de forma segura no Edge — usamos IP como fallback
       const result = await rateLimitUpload(ip)
       if (!result.allowed) return rateLimitResponse(result)

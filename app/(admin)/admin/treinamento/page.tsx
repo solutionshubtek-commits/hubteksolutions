@@ -43,7 +43,8 @@ const DOC_ICON: Record<string, string> = {
 const TIPOS_ACEITOS_UPLOAD = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword', 'text/plain',
+  // .doc legado fica de fora: o mammoth só lê .docx e o arquivo ficaria sem texto
+  'text/plain',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel', 'image/jpeg', 'image/png', 'image/webp',
 ]
@@ -72,6 +73,7 @@ export default function AdminTreinamentoPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadProgresso, setUploadProgresso] = useState('')
   const [erroUpload, setErroUpload] = useState('')
+  const [avisoUpload, setAvisoUpload] = useState('')
   const [deletando, setDeletando] = useState<string | null>(null)
   const [prompt, setPrompt] = useState('')
   const [funcaoPrincipal, setFuncaoPrincipal] = useState<string>('')
@@ -288,10 +290,10 @@ export default function AdminTreinamentoPage() {
 
   const handleUpload = async (files: FileList | null) => {
     if (!files || !tenant) return
-    setUploading(true); setErroUpload('')
+    setUploading(true); setErroUpload(''); setAvisoUpload('')
     for (const file of Array.from(files)) {
-      const isImagem = ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)
-      const limiteBytes = isImagem ? 5 * 1024 * 1024 : 50 * 1024 * 1024
+      // Espelha o limite de app/api/knowledge/upload/route.ts (teto de body da Vercel)
+      const limiteBytes = 4 * 1024 * 1024
       if (!TIPOS_ACEITOS_UPLOAD.includes(file.type)) { setErroUpload(`Formato não suportado: ${file.name}`); continue }
       if (file.size > limiteBytes) { setErroUpload(`Arquivo muito grande: ${file.name}`); continue }
       setUploadProgresso(
@@ -304,7 +306,12 @@ export default function AdminTreinamentoPage() {
       formData.append('tenant_id', tenant.id)
       const res = await fetch('/api/knowledge/upload', { method: 'POST', body: formData })
       const data = await res.json()
-      if (!res.ok || !data.success) setErroUpload(data.error ?? `Erro ao enviar ${file.name}`)
+      if (!res.ok || !data.success) {
+        setErroUpload(`${file.name}: ${data.error ?? 'erro ao enviar'}`)
+      } else if (data.avisos?.length) {
+        // Upload aceito, mas parcialmente degradado — precisa ficar visível.
+        setAvisoUpload(`${file.name}: ${data.avisos.join(' ')}`)
+      }
     }
     setUploading(false); setUploadProgresso('')
     loadDocs(tenant.id)
@@ -628,7 +635,7 @@ export default function AdminTreinamentoPage() {
                 <Upload size={12} />
                 {uploading ? 'Enviando...' : 'Upload'}
                 <input type="file" multiple
-                  accept=".pdf,.docx,.doc,.txt,.xlsx,.xls,image/jpeg,image/png,image/webp"
+                  accept=".pdf,.docx,.txt,.xlsx,.xls,image/jpeg,image/png,image/webp"
                   className="hidden" onChange={(e) => handleUpload(e.target.files)} />
               </label>
             </div>
@@ -644,6 +651,12 @@ export default function AdminTreinamentoPage() {
               <div className="flex items-center gap-2 p-3 rounded-lg mb-3"
                 style={{ background: '#EF444410', border: '1px solid #EF444430' }}>
                 <p className="text-xs text-red-400">{erroUpload}</p>
+              </div>
+            )}
+            {avisoUpload && (
+              <div className="flex items-center gap-2 p-3 rounded-lg mb-3"
+                style={{ background: '#F59E0B10', border: '1px solid #F59E0B30' }}>
+                <p className="text-xs" style={{ color: '#F59E0B' }}>{avisoUpload}</p>
               </div>
             )}
 
@@ -680,7 +693,7 @@ export default function AdminTreinamentoPage() {
                 <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-label)' }}>PDF · DOCX · TXT · XLSX · JPG · PNG · WEBP</p>
               </div>
               <input type="file" multiple
-                accept=".pdf,.docx,.doc,.txt,.xlsx,.xls,image/jpeg,image/png,image/webp"
+                accept=".pdf,.docx,.txt,.xlsx,.xls,image/jpeg,image/png,image/webp"
                 className="hidden" onChange={(e) => handleUpload(e.target.files)} />
             </label>
           </div>

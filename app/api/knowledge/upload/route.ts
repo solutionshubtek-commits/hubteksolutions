@@ -6,8 +6,11 @@ export const runtime = 'nodejs'
 export const maxDuration = 120
 
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
-const LIMITE_IMAGEM = 5 * 1024 * 1024
-const LIMITE_DOCUMENTO = 50 * 1024 * 1024
+// Funções serverless da Vercel têm teto de 4,5MB no body da requisição. Um limite
+// maior aqui é inalcançável: o arquivo é rejeitado pela plataforma antes de chegar
+// nesta rota, e o usuário recebia um erro genérico sem relação com o tamanho.
+const LIMITE_IMAGEM = 4 * 1024 * 1024
+const LIMITE_DOCUMENTO = 4 * 1024 * 1024
 const CHUNK_PALAVRAS = 300
 const CHUNK_OVERLAP = 50
 
@@ -61,43 +64,35 @@ async function describeImage(base64: string, mimetype: string, filename: string)
   return response.choices[0]?.message?.content ?? ''
 }
 
+// As funções de extração propagam o erro em vez de devolver string vazia: quem
+// chama precisa distinguir "arquivo sem texto" de "falha ao ler o arquivo".
 async function extractPdfText(buffer: Buffer): Promise<string> {
-  try {
-    const { extractText } = await import('unpdf')
-    const uint8Array = new Uint8Array(buffer)
-    const { text } = await extractText(uint8Array, { mergePages: true })
-    return text ?? ''
-  } catch (err) {
-    console.error('Erro ao extrair PDF com unpdf:', err)
-    return ''
-  }
+  const { extractText } = await import('unpdf')
+  const uint8Array = new Uint8Array(buffer)
+  const { text } = await extractText(uint8Array, { mergePages: true })
+  return text ?? ''
 }
 
 async function extractXlsxText(buffer: Buffer): Promise<string> {
-  try {
-    const XLSX = await import('xlsx')
-    const workbook = XLSX.read(buffer, { type: 'buffer' })
-    const linhas: string[] = []
+  const XLSX = await import('xlsx')
+  const workbook = XLSX.read(buffer, { type: 'buffer' })
+  const linhas: string[] = []
 
-    for (const sheetName of workbook.SheetNames) {
-      const sheet = workbook.Sheets[sheetName]
-      const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
-      if (rows.length === 0) continue
-      linhas.push(`[Aba: ${sheetName}]`)
-      for (const row of rows) {
-        const celulas = (row as unknown[])
-          .map((c) => String(c ?? '').trim())
-          .filter((c) => c.length > 0)
-        if (celulas.length > 0) linhas.push(celulas.join(' | '))
-      }
-      linhas.push('')
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+    if (rows.length === 0) continue
+    linhas.push(`[Aba: ${sheetName}]`)
+    for (const row of rows) {
+      const celulas = (row as unknown[])
+        .map((c) => String(c ?? '').trim())
+        .filter((c) => c.length > 0)
+      if (celulas.length > 0) linhas.push(celulas.join(' | '))
     }
-
-    return linhas.join('\n').trim()
-  } catch (err) {
-    console.error('Erro ao extrair XLSX:', err)
-    return ''
+    linhas.push('')
   }
+
+  return linhas.join('\n').trim()
 }
 
 export async function POST(request: NextRequest) {
@@ -114,7 +109,7 @@ export async function POST(request: NextRequest) {
     const limiteBytes = isImagem ? LIMITE_IMAGEM : LIMITE_DOCUMENTO
 
     if (file.size > limiteBytes) {
-      const limite = isImagem ? '5MB' : '50MB'
+      const limite = `${Math.round(limiteBytes / 1024 / 1024)}MB`
       return NextResponse.json({ error: `Arquivo muito grande. Limite: ${limite}` }, { status: 400 })
     }
 
@@ -138,69 +133,56 @@ export async function POST(request: NextRequest) {
     }
 
     let conteudo = ''
+    let falhaExtracao: string | null = null
 
-    if (isImagem) {
-      try {
-        const base64 = buffer.toString('base64')
-        conteudo = await describeImage(base64, file.type, file.name)
-      } catch (err) {
-        console.error('Erro ao descrever imagem:', err)
-      }
-    } else if (file.type === 'text/plain') {
-      conteudo = buffer.toString('utf-8')
-    } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-      conteudo = await extractPdfText(buffer)
-    } else if (
-      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-      file.name.endsWith('.docx')
-    ) {
-      try {
+    try {
+      if (isImagem) {
+        conteudo = await describeImage(buffer.toString('base64'), file.type, file.name)
+      } else if (file.type === 'text/plain') {
+        conteudo = buffer.toString('utf-8')
+      } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        conteudo = await extractPdfText(buffer)
+      } else if (
+        file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        file.name.endsWith('.docx')
+      ) {
         const mammoth = await import('mammoth')
         const result = await mammoth.extractRawText({ buffer })
         conteudo = result.value ?? ''
-      } catch (err) {
-        console.error('Erro ao extrair DOCX:', err)
+      } else if (
+        file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        file.type === 'application/vnd.ms-excel' ||
+        file.name.endsWith('.xlsx') ||
+        file.name.endsWith('.xls')
+      ) {
+        conteudo = await extractXlsxText(buffer)
+      } else {
+        falhaExtracao = `formato não suportado para leitura de texto (${file.type || 'tipo desconhecido'})`
       }
-    } else if (
-      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-      file.type === 'application/vnd.ms-excel' ||
-      file.name.endsWith('.xlsx') ||
-      file.name.endsWith('.xls')
-    ) {
-      conteudo = await extractXlsxText(buffer)
+    } catch (err) {
+      falhaExtracao = err instanceof Error ? err.message : String(err)
+      console.error('Erro ao extrair conteúdo do arquivo:', err)
     }
 
+    // Sem texto o arquivo é invisível para a busca semântica: o agente nunca o
+    // encontraria. Registrar como sucesso daria a impressão de que o documento
+    // está treinado. Desfaz o upload e explica o motivo real.
     if (!conteudo.trim()) {
-      const { data: novoArquivo, error: dbError } = await supabase
-        .from('knowledge_base')
-        .insert({
-          tenant_id: tenantId,
-          nome_arquivo: file.name,
-          tipo: file.type,
-          conteudo_texto: null,
-          embedding: null,
-          tamanho_bytes: file.size,
-        })
-        .select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
-        .single()
-
-      if (dbError) {
-        await supabase.storage.from('knowledge-base').remove([path])
-        return NextResponse.json({ error: 'Erro ao registrar arquivo' }, { status: 500 })
-      }
-
-      return NextResponse.json({
-        success: true,
-        arquivo: novoArquivo,
-        texto_extraido: false,
-        embedding_gerado: false,
-        chunks: 0,
-      })
+      await supabase.storage.from('knowledge-base').remove([path])
+      const motivo = falhaExtracao
+        ? `Não foi possível ler o arquivo: ${falhaExtracao}`
+        : isImagem
+          ? 'Não foi possível gerar uma descrição desta imagem.'
+          : 'Nenhum texto foi encontrado no arquivo. Se for um PDF digitalizado (imagem), converta-o para texto antes de enviar.'
+      return NextResponse.json({ error: motivo }, { status: 422 })
     }
 
     const chunks = chunkText(conteudo)
     let primeiroArquivo = null
     let embeddingsGerados = 0
+    let chunksPerdidos = 0
+    let ultimoErroEmbedding: string | null = null
+    const idsSalvos: string[] = []
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkTexto = chunks[i]
@@ -210,6 +192,7 @@ export async function POST(request: NextRequest) {
         embedding = await generateEmbedding(chunkTexto)
         embeddingsGerados++
       } catch (err) {
+        ultimoErroEmbedding = err instanceof Error ? err.message : String(err)
         console.error(`Erro embedding chunk ${i}:`, err)
       }
 
@@ -234,10 +217,39 @@ export async function POST(request: NextRequest) {
           await supabase.storage.from('knowledge-base').remove([path])
           return NextResponse.json({ error: 'Erro ao registrar arquivo' }, { status: 500 })
         }
+        chunksPerdidos++
         continue
       }
 
+      idsSalvos.push(data.id)
       if (i === 0) primeiroArquivo = data
+    }
+
+    // Nenhum embedding gerado = documento inalcançável pela busca semântica.
+    // Desfaz tudo: é preferível a um "sucesso" que não treina o agente.
+    if (embeddingsGerados === 0) {
+      await supabase.storage.from('knowledge-base').remove([path])
+      if (idsSalvos.length > 0) {
+        await supabase.from('knowledge_base').delete().in('id', idsSalvos)
+      }
+      return NextResponse.json(
+        {
+          error: 'O arquivo foi lido, mas não foi possível gerar os embeddings — sem eles o agente não consegue consultar o documento. Verifique a chave da OpenAI.',
+          detalhe: ultimoErroEmbedding,
+        },
+        { status: 502 }
+      )
+    }
+
+    // Sucesso parcial ainda é útil, mas precisa ser visível.
+    const avisos: string[] = []
+    if (embeddingsGerados < chunks.length) {
+      avisos.push(
+        `${chunks.length - embeddingsGerados} de ${chunks.length} trechos ficaram sem embedding e não serão encontrados pelo agente.`
+      )
+    }
+    if (chunksPerdidos > 0) {
+      avisos.push(`${chunksPerdidos} trecho(s) não puderam ser salvos no banco.`)
     }
 
     return NextResponse.json({
@@ -246,6 +258,8 @@ export async function POST(request: NextRequest) {
       texto_extraido: true,
       embedding_gerado: embeddingsGerados > 0,
       chunks: chunks.length,
+      chunks_com_embedding: embeddingsGerados,
+      avisos,
     })
   } catch (err) {
     console.error('Erro no upload:', err)
