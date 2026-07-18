@@ -100,16 +100,18 @@ export async function POST(request: NextRequest) {
   try {
     // Sem esta checagem qualquer requisição poderia injetar documentos na base
     // de qualquer cliente — e a base alimenta as respostas do agente.
+    // getUser revalida o token no Supabase; getSession apenas decodifica o
+    // cookie e nao serve como barreira de seguranca no servidor.
     const supabaseAuth = createClient()
-    const { data: { session } } = await supabaseAuth.auth.getSession()
-    if (!session) {
+    const { data: { user } } = await supabaseAuth.auth.getUser()
+    if (!user) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
     const { data: usuarioLogado } = await supabaseAuth
       .from('users')
       .select('role, tenant_id')
-      .eq('id', session.user.id)
+      .eq('id', user.id)
       .single()
 
     if (!usuarioLogado) {
