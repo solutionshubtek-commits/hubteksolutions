@@ -52,7 +52,30 @@ const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
 const MOTOR_PERFIL               = 'gpt-4o-mini'
 const PERFIL_EXTRACTION_INTERVAL = 5
 
-const SAUDACOES_REGEX = /^(oi|olá|ola|opa|hey|hello|bom dia|boa tarde|boa noite|e aí|eai|e ai|tudo bem|tudo bom|salve)[!?.,:]*$/i
+// Vocabulario de saudacao e cortesia. Uma mensagem so e classificada como
+// saudacao quando TODAS as suas palavras estao aqui — qualquer termo de
+// conteudo real ("quanto", "preco", "horario") tira a mensagem desta categoria.
+//
+// AJUSTE (auditoria 18/07): antes isto era um regex ancorado (^...$) que exigia
+// a saudacao isolada. "Ola, tudo certo?" caia em 'duvida', o que habilita as
+// tools, e o agente criou um agendamento sozinho a partir do historico. Praticamente
+// todo cumprimento natural furava a protecao de `usarTools`.
+const PALAVRAS_SAUDACAO = new Set([
+  'oi', 'ola', 'opa', 'hey', 'hello', 'salve', 'eai', 'e', 'ai',
+  'bom', 'boa', 'dia', 'tarde', 'noite',
+  'tudo', 'td', 'bem', 'certo', 'certinho', 'joia', 'tranquilo', 'beleza', 'blz', 'bao',
+  'como', 'vai', 'esta', 'ta', 'voce', 'vc',
+])
+
+function ehSomenteSaudacao(mensagem: string): boolean {
+  const palavras = mensagem
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
+    .replace(/[^a-z\s]/g, ' ')                        // pontuacao, emoji e numeros
+    .split(/\s+/)
+    .filter(Boolean)
+  return palavras.length > 0 && palavras.every(p => PALAVRAS_SAUDACAO.has(p))
+}
 
 const HUMANO_REGEX = /\b(falar\s+com\s+(humano|pessoa|atendente|operador|algu[eé]m)|gostaria\s+de\s+(falar|ser\s+atendid[oa])\s+(com\s+)?(um\s+)?(humano|pessoa|atendente|operador)?|gostaria\s+de\s+um\s+atendente|poderia\s+me\s+transferir|pode\s+me\s+transferir|transferir\s+(para|pra)|atendimento\s+humano|atendente\s+humano|quero\s+(um\s+)?(humano|pessoa|atendente|operador)|me\s+passa\s+(para|pra)\s+(um\s+)?(humano|atendente|operador)|me\s+transfere|transfere\s+(para|pra)|falar\s+com\s+algu[eé]m|preciso\s+de\s+(um\s+)?atendente|n[aã]o\s+quero\s+(falar\s+com\s+)?(?:rob[oô]|ia|bot|m[aá]quina)|quero\s+ser\s+atendido|falar\s+com\s+uma\s+pessoa|ser\s+atendid[oa]\s+por\s+um\s+humano|atendimento\s+com\s+(uma?\s+)?(pessoa|humano)|prefiro\s+(falar|conversar)\s+com\s+(uma?\s+)?(pessoa|humano|atendente)|tem\s+(algum|algu[eé]m)\s+(humano|atendente|operador)|existe\s+(algum|algu[eé]m)\s+(humano|atendente)|pode\s+me\s+conectar\s+com|conectar\s+com\s+um\s+atendente|chamar\s+um\s+atendente|fala\s+com\s+algu[eé]m)\b/i
 
@@ -268,13 +291,58 @@ type Intencao = 'saudacao' | 'agendamento' | 'reclamacao' | 'duvida' | 'fora_esc
 
 function classificarIntencao(mensagem: string): Intencao {
   const m = mensagem.toLowerCase().trim()
-  if (SAUDACOES_REGEX.test(m)) return 'saudacao'
+  if (ehSomenteSaudacao(m)) return 'saudacao'
   if (FRUSTRACAO_REGEX.test(m)) return 'reclamacao'
   if (/agendar|marcar|horário|horario|disponível|disponivel|encaixar|reagendar|cancelar|remarca|consulta|atendimento/.test(m))
     return 'agendamento'
   if (/não sei|nao sei|fora do assunto|outro assunto|não (é|e) sobre|piada|brincadeira/.test(m))
     return 'fora_escopo'
   return 'duvida'
+}
+
+// ─── Guarda de criação de agendamento ────────────────────────────────────────
+// O prompt ja instrui, de forma explicita e repetida, a nunca agendar sem escolha
+// do cliente (ver REGRA CRITICA DE CONFIRMACAO no system prompt) — e mesmo assim
+// o agente criou um agendamento a partir de um "Ola, tudo certo?" (auditoria
+// 18/07). Instrucao em linguagem natural e pedido, nao garantia: para uma acao
+// que grava na agenda de um cliente real, a validacao precisa estar no codigo.
+
+// Sinais de que o CLIENTE escolheu um horario/data concretos.
+const ESCOLHA_HORARIO_REGEX = new RegExp(
+  [
+    /\d{1,2}\s*[:h]/.source,                       // "13h", "10:30"
+    /\d{1,2}\s*(horas?|hs)\b/.source,              // "9 horas"
+    /\bmeio[- ]dia\b/.source,
+    /\b(primeir|segund|terceir)[oa]\b/.source,     // "o primeiro", "a segunda"
+    /\bpode ser\b/.source,
+    /\bprefiro\b/.source,
+    /\bfechad[oa]\b/.source,
+    /\bconfirmo\b/.source,
+    /\bmarca(r)?\s+(pra|para)\b/.source,
+    // confirmacoes curtas em resposta a horarios ja oferecidos ("esse mesmo",
+    // "isso", "combinado"). Sem elas o guard barraria uma escolha legitima.
+    /\b(esse|essa|isso)(\s+mesm[oa])?\b/.source,
+    /\b(combinado|aceito|fechou)\b/.source,
+    /\bpode(mos)?\s+(marcar|agendar)\b/.source,
+    /\b(amanha|amanhã|hoje|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)\b/.source,
+  ].join('|'),
+  'i'
+)
+
+// Olha apenas as ultimas mensagens DO CLIENTE: uma escolha feita dias atras, ja
+// atendida, nao autoriza um novo agendamento nesta interacao.
+const JANELA_MSGS_CLIENTE = 3
+
+function clienteEscolheuHorario(
+  historico: { origem: string; conteudo: string | null; transcricao?: string | null }[],
+  mensagemAtual: string
+): boolean {
+  const doCliente = historico
+    .filter(m => m.origem === 'cliente')
+    .slice(-(JANELA_MSGS_CLIENTE - 1))
+    .map(m => m.transcricao || m.conteudo || '')
+
+  return [...doCliente, mensagemAtual].some(t => ESCOLHA_HORARIO_REGEX.test(t))
 }
 
 // ─── Perfil do cliente ────────────────────────────────────────────────────────
@@ -1803,7 +1871,10 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       ),
     },
     ...historicoRecente.slice(0, -1).map(m => ({
-      role: (m.origem === 'agente' ? 'assistant' : 'user') as 'assistant' | 'user',
+      // AJUSTE (auditoria 18/07): 'operador' caia no else e virava 'user', ou seja,
+      // o modelo lia a fala de um atendente humano como se fosse do cliente e podia
+      // tratar instrucao interna como pedido dele. Operador fala PELA empresa.
+      role: (m.origem === 'agente' || m.origem === 'operador' ? 'assistant' : 'user') as 'assistant' | 'user',
       content: m.transcricao || m.conteudo || '',
     })),
     { role: 'user', content: conteudoProcessado },
@@ -1895,6 +1966,25 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
             const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
             const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
             if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
+
+            // Guarda de servidor: bloqueia a criação quando o cliente não escolheu
+            // horário nas mensagens recentes. Falha visível, nunca em silêncio.
+            const ehCriacaoAgendamento =
+              tc.function.name === 'criar_agendamento_hubtek' || tc.function.name === 'criar_agendamento'
+
+            if (ehCriacaoAgendamento && !clienteEscolheuHorario(historicoRecente, conteudoProcessado)) {
+              console.warn(
+                `[guard agendamento] ${tc.function.name} bloqueado — sem escolha de horário do cliente. ` +
+                `conversa=${conversa.id} tenant=${payload.tenantId} args=${JSON.stringify(args)}`
+              )
+              toolResults.push({
+                role:         'tool' as const,
+                content:      'BLOQUEADO: o cliente não escolheu um horário nesta conversa. NÃO diga que agendou nem confirme qualquer horário. Pergunte qual dia e horário ele prefere e aguarde a resposta.',
+                tool_call_id: tc.id,
+              } as ChatMessage)
+              continue
+            }
+
             const toolResult = isAppointmentTool
               ? await executarAppointmentToolCall(
                   tc.function.name, args, payload.tenantId, payload.instanceName,

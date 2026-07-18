@@ -50,7 +50,9 @@ export interface Message {
   id: string
   conversation_id: string
   tenant_id: string
-  origem: 'agente' | 'cliente'
+  // 'operador' = mensagem enviada por um atendente humano pela dashboard.
+  // Existe no banco desde a transferencia de atendimento, mas faltava aqui.
+  origem: 'agente' | 'cliente' | 'operador'
   tipo: MessageType
   conteudo: string | null
   arquivo_url: string | null
