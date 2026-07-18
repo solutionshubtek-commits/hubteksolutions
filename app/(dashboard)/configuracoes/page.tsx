@@ -359,9 +359,10 @@ export default function ConfiguracoesPage() {
     if (!tenant || !e.target.files?.length) return
     const file = e.target.files[0]
     const isImagem = TIPOS_IMAGEM.includes(file.type)
-    const limiteBytes = isImagem ? 5 * 1024 * 1024 : 50 * 1024 * 1024
+    // Espelha o limite de app/api/knowledge/upload/route.ts (teto de body da Vercel)
+    const limiteBytes = 4 * 1024 * 1024
     if (file.size > limiteBytes) {
-      setErro(`Arquivo muito grande. Limite: ${isImagem ? '5MB' : '50MB'}.`)
+      setErro('Arquivo muito grande. Limite: 4MB.')
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
@@ -382,6 +383,8 @@ export default function ConfiguracoesPage() {
       setErro(data.error ?? 'Erro ao enviar arquivo.')
     } else {
       setArquivos(prev => [data.arquivo, ...prev])
+      // Upload aceito, mas parcialmente degradado — precisa ficar visível.
+      if (data.avisos?.length) setErro(data.avisos.join(' '))
     }
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -738,7 +741,7 @@ export default function ConfiguracoesPage() {
                   onChange={handleUpload} className="hidden" />
               </div>
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                Documentos: PDF, DOCX, TXT, XLSX (máx. 50MB) · Imagens: JPG, PNG, WEBP (máx. 5MB)
+                Documentos: PDF, DOCX, TXT, XLSX · Imagens: JPG, PNG, WEBP · Máx. 4MB por arquivo
               </p>
               {uploadando && uploadProgresso && (
                 <div className="mb-3 flex items-center gap-2 p-3 rounded-lg"
