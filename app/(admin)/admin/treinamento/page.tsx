@@ -8,6 +8,7 @@ import {
 import { GoogleCalendarGuide } from '@/components/dashboard/GoogleCalendarGuide'
 import { GestaoProfissionais } from '@/components/dashboard/GestaoProfissionais'
 import { LABELS_FUNIL } from '@/lib/crm'
+import { encontrarObjetoDoDocumento } from '@/lib/knowledge-storage'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
@@ -323,8 +324,10 @@ export default function AdminTreinamentoPage() {
     const { error } = await supabase.from('knowledge_base').delete().eq('id', doc.id)
     if (error) { setDeletando(null); return }
     const { data: lista } = await supabase.storage.from('knowledge-base').list(tenant.id)
-    const arquivo = lista?.find(f => f.name.includes(doc.nome_arquivo))
-    if (arquivo) await supabase.storage.from('knowledge-base').remove([`${tenant.id}/${arquivo.name}`])
+    // O objeto no Storage usa o nome sanitizado e sem o sufixo "[parte N/M]",
+    // então comparar com nome_arquivo cru deixaria o arquivo órfão.
+    const arquivo = encontrarObjetoDoDocumento(lista ?? [], doc.nome_arquivo)
+    if (arquivo) await supabase.storage.from('knowledge-base').remove([`${tenant.id}/${arquivo}`])
     setDocs((prev) => prev.filter((d) => d.id !== doc.id))
     setDeletando(null)
   }

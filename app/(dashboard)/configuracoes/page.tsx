@@ -9,6 +9,7 @@ import { GestaoOperadores } from '@/components/dashboard/GestaoOperadores'
 import { GoogleCalendarGuide } from '@/components/dashboard/GoogleCalendarGuide'
 import { GestaoProfissionais } from '@/components/dashboard/GestaoProfissionais'
 import { LABELS_FUNIL } from '@/lib/crm'
+import { encontrarObjetoDoDocumento } from '@/lib/knowledge-storage'
 
 interface KnowledgeFile {
   id: string; nome_arquivo: string; tipo: string; tamanho_bytes: number; criado_em: string
@@ -394,8 +395,10 @@ export default function ConfiguracoesPage() {
     setExcluindo(id)
     const supabase = createClient()
     const { data: lista } = await supabase.storage.from('knowledge-base').list(tenant.id)
-    const arquivo = lista?.find(f => f.name.endsWith(nomeArquivo))
-    if (arquivo) await supabase.storage.from('knowledge-base').remove([`${tenant.id}/${arquivo.name}`])
+    // O objeto no Storage usa o nome sanitizado e sem o sufixo "[parte N/M]",
+    // então comparar com o nome cru deixaria o arquivo órfão.
+    const arquivo = encontrarObjetoDoDocumento(lista ?? [], nomeArquivo)
+    if (arquivo) await supabase.storage.from('knowledge-base').remove([`${tenant.id}/${arquivo}`])
     await supabase.from('knowledge_base').delete().eq('id', id)
     setArquivos(prev => prev.filter(a => a.id !== id))
     setExcluindo(null)

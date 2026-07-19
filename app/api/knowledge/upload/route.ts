@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
+import { sanitizarNomeArquivo } from '@/lib/knowledge-storage'
 import OpenAI from 'openai'
 
 export const runtime = 'nodejs'
@@ -153,15 +154,26 @@ export async function POST(request: NextRequest) {
 
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
-    const path = `${tenantId}/${Date.now()}_${file.name}`
+    // O Storage recusa chaves com caracteres nao-ASCII (InvalidKey), entao o
+    // caminho fisico vai sanitizado. O nome original é preservado no registro.
+    const path = `${tenantId}/${Date.now()}_${sanitizarNomeArquivo(file.name)}`
 
     const { error: uploadError } = await supabase.storage
       .from('knowledge-base')
       .upload(path, buffer, { contentType: file.type })
 
     if (uploadError) {
-      console.error('Erro upload storage:', uploadError)
-      return NextResponse.json({ error: 'Erro no upload do arquivo' }, { status: 500 })
+      // A mensagem generica anterior escondeu por dias a causa real (InvalidKey
+      // por acento no nome). O motivo do Storage vai junto: sem ele, o unico
+      // caminho de diagnostico era o log da Vercel.
+      console.error('Erro upload storage:', { path, contentType: file.type, uploadError })
+      return NextResponse.json(
+        {
+          error: `Erro ao enviar o arquivo para o armazenamento: ${uploadError.message}`,
+          detalhe: { arquivo: file.name, tipo: file.type },
+        },
+        { status: 500 }
+      )
     }
 
     let conteudo = ''
