@@ -1,4 +1,5 @@
 {
+  "regions": ["gru1"],
   "functions": {
     "app/api/agent/process-webhook/route.ts": {
       "maxDuration": 60
