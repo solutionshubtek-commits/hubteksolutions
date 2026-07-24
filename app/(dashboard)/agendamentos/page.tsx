@@ -18,7 +18,7 @@ interface Appointment {
   servico: string | null
   profissional: string | null
   data_hora: string
-  status: 'pendente' | 'confirmado' | 'cancelado' | 'concluido'
+  status: 'pendente' | 'confirmado' | 'cancelado' | 'concluido' | 'reagendando'
   lembrete_enviado: boolean
   antecedencia_horas: number
   google_event_id: string | null
@@ -163,10 +163,22 @@ const selectStyle: React.CSSProperties = {
 }
 
 const STATUS_CONFIG = {
-  pendente:   { label: 'Pendente',   bg: 'rgba(234,179,8,0.15)',   color: '#EAB308', icon: AlertCircle },
-  confirmado: { label: 'Confirmado', bg: 'rgba(34,197,94,0.15)',   color: '#22C55E', icon: CheckCircle },
-  cancelado:  { label: 'Cancelado',  bg: 'rgba(239,68,68,0.15)',   color: '#EF4444', icon: XCircle },
-  concluido:  { label: 'Concluído',  bg: 'rgba(163,163,163,0.15)', color: '#A3A3A3', icon: CheckCircle },
+  pendente:    { label: 'Pendente',        bg: 'rgba(234,179,8,0.15)',   color: '#EAB308', icon: AlertCircle },
+  confirmado:  { label: 'Confirmado',      bg: 'rgba(34,197,94,0.15)',   color: '#22C55E', icon: CheckCircle },
+  cancelado:   { label: 'Cancelou',        bg: 'rgba(239,68,68,0.15)',   color: '#EF4444', icon: XCircle },
+  concluido:   { label: 'Concluído',       bg: 'rgba(163,163,163,0.15)', color: '#A3A3A3', icon: CheckCircle },
+  reagendando: { label: 'Sendo reagendado', bg: 'rgba(99,102,241,0.15)', color: '#6366F1', icon: RefreshCw },
+}
+
+// Estado visual derivado: além do status bruto, "Não respondeu" (laranja) é
+// quando o lembrete já foi enviado e o cliente ainda não respondeu
+// (status='pendente' + lembrete_enviado=true). Confirmado/Cancelou/Sendo
+// reagendado vêm direto do status atualizado pelo agente ou pelo operador.
+function getStatusVisual(appt: Appointment) {
+  if (appt.status === 'pendente' && appt.lembrete_enviado) {
+    return { label: 'Não respondeu', bg: 'rgba(249,115,22,0.15)', color: '#F97316', icon: Bell }
+  }
+  return STATUS_CONFIG[appt.status] ?? STATUS_CONFIG.pendente
 }
 
 const TASK_STATUS_CONFIG = {
@@ -548,7 +560,7 @@ function ModalDia({ date, appointments, profissionais, horarioInicio, horarioFim
                 </div>
                 <div style={{ flex: 1, paddingBottom: 6 }}>
                   {appts.length > 0 ? appts.map(appt => {
-                    const sc = STATUS_CONFIG[appt.status]
+                    const sc = getStatusVisual(appt)
                     const StatusIcon = sc.icon
                     return (
                       <div key={appt.id} style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 12px', marginTop: 2 }}>
@@ -568,12 +580,12 @@ function ModalDia({ date, appointments, profissionais, horarioInicio, horarioFim
                           {appt.status === 'pendente' && (
                             <button onClick={() => onConfirmar(appt.id)} style={{ borderRadius: 7, border: 'none', background: 'rgba(34,197,94,0.1)', color: '#22C55E', padding: '4px 10px', fontSize: 11, fontWeight: 500, cursor: 'pointer' }}>✓ Confirmar</button>
                           )}
-                          {(appt.status === 'pendente' || appt.status === 'confirmado') && (
+                          {(appt.status === 'pendente' || appt.status === 'confirmado' || appt.status === 'reagendando') && (
                             <button onClick={() => onReagendar(appt)} style={{ borderRadius: 7, border: 'none', background: 'rgba(234,179,8,0.1)', color: '#EAB308', padding: '4px 8px', fontSize: 11, cursor: 'pointer' }}>
                               <Edit2 size={12} />
                             </button>
                           )}
-                          {(appt.status === 'pendente' || appt.status === 'confirmado') && (
+                          {(appt.status === 'pendente' || appt.status === 'confirmado' || appt.status === 'reagendando') && (
                             <button onClick={() => onCancelar(appt.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 3 }}>
                               <Trash2 size={13} />
                             </button>
@@ -612,7 +624,7 @@ function AppointmentCard({ appt, onConfirmar, onReagendar, onCancelar }: {
   onReagendar: (appt: Appointment) => void
   onCancelar: (id: string) => void
 }) {
-  const sc = STATUS_CONFIG[appt.status]
+  const sc = getStatusVisual(appt)
   const StatusIcon = sc.icon
   return (
     <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
@@ -653,12 +665,12 @@ function AppointmentCard({ appt, onConfirmar, onReagendar, onCancelar }: {
           {appt.status === 'pendente' && (
             <button onClick={() => onConfirmar(appt.id)} style={{ borderRadius: 8, border: 'none', background: 'rgba(34,197,94,0.1)', color: '#22C55E', padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Confirmar</button>
           )}
-          {(appt.status === 'pendente' || appt.status === 'confirmado') && (
+          {(appt.status === 'pendente' || appt.status === 'confirmado' || appt.status === 'reagendando') && (
             <button onClick={() => onReagendar(appt)} style={{ borderRadius: 8, border: 'none', background: 'rgba(234,179,8,0.1)', color: '#EAB308', padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>
               <Edit2 size={13} />
             </button>
           )}
-          {(appt.status === 'pendente' || appt.status === 'confirmado') && (
+          {(appt.status === 'pendente' || appt.status === 'confirmado' || appt.status === 'reagendando') && (
             <button onClick={() => onCancelar(appt.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><Trash2 size={15} /></button>
           )}
         </div>
@@ -740,9 +752,12 @@ function CalendarView({ appointments, profissionais, horarioInicio, horarioFim, 
     return apptsFiltrados.filter(a => dateKey(a.data_hora) === key)
   }
 
-  function statusCor(s: string) {
-    if (s === 'confirmado') return { bg: 'rgba(15,110,86,0.15)', color: '#0F6E56' }
-    if (s === 'pendente') return { bg: 'rgba(186,117,23,0.15)', color: '#BA7517' }
+  function statusCor(a: Appointment) {
+    // "Não respondeu" — lembrete enviado e ainda sem resposta do cliente
+    if (a.status === 'pendente' && a.lembrete_enviado) return { bg: 'rgba(194,98,14,0.15)', color: '#C2620E' }
+    if (a.status === 'reagendando') return { bg: 'rgba(79,70,229,0.15)', color: '#4F46E5' }
+    if (a.status === 'confirmado') return { bg: 'rgba(15,110,86,0.15)', color: '#0F6E56' }
+    if (a.status === 'pendente') return { bg: 'rgba(186,117,23,0.15)', color: '#BA7517' }
     return { bg: 'rgba(163,45,45,0.12)', color: '#A32D2D' }
   }
 
@@ -846,7 +861,7 @@ function CalendarView({ appointments, profissionais, horarioInicio, horarioFim, 
                   </div>
                 )}
                 {appts.slice(0, 2).map(a => {
-                  const cor = statusCor(a.status)
+                  const cor = statusCor(a)
                   return (
                     <div key={a.id} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 3, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: cor.bg, color: cor.color }}>
                       {formatTime(a.data_hora)} {a.contato_nome.split(' ')[0]}
@@ -870,7 +885,13 @@ function CalendarView({ appointments, profissionais, horarioInicio, horarioFim, 
             <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#BA7517' }} /> Pendente
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#A32D2D' }} /> Cancelado
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#C2620E' }} /> Não respondeu
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#4F46E5' }} /> Sendo reagendado
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#A32D2D' }} /> Cancelou
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#EF4444' }}>
             🔴 Feriado nacional
@@ -934,6 +955,7 @@ export default function AgendamentosPage() {
   const [instances, setInstances] = useState<TenantInstance[]>([])
   const [profissionais, setProfissionais] = useState<Profissional[]>([])
   const [agentConfig, setAgentConfig] = useState<AgentConfig>({ horario_inicio: '08:00', horario_fim: '18:00' })
+  const [tenantId, setTenantId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [modalAgendamento, setModalAgendamento] = useState(false)
   const [modalRecontato, setModalRecontato] = useState(false)
@@ -962,12 +984,32 @@ export default function AgendamentosPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Tempo real: mudanças feitas pelo agente (ex.: cliente confirmou/cancelou/
+  // pediu reagendamento pelo lembrete) ou por outro operador refletem na tela
+  // sem recarregar. Cobre agendamentos e recontatos (scheduled_tasks).
+  useEffect(() => {
+    if (!tenantId) return
+    const channel = supabase
+      .channel(`agendamentos-rt-${tenantId}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'appointments', filter: `tenant_id=eq.${tenantId}` },
+        () => { fetchData() }
+      )
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'scheduled_tasks', filter: `tenant_id=eq.${tenantId}` },
+        () => { fetchData() }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [tenantId, fetchData, supabase])
+
   useEffect(() => {
     async function fetchExtras() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       const { data: userData } = await supabase.from('users').select('tenant_id').eq('id', user.id).single()
       if (!userData) return
+      setTenantId(userData.tenant_id)
 
       // Instâncias
       const { data: inst } = await supabase.from('tenant_instances').select('instance_name, apelido, status').eq('tenant_id', userData.tenant_id).eq('status', 'conectado')
@@ -1065,7 +1107,7 @@ export default function AgendamentosPage() {
               <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }} style={selectStyle}>
                 <option value="">Todos os status</option>
                 {tab === 'agendamentos'
-                  ? <><option value="pendente">Pendente</option><option value="confirmado">Confirmado</option><option value="cancelado">Cancelado</option><option value="concluido">Concluído</option></>
+                  ? <><option value="pendente">Pendente</option><option value="confirmado">Confirmado</option><option value="reagendando">Sendo reagendado</option><option value="cancelado">Cancelou</option><option value="concluido">Concluído</option></>
                   : <><option value="pendente">Agendado</option><option value="enviado">Enviado</option><option value="falhou">Falhou</option><option value="cancelado">Cancelado</option></>
                 }
               </select>
@@ -1110,7 +1152,7 @@ export default function AgendamentosPage() {
                       </thead>
                       <tbody>
                         {appointments.map(appt => {
-                          const sc = STATUS_CONFIG[appt.status]
+                          const sc = getStatusVisual(appt)
                           const StatusIcon = sc.icon
                           return (
                             <tr key={appt.id} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -1149,12 +1191,12 @@ export default function AgendamentosPage() {
                                   {appt.status === 'pendente' && (
                                     <button onClick={() => confirmarAgendamento(appt.id)} style={{ borderRadius: 8, border: 'none', background: 'rgba(34,197,94,0.1)', color: '#22C55E', padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Confirmar</button>
                                   )}
-                                  {(appt.status === 'pendente' || appt.status === 'confirmado') && (
+                                  {(appt.status === 'pendente' || appt.status === 'confirmado' || appt.status === 'reagendando') && (
                                     <button onClick={() => setModalReagendar(appt)} style={{ borderRadius: 8, border: 'none', background: 'rgba(234,179,8,0.1)', color: '#EAB308', padding: '6px 10px', fontSize: 12, cursor: 'pointer' }} title="Reagendar">
                                       <Edit2 size={13} />
                                     </button>
                                   )}
-                                  {(appt.status === 'pendente' || appt.status === 'confirmado') && (
+                                  {(appt.status === 'pendente' || appt.status === 'confirmado' || appt.status === 'reagendando') && (
                                     <button onClick={() => cancelarAgendamento(appt.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><Trash2 size={15} /></button>
                                   )}
                                 </div>

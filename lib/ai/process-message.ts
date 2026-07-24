@@ -345,6 +345,176 @@ function clienteEscolheuHorario(
   return [...doCliente, mensagemAtual].some(t => ESCOLHA_HORARIO_REGEX.test(t))
 }
 
+// ─── Resposta do cliente ao lembrete de agendamento ──────────────────────────
+// Quando o cliente responde ao lembrete ("Confirma a presença?"), o status do
+// agendamento precisa AVANÇAR na dashboard de forma confiável. O system prompt
+// proíbe o agente de mexer em agendamentos sem pedido explícito — então essa
+// leitura é feita em CÓDIGO, determinística, e não confiada ao LLM. Mesma
+// filosofia das outras ações que gravam na agenda de um cliente real.
+//
+// Ordem de teste importa: reagendar ANTES de cancelar, pois frases como
+// "não posso nesse dia, dá pra remarcar?" contêm "não".
+const RESP_LEMBRETE_REAGENDAR = /\b(remarca|remarcar|remarco|reagenda|reagendar|reagendo|adiar|antecipar|outro\s+(dia|hor[áa]rio)|em\s+outro\s+(dia|hor[áa]rio)|mudar\s+(o|a|de)?\s*(dia|hor[áa]rio|data)|muda\s+(o|a|de)?\s*(dia|hor[áa]rio|data)|trocar\s+(o|a|de)?\s*(dia|hor[áa]rio|data)|transferir\s+(o|a)\s+(dia|hor[áa]rio|data)|pode\s+ser\s+(em\s+)?outro)\b/i
+const RESP_LEMBRETE_CANCELAR = /\b(cancela|cancelar|cancelo|desmarca|desmarcar|desmarco|desist|n[ãa]o\s+(vou|poderei|posso\s+ir|consigo\s+ir|vou\s+poder|comparecerei|dá|da|vai\s+dar)|n[ãa]o\s+quero\s+mais|n[ãa]o\s+preciso\s+mais)\b/i
+const RESP_LEMBRETE_CONFIRMAR = /\b(sim|confirmo|confirmado|confirmar|confirma|pode\s+ser|pode\s+sim|vou\s+sim|estarei|estarei\s+l[áa]|comparecerei|vou\s+comparecer|com\s+certeza|claro|isso|isso\s+mesmo|certo|combinado|beleza|blz|ok|okay|t[áa]|ta\s+bom|t[áa]\s+bom|positivo|perfeito|👍|✅|✔️|👌)\b/i
+
+type AcaoLembrete = 'confirmado' | 'cancelado' | 'reagendando'
+type ResultadoLembrete =
+  | { tipo: 'nenhum' }
+  | { tipo: 'atualizado'; status: AcaoLembrete; dataHora: string; servico: string | null }
+  | { tipo: 'ambiguo'; dataHora: string; servico: string | null }
+
+// Classificador por IA — fallback quando as palavras-chave não decidem a
+// intenção (respostas atípicas). Só é chamado quando JÁ existe um lembrete
+// aguardando resposta, para não gerar custo em toda mensagem. Na menor dúvida
+// retorna 'ambiguo', para que o agente pergunte em vez de assumir.
+async function classificarRespostaLembreteIA(
+  mensagem: string,
+  contextoAppt: string
+): Promise<AcaoLembrete | 'ambiguo'> {
+  try {
+    const resposta = await openAIChatCompletion(
+      [
+        {
+          role: 'system',
+          content: `Você classifica a resposta de um cliente a um lembrete de agendamento enviado por WhatsApp.
+Contexto do agendamento: ${contextoAppt}.
+Classifique a mensagem do cliente em UMA destas intenções e retorne APENAS um JSON, sem markdown:
+{"intencao":"confirmar"}  — o cliente indica que vai comparecer / mantém o horário.
+{"intencao":"cancelar"}   — o cliente não vai mais e NÃO quer remarcar.
+{"intencao":"reagendar"}  — o cliente quer outro dia ou horário.
+{"intencao":"ambiguo"}    — não dá para ter certeza, é uma pergunta, ou não responde ao lembrete.
+Na dúvida entre duas intenções, responda "ambiguo". Nunca invente.`,
+        },
+        { role: 'user', content: mensagem },
+      ],
+      { temperature: 0, maxTokens: 20 }
+    )
+    const raw = resposta.content.trim().replace(/```json|```/g, '').trim()
+    const parsed = JSON.parse(raw) as { intencao?: string }
+    const mapa: Record<string, AcaoLembrete | 'ambiguo'> = {
+      confirmar: 'confirmado', cancelar: 'cancelado', reagendar: 'reagendando', ambiguo: 'ambiguo',
+    }
+    return mapa[parsed.intencao ?? ''] ?? 'ambiguo'
+  } catch (err) {
+    console.error('[lembrete] classificador IA falhou:', err)
+    return 'ambiguo'
+  }
+}
+
+// Lê a resposta do cliente a um lembrete de agendamento e, quando reconhecível
+// com segurança, avança o status do agendamento correspondente. Quando não há
+// certeza, sinaliza 'ambiguo' para o agente pedir esclarecimento. Nunca lança —
+// falhas são logadas e não bloqueiam o fluxo do agente.
+async function interpretarRespostaLembrete(
+  supabase: ReturnType<typeof createServiceClient>,
+  tenantId: string,
+  conversationId: string,
+  mensagem: string
+): Promise<ResultadoLembrete> {
+  const texto = mensagem.trim()
+  if (!texto) return { tipo: 'nenhum' }
+
+  try {
+    // 1. Só interpreta se houver um lembrete ENVIADO recentemente nesta
+    //    conversa, ainda aguardando resposta. O vínculo é pela conversa
+    //    (conversation_id é gravado pelo cron scheduled-tasks ao enviar) —
+    //    evita divergência de formato de telefone entre appointments e webhook.
+    //    Fazer isto ANTES de classificar garante que a IA só rode quando faz
+    //    sentido (custo controlado).
+    const limiteMs = new Date(Date.now() - 96 * 60 * 60 * 1000).toISOString()
+    const { data: task } = await supabase
+      .from('scheduled_tasks')
+      .select('id, appointment_id')
+      .eq('tenant_id', tenantId)
+      .eq('conversation_id', conversationId)
+      .eq('tipo', 'lembrete_agendamento')
+      .eq('status', 'enviado')
+      .not('appointment_id', 'is', null)
+      .gte('enviado_em', limiteMs)
+      .order('enviado_em', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (!task?.appointment_id) return { tipo: 'nenhum' }
+
+    const { data: appt } = await supabase
+      .from('appointments')
+      .select('id, status, data_hora, servico, google_event_id, contato_nome, profissional')
+      .eq('id', task.appointment_id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle()
+
+    // Só avança a partir de um agendamento ainda aguardando resposta e futuro.
+    if (!appt) return { tipo: 'nenhum' }
+    if (!['pendente', 'agendado'].includes(appt.status)) return { tipo: 'nenhum' }
+    if (new Date(appt.data_hora).getTime() <= Date.now()) return { tipo: 'nenhum' }
+
+    // 2. Classifica: palavras-chave primeiro (ordem: reagendar antes de
+    //    cancelar); se nenhuma casar, cai no classificador por IA.
+    let acao: AcaoLembrete | 'ambiguo'
+    if (RESP_LEMBRETE_REAGENDAR.test(texto))      acao = 'reagendando'
+    else if (RESP_LEMBRETE_CANCELAR.test(texto))  acao = 'cancelado'
+    else if (RESP_LEMBRETE_CONFIRMAR.test(texto)) acao = 'confirmado'
+    else {
+      const dataCtx = new Date(appt.data_hora).toLocaleString('pt-BR', {
+        timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit',
+      })
+      acao = await classificarRespostaLembreteIA(texto, `${appt.servico || 'atendimento'} em ${dataCtx}`)
+    }
+
+    if (acao === 'ambiguo') {
+      return { tipo: 'ambiguo', dataHora: appt.data_hora, servico: appt.servico }
+    }
+
+    // 3. Aplica o novo status.
+    const { error } = await supabase
+      .from('appointments')
+      .update({ status: acao })
+      .eq('id', appt.id)
+      .eq('tenant_id', tenantId)
+    if (error) {
+      console.error('[lembrete] Falha ao atualizar status por resposta:', error)
+      return { tipo: 'nenhum' }
+    }
+
+    // Sincroniza cor/título no Google Calendar para confirmar/cancelar.
+    // 'reagendando' não altera o evento — a nova data virá no reagendamento.
+    if (acao !== 'reagendando' && appt.google_event_id) {
+      try {
+        const { data: cfgRow } = await supabase
+          .from('agent_config')
+          .select('google_calendar_config')
+          .eq('tenant_id', tenantId)
+          .maybeSingle()
+        const cfg = cfgRow?.google_calendar_config as GoogleCalendarConfig | null
+        if (cfg?.client_email && cfg?.private_key && cfg?.calendar_id) {
+          const token = await getAccessToken(cfg)
+          const titulo = acao === 'confirmado'
+            ? `✓ ${appt.contato_nome}${appt.profissional ? ` — ${appt.profissional}` : ''}`
+            : `[CANCELADO] ${appt.contato_nome}${appt.profissional ? ` — ${appt.profissional}` : ''}`
+          await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cfg.calendar_id)}/events/${appt.google_event_id}`,
+            {
+              method: 'PATCH',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ summary: titulo, colorId: acao === 'confirmado' ? '2' : '11' }),
+            }
+          )
+        }
+      } catch (calErr) {
+        console.error('[lembrete] sync Calendar (não crítico):', calErr)
+      }
+    }
+
+    console.log(`[lembrete] Agendamento ${appt.id} → ${acao} (resposta do cliente)`)
+    return { tipo: 'atualizado', status: acao, dataHora: appt.data_hora, servico: appt.servico }
+  } catch (err) {
+    console.error('[lembrete] interpretarRespostaLembrete falhou:', err)
+    return { tipo: 'nenhum' }
+  }
+}
+
 // ─── Perfil do cliente ────────────────────────────────────────────────────────
 
 interface ContactProfile {
@@ -1265,12 +1435,24 @@ async function executarAppointmentToolCall(
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
         .maybeSingle()
+      // AJUSTE (Demanda 1): ao reagendar, o status volta a 'pendente' (agendado)
+      // e o ciclo de lembrete é reaberto — lembrete_enviado=false para que o
+      // cron gerar-lembretes crie um novo lembrete para a NOVA data.
       const { error } = await supabase
         .from('appointments')
-        .update({ data_hora: novaDataHora, status: 'pendente' })
+        .update({ data_hora: novaDataHora, status: 'pendente', lembrete_enviado: false })
         .eq('id', String(args.appointment_id))
         .eq('tenant_id', tenantId)
       if (error) { console.error('[appointment tool] reagendar_agendamento_hubtek:', error); return 'Erro ao reagendar agendamento.' }
+
+      // Cancela lembretes antigos deste agendamento (pendentes ou já enviados)
+      // para não bloquear a criação do novo lembrete na dedup do cron.
+      await supabase
+        .from('scheduled_tasks')
+        .update({ status: 'cancelado' })
+        .eq('appointment_id', String(args.appointment_id))
+        .eq('tipo', 'lembrete_agendamento')
+        .in('status', ['pendente', 'enviado'])
       try {
         const calConfig = await getCalConfig()
         if (calConfig && appt?.google_event_id) {
@@ -1743,6 +1925,42 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     return
   }
 
+  // ─── Resposta a um lembrete de agendamento em aberto ─────────────────────
+  // Avança o status do agendamento na dashboard conforme a resposta do cliente
+  // (confirmado / cancelado / reagendando). Palavras-chave + fallback por IA.
+  // Só faz efeito quando há um lembrete enviado aguardando resposta.
+  const respLembrete = await interpretarRespostaLembrete(supabase, payload.tenantId, conversa.id, conteudoProcessado)
+
+  // Quando não há certeza (confirmar × cancelar × reagendar), o agente PERGUNTA
+  // antes de assumir — resposta determinística e imediata.
+  if (respLembrete.tipo === 'ambiguo') {
+    const dataFmt = new Date(respLembrete.dataHora).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: 'long' })
+    const horaFmt = new Date(respLembrete.dataHora).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
+    const servicoTxt = respLembrete.servico ? ` de ${respLembrete.servico}` : ''
+    const msgConfirma = `Só pra eu entender certinho sobre seu agendamento${servicoTxt} em ${dataFmt} às ${horaFmt}: você quer *confirmar* a presença, *remarcar* para outro dia/horário, ou *cancelar*? 😊`
+    await enviarResposta(payload.instanceName, payload.phone, msgConfirma)
+    await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgConfirma })
+    await updateConversationTimestamp(supabase, conversa.id)
+    return
+  }
+
+  // Quando o status foi atualizado, prepara uma nota de contexto para o agente
+  // responder no ponto (reconhecer confirmação/cancelamento ou conduzir o
+  // reagendamento) — anexada ao system prompt mais abaixo.
+  let notaLembrete = ''
+  if (respLembrete.tipo === 'atualizado') {
+    const dataFmt = new Date(respLembrete.dataHora).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: 'long' })
+    const horaFmt = new Date(respLembrete.dataHora).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
+    const servicoTxt = respLembrete.servico ? ` de ${respLembrete.servico}` : ''
+    if (respLembrete.status === 'confirmado') {
+      notaLembrete = `LEMBRETE DE AGENDAMENTO: O cliente acabou de CONFIRMAR a presença no agendamento${servicoTxt} em ${dataFmt} às ${horaFmt}. Agradeça e reconheça a confirmação de forma cordial e breve. Não sugira remarcar nem pergunte de novo.`
+    } else if (respLembrete.status === 'cancelado') {
+      notaLembrete = `LEMBRETE DE AGENDAMENTO: O cliente acabou de CANCELAR o agendamento${servicoTxt} em ${dataFmt} às ${horaFmt}. Confirme o cancelamento de forma cordial e pergunte, sem insistir, se deseja remarcar para outra data.`
+    } else {
+      notaLembrete = `LEMBRETE DE AGENDAMENTO: O cliente quer REMARCAR o agendamento${servicoTxt} em ${dataFmt} às ${horaFmt}. Conduza a escolha de uma nova data/horário usando as ferramentas de disponibilidade e faça o reagendamento. Não trate como cancelamento.`
+    }
+  }
+
   const intencao = classificarIntencao(conteudoProcessado)
 
   const perfil = await buscarPerfilCliente(supabase, payload.tenantId, payload.phone)
@@ -1838,8 +2056,11 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     }
   }
 
+  // `notaLembrete` presente = esta mensagem é resposta a um lembrete de
+  // agendamento; não deve cair na saudação genérica de boas-vindas — o agente
+  // precisa responder no contexto do agendamento.
   const isPrimeiraMsg = historico.filter(m => m.origem === 'cliente').length === 1
-  if (isPrimeiraMsg && config.prompt_principal) {
+  if (isPrimeiraMsg && config.prompt_principal && !notaLembrete) {
     const saudacao    = getSaudacao()
     const nomeCliente = payload.pushName ? `, ${payload.pushName.split(' ')[0]}` : ''
     const boasVindas  = `${saudacao}${nomeCliente}! 👋 Em que posso ajudar?`
@@ -1849,26 +2070,31 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     return
   }
 
+  const systemPrompt = buildSystemPrompt(
+    config.prompt_principal ?? '',
+    knowledgeDocs,
+    temCalendar,
+    temAgendamentosHubtek,
+    config.horario_inicio,
+    config.horario_fim,
+    config.dias_funcionamento,
+    payload.phone,
+    intencao,
+    perfilTexto,
+    historicoResumido,
+    profissionaisDoTenant,
+    feriadosProximosStr,
+    funcaoPrincipal,
+    funilAnterior,
+  )
+  // Anexa a nota de contexto do lembrete (confirmação/cancelamento/reagendamento)
+  // quando houver, para o agente responder no ponto.
+  const systemPromptFinal = notaLembrete ? `${systemPrompt}\n\n${notaLembrete}` : systemPrompt
+
   const chatMessages: ChatMessage[] = [
     {
       role: 'system',
-      content: buildSystemPrompt(
-        config.prompt_principal ?? '',
-        knowledgeDocs,
-        temCalendar,
-        temAgendamentosHubtek,
-        config.horario_inicio,
-        config.horario_fim,
-        config.dias_funcionamento,
-        payload.phone,
-        intencao,
-        perfilTexto,
-        historicoResumido,
-        profissionaisDoTenant,
-        feriadosProximosStr,
-        funcaoPrincipal,
-        funilAnterior,
-      ),
+      content: systemPromptFinal,
     },
     ...historicoRecente.slice(0, -1).map(m => ({
       // AJUSTE (auditoria 18/07): 'operador' caia no else e virava 'user', ou seja,

@@ -174,6 +174,18 @@ export async function PATCH(request: Request) {
   if (!id) return NextResponse.json({ error: 'ID obrigatório' }, { status: 400 })
   delete updates.tenant_id
 
+  // AJUSTE (Demanda 1): reagendamento manual pelo operador reabre o ciclo de
+  // lembrete, igual ao fluxo do agente. Quando a data_hora muda (e o status não
+  // foi definido explicitamente na mesma chamada), o agendamento volta a
+  // 'pendente' (agendado) e lembrete_enviado é resetado — assim o cron
+  // gerar-lembretes cria um novo lembrete para a nova data e a dashboard sai
+  // dos estados "Não respondeu"/"Confirmado"/"Sendo reagendado".
+  const ehReagendamentoManual = Boolean(updates.data_hora) && !updates.status
+  if (ehReagendamentoManual) {
+    updates.status = 'pendente'
+    updates.lembrete_enviado = false
+  }
+
   // Busca agendamento atual para pegar google_event_id
   const { data: apptAtual } = await supabase
     .from('appointments')
@@ -192,6 +204,17 @@ export async function PATCH(request: Request) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Cancela lembretes antigos deste agendamento quando houve reagendamento
+  // manual, para não bloquear a criação do novo lembrete na dedup do cron.
+  if (ehReagendamentoManual) {
+    await supabase
+      .from('scheduled_tasks')
+      .update({ status: 'cancelado' })
+      .eq('appointment_id', id)
+      .eq('tipo', 'lembrete_agendamento')
+      .in('status', ['pendente', 'enviado'])
+  }
 
   // 2. Sincroniza com Google Calendar
   try {
