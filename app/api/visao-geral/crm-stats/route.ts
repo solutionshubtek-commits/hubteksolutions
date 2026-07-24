@@ -10,7 +10,8 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const periodoParam = searchParams.get('periodo') ?? '30'
-    const dias = Math.min(Math.max(parseInt(periodoParam) || 30, 7), 90)
+    // Aceita 1 (Hoje/dia vigente), 7, 30 e 90. Clamp [1, 90].
+    const dias = Math.min(Math.max(parseInt(periodoParam) || 30, 1), 90)
 
     const cookieStore = cookies()
     const supabaseAuth = createServerClient(
@@ -67,9 +68,11 @@ export async function GET(request: Request) {
       }
     })
 
-    // Período para insights
+    // Período para insights. Para "Hoje" (1 dia), começa à meia-noite do dia
+    // vigente; para os demais, é uma janela móvel de N dias.
     const inicio = new Date()
-    inicio.setDate(inicio.getDate() - dias)
+    if (dias === 1) inicio.setHours(0, 0, 0, 0)
+    else inicio.setDate(inicio.getDate() - dias)
 
     // Leads encerrados por movido_por no período
     const { data: encerrados } = await supabase

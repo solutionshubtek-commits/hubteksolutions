@@ -2,25 +2,58 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
-  MessageSquare, Users, Clock, PauseCircle,
+  MessageSquare, Users, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
   Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut, ChevronDown,
-  Bot, UserCheck, AlertCircle,
+  Bot, UserCheck, AlertCircle, CheckCircle2,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 import { LABELS_FUNIL } from '@/lib/crm'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
+// Todas as métricas seguem o período selecionado (Hoje/7d/30d/90d),
+// com o valor "Anterior" referente ao período imediatamente anterior de
+// mesmo tamanho — usado para o indicador de variação.
 interface Metrics {
-  conversasHoje: number
-  conversasHojeAnterior: number
-  conversasSemana: number
-  conversasSemanaAnterior: number
-  conversasMes: number
-  conversasMesAnterior: number
-  pausadas: number
-  pausadasAnterior: number
+  conversas: number;   conversasAnterior: number
+  novas: number;       novasAnterior: number
+  escaladas: number;   escaladasAnterior: number
+  concluidas: number;  concluidasAnterior: number
+}
+
+type Periodo = '1' | '7' | '30' | '90'
+
+// Rótulos do período para textos da tela.
+function periodoCurto(p: Periodo): string {
+  return p === '1' ? 'Hoje' : `${p} dias`
+}
+function periodoFrase(p: Periodo): string {
+  return p === '1' ? 'hoje' : `nos últimos ${p} dias`
+}
+
+// Janela atual e a imediatamente anterior (mesmo tamanho) para os cards do
+// período. "Hoje" = dia vigente (00:00 → agora); anterior = ontem. Demais =
+// janela móvel de N dias; anterior = os N dias antes dela.
+function janelaPeriodo(p: Periodo): {
+  inicioAtual: string; fimAtual: string; inicioAnterior: string; fimAnterior: string
+} {
+  const agora = new Date()
+  if (p === '1') {
+    const hoje = new Date(agora); hoje.setHours(0, 0, 0, 0)
+    const ontem = new Date(hoje); ontem.setDate(ontem.getDate() - 1)
+    return {
+      inicioAtual: hoje.toISOString(), fimAtual: agora.toISOString(),
+      inicioAnterior: ontem.toISOString(), fimAnterior: hoje.toISOString(),
+    }
+  }
+  const dias = parseInt(p)
+  const inicioAtual = new Date(agora.getTime() - dias * 86400000)
+  const inicioAnterior = new Date(agora.getTime() - 2 * dias * 86400000)
+  return {
+    inicioAtual: inicioAtual.toISOString(), fimAtual: agora.toISOString(),
+    inicioAnterior: inicioAnterior.toISOString(), fimAnterior: inicioAtual.toISOString(),
+  }
 }
 
 interface CRMStats {
@@ -134,17 +167,20 @@ function exportarConversasPDF(conversas: ConversaRecente[]) {
   })
 }
 
-function exportarGraficoPDF(dados: DiaDado[], periodo: string) {
+function exportarGraficoPDF(dados: DiaDado[], periodo: Periodo) {
+  const porHora = periodo === '1'
   exportPDF({
-    titulo: `Volume de Conversas — últimos ${periodo} dias`,
+    titulo: `Volume de Conversas — ${periodoCurto(periodo)}`,
     subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
-    colunas: [{label:'Data',key:'data',align:'left'},{label:'Conversas',key:'total',align:'right'}],
+    colunas: [{label:porHora?'Hora':'Data',key:'data',align:'left'},{label:'Conversas',key:'total',align:'right'}],
     linhas: dados.map(d => ({
-      data: new Date(d.dia+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}),
+      data: porHora
+        ? `${String(new Date(d.dia).getHours()).padStart(2,'0')}h`
+        : new Date(d.dia+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}),
       total: d.total,
     })),
     totais: {data:'Total',total:dados.reduce((s,d)=>s+d.total,0)},
-    nomeArquivo: `grafico_conversas_${periodo}d_${new Date().toISOString().slice(0,10)}`,
+    nomeArquivo: `grafico_conversas_${porHora?'hoje':`${periodo}d`}_${new Date().toISOString().slice(0,10)}`,
   })
 }
 
@@ -195,7 +231,7 @@ function CRMEtapaCard({ label, valor, cor }: { label: string; valor: number; cor
 }
 
 // Insights CRM — responde ao período selecionado
-function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: string }) {
+function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: Periodo }) {
   const total = stats.resolvidosIA + stats.resolvidosHumano
   const pctIA     = total > 0 ? Math.round((stats.resolvidosIA / total) * 100) : 0
   const pctHumano = total > 0 ? 100 - pctIA : 0
@@ -207,7 +243,7 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: string }) {
     },
     stats.transferidosHumano > 0 && {
       icone: UserCheck, cor: '#3B82F6',
-      texto: `${stats.transferidosHumano} transferência${stats.transferidosHumano !== 1 ? 's' : ''} para humano nos últimos ${periodo} dias`,
+      texto: `${stats.transferidosHumano} transferência${stats.transferidosHumano !== 1 ? 's' : ''} para humano ${periodoFrase(periodo)}`,
     },
     stats.resolvidosIA > 0 && {
       icone: Bot, cor: '#10B981',
@@ -219,7 +255,7 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: string }) {
     },
     stats.totalConversasPeriodo > 0 && {
       icone: MessageSquare, cor: '#06B6D4',
-      texto: `${stats.totalConversasPeriodo} nova${stats.totalConversasPeriodo !== 1 ? 's conversa iniciada' : ' conversa iniciada'}${stats.totalConversasPeriodo !== 1 ? 's' : ''} nos últimos ${periodo} dias`,
+      texto: `${stats.totalConversasPeriodo} nova${stats.totalConversasPeriodo !== 1 ? 's conversa iniciada' : ' conversa iniciada'}${stats.totalConversasPeriodo !== 1 ? 's' : ''} ${periodoFrase(periodo)}`,
     },
   ].filter(Boolean) as Array<{ icone: React.ElementType; cor: string; texto: string }>
 
@@ -229,7 +265,7 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: string }) {
       <div>
         <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Insights do CRM</h2>
         <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-          Últimos {periodo} dias · Funil de {LABELS_FUNIL[stats.funilAtivo] ?? stats.funilAtivo}
+          {periodoCurto(periodo)} · Funil de {LABELS_FUNIL[stats.funilAtivo] ?? stats.funilAtivo}
         </p>
       </div>
 
@@ -261,7 +297,7 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: string }) {
           </div>
         )) : (
           <p className="text-xs" style={{ color: 'var(--text-label)' }}>
-            Nenhum dado disponível para os últimos {periodo} dias.
+            Nenhum dado disponível {periodoFrase(periodo)}.
           </p>
         )}
       </div>
@@ -270,9 +306,10 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: string }) {
 }
 
 // Gráfico de barras — conversas por dia + gráfico de barras lado a lado por etapa CRM
-function GraficoBarras({ dados, crmStats, onExport }: {
+function GraficoBarras({ dados, crmStats, granularidade, onExport }: {
   dados: DiaDado[]
   crmStats: CRMStats | null
+  granularidade: 'dia' | 'hora'
   onExport: () => void
 }) {
   const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
@@ -304,6 +341,10 @@ function GraficoBarras({ dados, crmStats, onExport }: {
   function barHeight(val: number) { return (val / yMax) * innerH }
   function barX(i: number) { return padL + i * gap + gap / 2 }
   function fmtDia(dia: string) {
+    if (granularidade === 'hora') {
+      const d = new Date(dia)
+      return `${String(d.getHours()).padStart(2, '0')}h`
+    }
     const d = new Date(dia + 'T12:00:00')
     return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' })
   }
@@ -341,7 +382,7 @@ function GraficoBarras({ dados, crmStats, onExport }: {
           <p className="text-lg font-bold text-[#10B981]">{total.toLocaleString('pt-BR')}</p>
         </div>
         <div>
-          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Média/dia ativo</p>
+          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Média/{granularidade === 'hora' ? 'hora ativa' : 'dia ativo'}</p>
           <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{media}</p>
         </div>
         <div>
@@ -461,7 +502,7 @@ export default function VisaoGeralPage() {
   const [conversas, setConversas]           = useState<ConversaRecente[]>([])
   const [conversasFiltradas, setConversasFiltradas] = useState<ConversaRecente[]>([])
   const [grafico, setGrafico]               = useState<DiaDado[]>([])
-  const [periodo, setPeriodo]               = useState<'7' | '30' | '90'>('30')
+  const [periodo, setPeriodo]               = useState<Periodo>('30')
   const [filtroStatus, setFiltroStatus]     = useState<'todos' | 'ativo' | 'pausado'>('todos')
   const [carregando, setCarregando]         = useState(true)
   const [carregandoMais, setCarregandoMais] = useState(false)
@@ -475,7 +516,7 @@ export default function VisaoGeralPage() {
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
   const [atividades, setAtividades]         = useState<AtividadeItem[]>([])
   const exportRef = useRef<HTMLDivElement>(null)
-  const graficoCache = useRef<Partial<Record<'7'|'30'|'90', DiaDado[]>>>({})
+  const graficoCache = useRef<Partial<Record<Periodo, DiaDado[]>>>({})
 
   useEffect(() => {
     function h(e: MouseEvent) {
@@ -500,6 +541,35 @@ export default function VisaoGeralPage() {
     }
   }, [])
 
+  // KPIs do período — conversas (atividade), novas (criadas), escaladas para
+  // humano e concluídas, cada uma com o período anterior de mesmo tamanho para
+  // o indicador de variação. Segue Hoje/7d/30d/90d.
+  const fetchMetrics = useCallback(async (p: Periodo, tid: string) => {
+    const supabase = createClient()
+    const { inicioAtual, fimAtual, inicioAnterior, fimAnterior } = janelaPeriodo(p)
+    const conv = () => supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid)
+    const encerradas = ['encerrada', 'encerrado']
+    const [convAtual, convAnt, novasAtual, novasAnt, escAtual, escAnt, conclAtual, conclAnt] = await Promise.all([
+      conv().gte('ultima_mensagem_em', inicioAtual).lt('ultima_mensagem_em', fimAtual),
+      conv().gte('ultima_mensagem_em', inicioAnterior).lt('ultima_mensagem_em', fimAnterior),
+      conv().gte('criado_em', inicioAtual).lt('criado_em', fimAtual),
+      conv().gte('criado_em', inicioAnterior).lt('criado_em', fimAnterior),
+      conv().gte('pausado_em', inicioAtual).lt('pausado_em', fimAtual),
+      conv().gte('pausado_em', inicioAnterior).lt('pausado_em', fimAnterior),
+      conv().in('status', encerradas).gte('ultima_mensagem_em', inicioAtual).lt('ultima_mensagem_em', fimAtual),
+      conv().in('status', encerradas).gte('ultima_mensagem_em', inicioAnterior).lt('ultima_mensagem_em', fimAnterior),
+    ])
+    setMetrics({
+      conversas: convAtual.count ?? 0,   conversasAnterior: convAnt.count ?? 0,
+      novas: novasAtual.count ?? 0,      novasAnterior: novasAnt.count ?? 0,
+      escaladas: escAtual.count ?? 0,    escaladasAnterior: escAnt.count ?? 0,
+      concluidas: conclAtual.count ?? 0, concluidasAnterior: conclAnt.count ?? 0,
+    })
+  }, [])
+
+  // Recalcula os KPIs quando o período muda (e assim que o tenant é conhecido).
+  useEffect(() => { if (tenantId) fetchMetrics(periodo, tenantId) }, [periodo, tenantId, fetchMetrics])
+
   useEffect(() => {
     async function fetchInicial() {
       const supabase = createClient()
@@ -512,40 +582,11 @@ export default function VisaoGeralPage() {
       setTenantId(userData.tenant_id)
       const tid = userData.tenant_id
 
-      const agora     = new Date()
-      const hoje      = new Date(agora); hoje.setHours(0,0,0,0)
-      const ontem     = new Date(hoje);  ontem.setDate(ontem.getDate()-1)
-      const semana    = new Date(agora); semana.setDate(semana.getDate()-7)
-      const semAnt    = new Date(agora); semAnt.setDate(semAnt.getDate()-14)
-      const mes30     = new Date(agora); mes30.setDate(mes30.getDate()-30)
-      const mes60     = new Date(agora); mes60.setDate(mes60.getDate()-60)
+      const [convRes, bandasRes] = await Promise.all([
+        supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tid).eq('status','ativa').order('ultima_mensagem_em',{ascending:false}).limit(CONV_LIMIT_STEP),
+        supabase.from('tenant_instances').select('id,instance_name,apelido').eq('tenant_id',tid).eq('status','banido'),
+      ])
 
-      const [hojeOntemRes, semanaRes, semAntRes, mesRes, mesAntRes, pausadasRes, convRes, bandasRes] =
-        await Promise.all([
-          supabase.from('conversations').select('ultima_mensagem_em',{count:'exact'}).eq('tenant_id',tid).gte('ultima_mensagem_em',ontem.toISOString()).limit(10000),
-          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',semana.toISOString()),
-          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',semAnt.toISOString()).lt('ultima_mensagem_em',semana.toISOString()),
-          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',mes30.toISOString()),
-          supabase.from('conversations').select('id',{count:'exact',head:true}).eq('tenant_id',tid).gte('ultima_mensagem_em',mes60.toISOString()).lt('ultima_mensagem_em',mes30.toISOString()),
-          supabase.from('conversations').select('pausado_em').eq('tenant_id',tid).eq('agente_pausado',true).limit(10000),
-          supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tid).eq('status','ativa').order('ultima_mensagem_em',{ascending:false}).limit(CONV_LIMIT_STEP),
-          supabase.from('tenant_instances').select('id,instance_name,apelido').eq('tenant_id',tid).eq('status','banido'),
-        ])
-
-      const hojeIsoStr    = hoje.toISOString()
-      const convHojeOntem = hojeOntemRes.data ?? []
-      const convHoje      = convHojeOntem.filter(c => (c.ultima_mensagem_em ?? '') >= hojeIsoStr).length
-      const convOntem     = convHojeOntem.filter(c => (c.ultima_mensagem_em ?? '') < hojeIsoStr).length
-      const pausadasData  = pausadasRes.data ?? []
-      const totalPausadas = pausadasData.length
-      const pausadasAnt   = pausadasData.filter(c => c.pausado_em && c.pausado_em < hojeIsoStr).length
-
-      setMetrics({
-        conversasHoje:convHoje, conversasHojeAnterior:convOntem,
-        conversasSemana:semanaRes.count??0, conversasSemanaAnterior:semAntRes.count??0,
-        conversasMes:mesRes.count??0, conversasMesAnterior:mesAntRes.count??0,
-        pausadas:totalPausadas, pausadasAnterior:pausadasAnt,
-      })
       setInstanciasBanidas((bandasRes.data??[]) as InstanciaBanida[])
 
       type ConvRaw = { id:string;contato_nome:string;contato_telefone:string;status:string;agente_pausado:boolean;ultima_mensagem_em:string;messages:Array<{conteudo:string;criado_em:string}> }
@@ -577,16 +618,38 @@ export default function VisaoGeralPage() {
   // CRM stats — atualiza quando período muda
   useEffect(() => { fetchCRMStats(periodo) }, [periodo, fetchCRMStats])
 
-  const fetchGrafico = useCallback(async (p: '7'|'30'|'90') => {
-    if (graficoCache.current[p]) { setGrafico(graficoCache.current[p]!); return }
+  const fetchGrafico = useCallback(async (p: Periodo) => {
+    // "Hoje" nunca usa cache — é tempo real do dia vigente.
+    if (p !== '1' && graficoCache.current[p]) { setGrafico(graficoCache.current[p]!); return }
     const supabase = createClient()
     const { data:{ user } } = await supabase.auth.getUser()
     if (!user) return
     const { data:userData } = await supabase.from('users').select('tenant_id').eq('id',user.id).single()
     if (!userData?.tenant_id) return
+    const tid = userData.tenant_id
+
+    // Hoje: buckets por hora (00h → hora atual), leitura em tempo real.
+    if (p === '1') {
+      const hoje0 = new Date(); hoje0.setHours(0,0,0,0)
+      const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',tid).gte('ultima_mensagem_em',hoje0.toISOString())
+      const y = hoje0.getFullYear(), m = String(hoje0.getMonth()+1).padStart(2,'0'), d = String(hoje0.getDate()).padStart(2,'0')
+      const horaAtual = new Date().getHours()
+      const chaveHora = (h: number) => `${y}-${m}-${d}T${String(h).padStart(2,'0')}:00:00`
+      const porHora: Record<string,number> = {}
+      for (let h = 0; h <= horaAtual; h++) porHora[chaveHora(h)] = 0
+      ;(data??[]).forEach(c => {
+        const dt = new Date(c.ultima_mensagem_em ?? '')
+        if (isNaN(dt.getTime())) return
+        const key = chaveHora(dt.getHours())
+        if (porHora[key] !== undefined) porHora[key]++
+      })
+      setGrafico(Object.entries(porHora).map(([dia,total])=>({dia,total})))
+      return
+    }
+
     const dias = parseInt(p)
     const inicio = new Date(); inicio.setDate(inicio.getDate()-dias); inicio.setHours(0,0,0,0)
-    const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',userData.tenant_id).gte('ultima_mensagem_em',inicio.toISOString())
+    const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',tid).gte('ultima_mensagem_em',inicio.toISOString())
     const porDia: Record<string,number> = {}
     const curr = new Date(inicio)
     const hoje = new Date(); hoje.setHours(23,59,59,999)
@@ -598,6 +661,30 @@ export default function VisaoGeralPage() {
   }, [])
 
   useEffect(() => { fetchGrafico(periodo) }, [periodo, fetchGrafico])
+
+  // Tempo real: reflete no painel (KPIs + gráfico) as mudanças em conversas —
+  // essencial para "Hoje". A assinatura é push (não faz polling); o debounce
+  // evita refazer as contagens a cada evento em rajada.
+  useEffect(() => {
+    if (!tenantId) return
+    const supabase = createClient()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const agendarRefresh = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        fetchMetrics(periodo, tenantId)
+        delete graficoCache.current[periodo]
+        fetchGrafico(periodo)
+      }, 4000)
+    }
+    const channel = supabase
+      .channel(`visao-geral-rt-${tenantId}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'conversations', filter: `tenant_id=eq.${tenantId}` },
+        agendarRefresh
+      ).subscribe()
+    return () => { if (timer) clearTimeout(timer); supabase.removeChannel(channel) }
+  }, [tenantId, periodo, fetchMetrics, fetchGrafico])
 
   const handleCarregarMais = useCallback(async () => {
     if (!tenantId) return
@@ -672,15 +759,15 @@ export default function VisaoGeralPage() {
           <p className="text-sm" style={{ color:'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
           <h1 className="text-xl md:text-2xl font-bold" style={{ color:'var(--text-primary)' }}>Visão Geral</h1>
           <p className="text-xs md:text-sm mt-0.5 hidden sm:block" style={{ color:'var(--text-secondary)' }}>
-            Como seu agente performou nos últimos {periodo} dias.
+            Como seu agente performou {periodoFrase(periodo)}.
           </p>
         </div>
         <div className="flex items-center gap-1 rounded-lg p-1 shrink-0" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
-          {(['7','30','90'] as const).map(p => (
+          {(['1','7','30','90'] as const).map(p => (
             <button key={p} onClick={() => setPeriodo(p)}
               className="px-2 md:px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
               style={{ background:periodo===p?'#10B981':'transparent', color:periodo===p?'#fff':'var(--text-muted)' }}>
-              {p}d
+              {p === '1' ? 'Hoje' : `${p}d`}
             </button>
           ))}
         </div>
@@ -775,29 +862,37 @@ export default function VisaoGeralPage() {
       {/* Separador com label */}
       <div className="flex items-center gap-2">
         <p className="text-xs font-semibold uppercase tracking-wider flex-shrink-0" style={{ color:'var(--text-label)' }}>
-          Novas conversas abertas
+          Desempenho · {periodoCurto(periodo)}
         </p>
         <div className="flex-1 h-px" style={{ background:'var(--border)' }} />
       </div>
 
-      {/* ── KPIs de conversas ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <KpiCard label="Hoje"      valor={metrics!.conversasHoje}   d={delta(metrics!.conversasHoje,metrics!.conversasHojeAnterior)}     icon={MessageSquare} cor="#10B981" />
-        <KpiCard label="Na semana" valor={metrics!.conversasSemana} d={delta(metrics!.conversasSemana,metrics!.conversasSemanaAnterior)} icon={Clock}         cor="#3B82F6" />
-        <KpiCard label="No mês"    valor={metrics!.conversasMes}    d={delta(metrics!.conversasMes,metrics!.conversasMesAnterior)}       icon={Users}         cor="#8B5CF6" />
-        <KpiCard label="Pausadas"  valor={metrics!.pausadas}        d={delta(metrics!.pausadas,metrics!.pausadasAnterior)}               icon={PauseCircle}   cor="#F59E0B" alt />
-      </div>
+      {/* ── KPIs do período ────────────────────────────────────────────────── */}
+      {metrics ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+          <KpiCard label="Conversas no período" valor={metrics.conversas}  d={delta(metrics.conversas,metrics.conversasAnterior)}   icon={MessageSquare} cor="#10B981" />
+          <KpiCard label="Novas conversas"      valor={metrics.novas}      d={delta(metrics.novas,metrics.novasAnterior)}           icon={Users}         cor="#3B82F6" />
+          <KpiCard label="Escaladas p/ humano"  valor={metrics.escaladas}  d={delta(metrics.escaladas,metrics.escaladasAnterior)}   icon={PauseCircle}   cor="#F59E0B" alt />
+          <KpiCard label="Concluídas"           valor={metrics.concluidas} d={delta(metrics.concluidas,metrics.concluidasAnterior)} icon={CheckCircle2}  cor="#8B5CF6" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+          {[...Array(4)].map((_,i)=>(<div key={i} className="h-28 rounded-xl animate-pulse" style={{background:'var(--bg-surface)',border:'1px solid var(--border)'}} />))}
+        </div>
+      )}
 
       {/* ── Gráfico + coluna direita ───────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-xl p-4 md:p-6" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
           <div className="mb-4">
             <h2 className="font-semibold text-sm md:text-base" style={{ color:'var(--text-primary)' }}>
-              Volume de conversas — {periodo} dias
+              Volume de conversas — {periodoCurto(periodo)}
             </h2>
-            <p className="text-xs mt-0.5" style={{ color:'var(--text-muted)' }}>Total agregado por dia.</p>
+            <p className="text-xs mt-0.5" style={{ color:'var(--text-muted)' }}>
+              {periodo === '1' ? 'Total por hora (dia vigente).' : 'Total agregado por dia.'}
+            </p>
           </div>
-          <GraficoBarras dados={grafico} crmStats={crmStats} onExport={() => exportarGraficoPDF(grafico, periodo)} />
+          <GraficoBarras dados={grafico} crmStats={crmStats} granularidade={periodo === '1' ? 'hora' : 'dia'} onExport={() => exportarGraficoPDF(grafico, periodo)} />
         </div>
 
         <div className="space-y-4">
