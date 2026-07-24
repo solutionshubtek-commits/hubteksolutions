@@ -9,9 +9,25 @@ import { ETAPAS_FUNIL, LABELS_ETAPA } from '@/lib/crm'
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const periodoParam = searchParams.get('periodo') ?? '30'
-    // Aceita 1 (Hoje/dia vigente), 7, 30 e 90. Clamp [1, 90].
-    const dias = Math.min(Math.max(parseInt(periodoParam) || 30, 1), 90)
+    // Duas formas de janela para os insights:
+    //  - preset: ?periodo=1|7|30|90 (1 = dia vigente; clamp [1,90])
+    //  - customizado: ?inicio=YYYY-MM-DD&fim=YYYY-MM-DD (snapshot de intervalo)
+    const inicioParam = searchParams.get('inicio')
+    const fimParam = searchParams.get('fim')
+    let inicioInsights: Date
+    let fimInsights: Date | null = null
+    let dias: number
+    if (inicioParam && fimParam) {
+      inicioInsights = new Date(`${inicioParam}T00:00:00`)
+      fimInsights = new Date(`${fimParam}T23:59:59.999`)
+      dias = Math.max(1, Math.round((fimInsights.getTime() - inicioInsights.getTime()) / 86400000))
+    } else {
+      const periodoParam = searchParams.get('periodo') ?? '30'
+      dias = Math.min(Math.max(parseInt(periodoParam) || 30, 1), 90)
+      inicioInsights = new Date()
+      if (dias === 1) inicioInsights.setHours(0, 0, 0, 0)
+      else inicioInsights.setDate(inicioInsights.getDate() - dias)
+    }
 
     const cookieStore = cookies()
     const supabaseAuth = createServerClient(
@@ -68,20 +84,19 @@ export async function GET(request: Request) {
       }
     })
 
-    // Período para insights. Para "Hoje" (1 dia), começa à meia-noite do dia
-    // vigente; para os demais, é uma janela móvel de N dias.
-    const inicio = new Date()
-    if (dias === 1) inicio.setHours(0, 0, 0, 0)
-    else inicio.setDate(inicio.getDate() - dias)
+    const inicioISO = inicioInsights.toISOString()
+    const fimISO = fimInsights ? fimInsights.toISOString() : null
 
     // Leads encerrados por movido_por no período
-    const { data: encerrados } = await supabase
+    let qEncerrados = supabase
       .from('crm_leads')
       .select('movido_por, etapa')
       .eq('tenant_id', tid)
       .eq('funil_tipo', funilAtivo)
       .in('etapa', etapas.slice(-2))
-      .gte('atualizado_em', inicio.toISOString())
+      .gte('atualizado_em', inicioISO)
+    if (fimISO) qEncerrados = qEncerrados.lte('atualizado_em', fimISO)
+    const { data: encerrados } = await qEncerrados
 
     let resolvidosIA = 0
     let resolvidosHumano = 0
@@ -90,7 +105,7 @@ export async function GET(request: Request) {
       else resolvidosHumano++
     })
 
-    // Aguardando humano agora
+    // Aguardando humano agora (estado atual — não depende do período)
     const { count: aguardandoHumano } = await supabase
       .from('conversations')
       .select('id', { count: 'exact', head: true })
@@ -100,19 +115,23 @@ export async function GET(request: Request) {
 
     // Transferências para humano no período — conta direto em conversations
     // (mais confiável que notifications que cria N registros por usuário)
-    const { count: transferidosHumano } = await supabase
+    let qTransferidos = supabase
       .from('conversations')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tid)
       .eq('agente_pausado', true)
-      .gte('pausado_em', inicio.toISOString())
+      .gte('pausado_em', inicioISO)
+    if (fimISO) qTransferidos = qTransferidos.lte('pausado_em', fimISO)
+    const { count: transferidosHumano } = await qTransferidos
 
     // Novas conversas com interação no período
-    const { count: totalConversasPeriodo } = await supabase
+    let qTotalPeriodo = supabase
       .from('conversations')
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', tid)
-      .gte('ultima_mensagem_em', inicio.toISOString())
+      .gte('ultima_mensagem_em', inicioISO)
+    if (fimISO) qTotalPeriodo = qTotalPeriodo.lte('ultima_mensagem_em', fimISO)
+    const { count: totalConversasPeriodo } = await qTotalPeriodo
 
     return NextResponse.json({
       funilAtivo,

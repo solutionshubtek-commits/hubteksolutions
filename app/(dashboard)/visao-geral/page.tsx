@@ -5,7 +5,7 @@ import {
   MessageSquare, Users, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
   Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut, ChevronDown,
-  Bot, UserCheck, AlertCircle, CheckCircle2,
+  Bot, UserCheck, AlertCircle, CheckCircle2, Calendar, X,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 import { LABELS_FUNIL } from '@/lib/crm'
@@ -54,6 +54,40 @@ function janelaPeriodo(p: Periodo): {
     inicioAtual: inicioAtual.toISOString(), fimAtual: agora.toISOString(),
     inicioAnterior: inicioAnterior.toISOString(), fimAnterior: inicioAtual.toISOString(),
   }
+}
+
+// Janela de um intervalo customizado (datas YYYY-MM-DD, inclusivas). O período
+// "anterior" tem o mesmo tamanho, imediatamente antes do início.
+function janelaCustom(inicioStr: string, fimStr: string): {
+  inicioAtual: string; fimAtual: string; inicioAnterior: string; fimAnterior: string
+} {
+  const ini = new Date(`${inicioStr}T00:00:00`)
+  const fim = new Date(`${fimStr}T23:59:59.999`)
+  const durMs = fim.getTime() - ini.getTime()
+  const iniAnt = new Date(ini.getTime() - durMs - 1)
+  return {
+    inicioAtual: ini.toISOString(), fimAtual: fim.toISOString(),
+    inicioAnterior: iniAnt.toISOString(), fimAnterior: new Date(ini.getTime() - 1).toISOString(),
+  }
+}
+
+// Data YYYY-MM-DD → dd/mm/aaaa (meio-dia evita salto de fuso).
+function fmtDataBR(iso: string): string {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+// Seleção ativa: preset (Hoje/7/30/90) OU intervalo customizado.
+type Selecao = { custom: { inicio: string; fim: string } | null; periodo: Periodo }
+
+function janelaDaSelecao(sel: Selecao) {
+  return sel.custom ? janelaCustom(sel.custom.inicio, sel.custom.fim) : janelaPeriodo(sel.periodo)
+}
+// Título curto e frase da seleção para os textos da tela.
+function tituloSelecao(sel: Selecao): string {
+  return sel.custom ? `${fmtDataBR(sel.custom.inicio)} – ${fmtDataBR(sel.custom.fim)}` : periodoCurto(sel.periodo)
+}
+function fraseSelecao(sel: Selecao): string {
+  return sel.custom ? `no período de ${fmtDataBR(sel.custom.inicio)} a ${fmtDataBR(sel.custom.fim)}` : periodoFrase(sel.periodo)
 }
 
 interface CRMStats {
@@ -167,10 +201,9 @@ function exportarConversasPDF(conversas: ConversaRecente[]) {
   })
 }
 
-function exportarGraficoPDF(dados: DiaDado[], periodo: Periodo) {
-  const porHora = periodo === '1'
+function exportarGraficoPDF(dados: DiaDado[], titulo: string, porHora: boolean) {
   exportPDF({
-    titulo: `Volume de Conversas — ${periodoCurto(periodo)}`,
+    titulo: `Volume de Conversas — ${titulo}`,
     subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
     colunas: [{label:porHora?'Hora':'Data',key:'data',align:'left'},{label:'Conversas',key:'total',align:'right'}],
     linhas: dados.map(d => ({
@@ -180,7 +213,7 @@ function exportarGraficoPDF(dados: DiaDado[], periodo: Periodo) {
       total: d.total,
     })),
     totais: {data:'Total',total:dados.reduce((s,d)=>s+d.total,0)},
-    nomeArquivo: `grafico_conversas_${porHora?'hoje':`${periodo}d`}_${new Date().toISOString().slice(0,10)}`,
+    nomeArquivo: `grafico_conversas_${new Date().toISOString().slice(0,10)}`,
   })
 }
 
@@ -231,7 +264,7 @@ function CRMEtapaCard({ label, valor, cor }: { label: string; valor: number; cor
 }
 
 // Insights CRM — responde ao período selecionado
-function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: Periodo }) {
+function InsightsCRM({ stats, titulo, frase }: { stats: CRMStats; titulo: string; frase: string }) {
   const total = stats.resolvidosIA + stats.resolvidosHumano
   const pctIA     = total > 0 ? Math.round((stats.resolvidosIA / total) * 100) : 0
   const pctHumano = total > 0 ? 100 - pctIA : 0
@@ -243,7 +276,7 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: Periodo }) 
     },
     stats.transferidosHumano > 0 && {
       icone: UserCheck, cor: '#3B82F6',
-      texto: `${stats.transferidosHumano} transferência${stats.transferidosHumano !== 1 ? 's' : ''} para humano ${periodoFrase(periodo)}`,
+      texto: `${stats.transferidosHumano} transferência${stats.transferidosHumano !== 1 ? 's' : ''} para humano ${frase}`,
     },
     stats.resolvidosIA > 0 && {
       icone: Bot, cor: '#10B981',
@@ -255,7 +288,7 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: Periodo }) 
     },
     stats.totalConversasPeriodo > 0 && {
       icone: MessageSquare, cor: '#06B6D4',
-      texto: `${stats.totalConversasPeriodo} nova${stats.totalConversasPeriodo !== 1 ? 's conversa iniciada' : ' conversa iniciada'}${stats.totalConversasPeriodo !== 1 ? 's' : ''} ${periodoFrase(periodo)}`,
+      texto: `${stats.totalConversasPeriodo} nova${stats.totalConversasPeriodo !== 1 ? 's conversa iniciada' : ' conversa iniciada'}${stats.totalConversasPeriodo !== 1 ? 's' : ''} ${frase}`,
     },
   ].filter(Boolean) as Array<{ icone: React.ElementType; cor: string; texto: string }>
 
@@ -265,7 +298,7 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: Periodo }) 
       <div>
         <h2 className="font-semibold text-sm md:text-base" style={{ color: 'var(--text-primary)' }}>Insights do CRM</h2>
         <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-          {periodoCurto(periodo)} · Funil de {LABELS_FUNIL[stats.funilAtivo] ?? stats.funilAtivo}
+          {titulo} · Funil de {LABELS_FUNIL[stats.funilAtivo] ?? stats.funilAtivo}
         </p>
       </div>
 
@@ -297,7 +330,7 @@ function InsightsCRM({ stats, periodo }: { stats: CRMStats; periodo: Periodo }) 
           </div>
         )) : (
           <p className="text-xs" style={{ color: 'var(--text-label)' }}>
-            Nenhum dado disponível {periodoFrase(periodo)}.
+            Nenhum dado disponível {frase}.
           </p>
         )}
       </div>
@@ -503,6 +536,13 @@ export default function VisaoGeralPage() {
   const [conversasFiltradas, setConversasFiltradas] = useState<ConversaRecente[]>([])
   const [grafico, setGrafico]               = useState<DiaDado[]>([])
   const [periodo, setPeriodo]               = useState<Periodo>('30')
+  // Intervalo customizado (snapshot, sem realtime). Quando definido, tem
+  // precedência sobre o preset. `custom` guarda o intervalo aplicado; os
+  // campos temporários abaixo alimentam o popover antes de "Aplicar".
+  const [custom, setCustom]                 = useState<{ inicio: string; fim: string } | null>(null)
+  const [showCustom, setShowCustom]         = useState(false)
+  const [customTmp, setCustomTmp]           = useState<{ inicio: string; fim: string }>({ inicio: '', fim: '' })
+  const customRef = useRef<HTMLDivElement>(null)
   const [filtroStatus, setFiltroStatus]     = useState<'todos' | 'ativo' | 'pausado'>('todos')
   const [carregando, setCarregando]         = useState(true)
   const [carregandoMais, setCarregandoMais] = useState(false)
@@ -516,22 +556,26 @@ export default function VisaoGeralPage() {
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
   const [atividades, setAtividades]         = useState<AtividadeItem[]>([])
   const exportRef = useRef<HTMLDivElement>(null)
-  const graficoCache = useRef<Partial<Record<Periodo, DiaDado[]>>>({})
+  const graficoCache = useRef<Record<string, DiaDado[]>>({})
 
   useEffect(() => {
     function h(e: MouseEvent) {
       if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExportModal(false)
+      if (customRef.current && !customRef.current.contains(e.target as Node)) setShowCustom(false)
     }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
   // Busca CRM stats com cache localStorage 15min
-  const fetchCRMStats = useCallback(async (p: string) => {
+  const fetchCRMStats = useCallback(async (sel: Selecao) => {
     setCrmCarregando(true)
     setCrmStats(null) // limpa antes de buscar — sem dados antigos
     try {
-      const res = await fetch(`/api/visao-geral/crm-stats?periodo=${p}`)
+      const qs = sel.custom
+        ? `inicio=${sel.custom.inicio}&fim=${sel.custom.fim}`
+        : `periodo=${sel.periodo}`
+      const res = await fetch(`/api/visao-geral/crm-stats?${qs}`)
       if (res.ok) {
         const data = await res.json() as CRMStats
         setCrmStats(data)
@@ -544,9 +588,9 @@ export default function VisaoGeralPage() {
   // KPIs do período — conversas (atividade), novas (criadas), escaladas para
   // humano e concluídas, cada uma com o período anterior de mesmo tamanho para
   // o indicador de variação. Segue Hoje/7d/30d/90d.
-  const fetchMetrics = useCallback(async (p: Periodo, tid: string) => {
+  const fetchMetrics = useCallback(async (sel: Selecao, tid: string) => {
     const supabase = createClient()
-    const { inicioAtual, fimAtual, inicioAnterior, fimAnterior } = janelaPeriodo(p)
+    const { inicioAtual, fimAtual, inicioAnterior, fimAnterior } = janelaDaSelecao(sel)
     const conv = () => supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', tid)
     const encerradas = ['encerrada', 'encerrado']
     const [convAtual, convAnt, novasAtual, novasAnt, escAtual, escAnt, conclAtual, conclAnt] = await Promise.all([
@@ -567,8 +611,8 @@ export default function VisaoGeralPage() {
     })
   }, [])
 
-  // Recalcula os KPIs quando o período muda (e assim que o tenant é conhecido).
-  useEffect(() => { if (tenantId) fetchMetrics(periodo, tenantId) }, [periodo, tenantId, fetchMetrics])
+  // Recalcula os KPIs quando a seleção muda (e assim que o tenant é conhecido).
+  useEffect(() => { if (tenantId) fetchMetrics({ custom, periodo }, tenantId) }, [custom, periodo, tenantId, fetchMetrics])
 
   useEffect(() => {
     async function fetchInicial() {
@@ -615,12 +659,16 @@ export default function VisaoGeralPage() {
     fetchInicial()
   }, [])
 
-  // CRM stats — atualiza quando período muda
-  useEffect(() => { fetchCRMStats(periodo) }, [periodo, fetchCRMStats])
+  // CRM stats — atualiza quando a seleção muda
+  useEffect(() => { fetchCRMStats({ custom, periodo }) }, [custom, periodo, fetchCRMStats])
 
-  const fetchGrafico = useCallback(async (p: Periodo) => {
-    // "Hoje" nunca usa cache — é tempo real do dia vigente.
-    if (p !== '1' && graficoCache.current[p]) { setGrafico(graficoCache.current[p]!); return }
+  const fetchGrafico = useCallback(async (sel: Selecao) => {
+    const p = sel.periodo
+    // Chave de cache: preset por nome; custom pelo intervalo. "Hoje" nunca usa
+    // cache (é tempo real do dia vigente).
+    const cacheKey = sel.custom ? `c:${sel.custom.inicio}:${sel.custom.fim}` : p
+    const usaCache = !(!sel.custom && p === '1')
+    if (usaCache && graficoCache.current[cacheKey]) { setGrafico(graficoCache.current[cacheKey]); return }
     const supabase = createClient()
     const { data:{ user } } = await supabase.auth.getUser()
     if (!user) return
@@ -628,8 +676,8 @@ export default function VisaoGeralPage() {
     if (!userData?.tenant_id) return
     const tid = userData.tenant_id
 
-    // Hoje: buckets por hora (00h → hora atual), leitura em tempo real.
-    if (p === '1') {
+    // Hoje (preset): buckets por hora (00h → hora atual), leitura em tempo real.
+    if (!sel.custom && p === '1') {
       const hoje0 = new Date(); hoje0.setHours(0,0,0,0)
       const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',tid).gte('ultima_mensagem_em',hoje0.toISOString())
       const y = hoje0.getFullYear(), m = String(hoje0.getMonth()+1).padStart(2,'0'), d = String(hoje0.getDate()).padStart(2,'0')
@@ -647,44 +695,57 @@ export default function VisaoGeralPage() {
       return
     }
 
-    const dias = parseInt(p)
-    const inicio = new Date(); inicio.setDate(inicio.getDate()-dias); inicio.setHours(0,0,0,0)
-    const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',tid).gte('ultima_mensagem_em',inicio.toISOString())
+    // Janela em dias: preset (N dias móveis) ou custom (intervalo escolhido).
+    let inicio: Date, fim: Date
+    if (sel.custom) {
+      inicio = new Date(`${sel.custom.inicio}T00:00:00`)
+      fim    = new Date(`${sel.custom.fim}T23:59:59.999`)
+    } else {
+      inicio = new Date(); inicio.setDate(inicio.getDate()-parseInt(p)); inicio.setHours(0,0,0,0)
+      fim = new Date(); fim.setHours(23,59,59,999)
+    }
+    const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',tid).gte('ultima_mensagem_em',inicio.toISOString()).lte('ultima_mensagem_em',fim.toISOString())
     const porDia: Record<string,number> = {}
     const curr = new Date(inicio)
-    const hoje = new Date(); hoje.setHours(23,59,59,999)
-    while (curr<=hoje) { porDia[curr.toISOString().slice(0,10)]=0; curr.setDate(curr.getDate()+1) }
+    while (curr<=fim) { porDia[curr.toISOString().slice(0,10)]=0; curr.setDate(curr.getDate()+1) }
     ;(data??[]).forEach(c => { const dia=(c.ultima_mensagem_em??'').slice(0,10); if (porDia[dia]!==undefined) porDia[dia]++ })
     const resultado = Object.entries(porDia).map(([dia,total])=>({dia,total}))
-    graficoCache.current[p] = resultado
+    graficoCache.current[cacheKey] = resultado
     setGrafico(resultado)
   }, [])
 
-  useEffect(() => { fetchGrafico(periodo) }, [periodo, fetchGrafico])
+  useEffect(() => { fetchGrafico({ custom, periodo }) }, [custom, periodo, fetchGrafico])
 
-  // Tempo real: reflete no painel (KPIs + gráfico) as mudanças em conversas —
-  // essencial para "Hoje". A assinatura é push (não faz polling); o debounce
-  // evita refazer as contagens a cada evento em rajada.
+  // Tempo real (Otimização A): assina SÓ no "Hoje" (dia vigente), onde o ao
+  // vivo importa. 7/30/90 e intervalos customizados são snapshots — sem
+  // assinatura, sem custo contínuo. A assinatura é push (não faz polling) e o
+  // refresh só ocorre com a aba visível, evitando trabalho em abas em segundo
+  // plano; o debounce agrupa rajadas de eventos.
   useEffect(() => {
-    if (!tenantId) return
+    if (!tenantId || custom || periodo !== '1') return
     const supabase = createClient()
+    const sel: Selecao = { custom: null, periodo: '1' }
     let timer: ReturnType<typeof setTimeout> | null = null
+    const refresh = () => { fetchMetrics(sel, tenantId); fetchGrafico(sel) }
     const agendarRefresh = () => {
+      if (document.visibilityState !== 'visible') return
       if (timer) clearTimeout(timer)
-      timer = setTimeout(() => {
-        fetchMetrics(periodo, tenantId)
-        delete graficoCache.current[periodo]
-        fetchGrafico(periodo)
-      }, 4000)
+      timer = setTimeout(refresh, 4000)
     }
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onVisible)
     const channel = supabase
       .channel(`visao-geral-rt-${tenantId}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'conversations', filter: `tenant_id=eq.${tenantId}` },
         agendarRefresh
       ).subscribe()
-    return () => { if (timer) clearTimeout(timer); supabase.removeChannel(channel) }
-  }, [tenantId, periodo, fetchMetrics, fetchGrafico])
+    return () => {
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      supabase.removeChannel(channel)
+    }
+  }, [tenantId, custom, periodo, fetchMetrics, fetchGrafico])
 
   const handleCarregarMais = useCallback(async () => {
     if (!tenantId) return
@@ -734,6 +795,27 @@ export default function VisaoGeralPage() {
 
   const temMaisConversas = conversas.length >= convLimit
 
+  // Seleção ativa (preset ou intervalo customizado) e rótulos derivados.
+  const sel: Selecao = { custom, periodo }
+  const selTitulo = tituloSelecao(sel)
+  const selFrase  = fraseSelecao(sel)
+  const graficoPorHora = !custom && periodo === '1'
+
+  function aplicarCustom() {
+    if (!customTmp.inicio || !customTmp.fim) return
+    // Garante início <= fim
+    const [ini, fim] = customTmp.inicio <= customTmp.fim
+      ? [customTmp.inicio, customTmp.fim]
+      : [customTmp.fim, customTmp.inicio]
+    setCustom({ inicio: ini, fim: fim })
+    setShowCustom(false)
+  }
+  function limparCustom() {
+    setCustom(null)
+    setCustomTmp({ inicio: '', fim: '' })
+    setShowCustom(false)
+  }
+
   if (carregando) {
     return (
       <div className="p-4 md:p-8">
@@ -759,17 +841,66 @@ export default function VisaoGeralPage() {
           <p className="text-sm" style={{ color:'var(--text-muted)' }}>{saudacao()}, {nomeUsuario}</p>
           <h1 className="text-xl md:text-2xl font-bold" style={{ color:'var(--text-primary)' }}>Visão Geral</h1>
           <p className="text-xs md:text-sm mt-0.5 hidden sm:block" style={{ color:'var(--text-secondary)' }}>
-            Como seu agente performou {periodoFrase(periodo)}.
+            Como seu agente performou {selFrase}.
           </p>
         </div>
-        <div className="flex items-center gap-1 rounded-lg p-1 shrink-0" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
-          {(['1','7','30','90'] as const).map(p => (
-            <button key={p} onClick={() => setPeriodo(p)}
-              className="px-2 md:px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-              style={{ background:periodo===p?'#10B981':'transparent', color:periodo===p?'#fff':'var(--text-muted)' }}>
-              {p === '1' ? 'Hoje' : `${p}d`}
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          <div className="flex items-center gap-1 rounded-lg p-1" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
+            {(['1','7','30','90'] as const).map(p => {
+              const ativo = !custom && periodo === p
+              return (
+                <button key={p} onClick={() => { setCustom(null); setPeriodo(p) }}
+                  className="px-2 md:px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                  style={{ background: ativo ? '#10B981' : 'transparent', color: ativo ? '#fff' : 'var(--text-muted)' }}>
+                  {p === '1' ? 'Hoje' : `${p}d`}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Intervalo customizado — snapshot, sem realtime (Otimização B) */}
+          <div className="relative" ref={customRef}>
+            <button
+              onClick={() => { setShowCustom(v => !v); if (custom) setCustomTmp(custom) }}
+              className="flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              style={{
+                background: custom ? 'rgba(16,185,129,.1)' : 'var(--bg-surface)',
+                border: `1px solid ${custom ? 'rgba(16,185,129,.3)' : 'var(--border)'}`,
+                color: custom ? '#10B981' : 'var(--text-muted)',
+              }}>
+              <Calendar size={13} />
+              <span className={custom ? '' : 'hidden sm:inline'}>{custom ? selTitulo : 'Período'}</span>
+              {custom && (
+                <span onClick={(e) => { e.stopPropagation(); limparCustom() }} className="ml-0.5 hover:opacity-70">
+                  <X size={11} />
+                </span>
+              )}
             </button>
-          ))}
+
+            {showCustom && (
+              <div className="absolute right-0 z-50 rounded-xl shadow-2xl p-4"
+                style={{ background:'var(--bg-surface)', border:'1px solid var(--border)', width: 260, top: 40 }}>
+                <p className="text-xs mb-2" style={{ color:'var(--text-muted)' }}>Intervalo personalizado (snapshot)</p>
+                <label className="text-[11px]" style={{ color:'var(--text-secondary)' }}>De</label>
+                <input type="date" value={customTmp.inicio} max={customTmp.fim || undefined}
+                  onChange={e => setCustomTmp(t => ({ ...t, inicio: e.target.value }))}
+                  className="w-full text-xs rounded-lg px-2.5 py-1.5 mb-2 mt-0.5 outline-none"
+                  style={{ background:'var(--bg-surface-2)', border:'1px solid var(--border)', color:'var(--text-primary)' }} />
+                <label className="text-[11px]" style={{ color:'var(--text-secondary)' }}>Até</label>
+                <input type="date" value={customTmp.fim} min={customTmp.inicio || undefined}
+                  onChange={e => setCustomTmp(t => ({ ...t, fim: e.target.value }))}
+                  className="w-full text-xs rounded-lg px-2.5 py-1.5 mb-3 mt-0.5 outline-none"
+                  style={{ background:'var(--bg-surface-2)', border:'1px solid var(--border)', color:'var(--text-primary)' }} />
+                <div className="flex items-center justify-between">
+                  <button onClick={limparCustom} className="text-xs px-3 py-1.5 rounded-lg"
+                    style={{ border:'1px solid var(--border)', background:'var(--bg-surface-2)', color:'var(--text-secondary)' }}>Limpar</button>
+                  <button onClick={aplicarCustom} disabled={!customTmp.inicio || !customTmp.fim}
+                    className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50"
+                    style={{ background:'#10B981', color:'#000', border:'none' }}>Aplicar</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -862,7 +993,7 @@ export default function VisaoGeralPage() {
       {/* Separador com label */}
       <div className="flex items-center gap-2">
         <p className="text-xs font-semibold uppercase tracking-wider flex-shrink-0" style={{ color:'var(--text-label)' }}>
-          Desempenho · {periodoCurto(periodo)}
+          Desempenho · {selTitulo}
         </p>
         <div className="flex-1 h-px" style={{ background:'var(--border)' }} />
       </div>
@@ -886,13 +1017,13 @@ export default function VisaoGeralPage() {
         <div className="lg:col-span-2 rounded-xl p-4 md:p-6" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
           <div className="mb-4">
             <h2 className="font-semibold text-sm md:text-base" style={{ color:'var(--text-primary)' }}>
-              Volume de conversas — {periodoCurto(periodo)}
+              Volume de conversas — {selTitulo}
             </h2>
             <p className="text-xs mt-0.5" style={{ color:'var(--text-muted)' }}>
-              {periodo === '1' ? 'Total por hora (dia vigente).' : 'Total agregado por dia.'}
+              {graficoPorHora ? 'Total por hora (dia vigente).' : 'Total agregado por dia.'}
             </p>
           </div>
-          <GraficoBarras dados={grafico} crmStats={crmStats} granularidade={periodo === '1' ? 'hora' : 'dia'} onExport={() => exportarGraficoPDF(grafico, periodo)} />
+          <GraficoBarras dados={grafico} crmStats={crmStats} granularidade={graficoPorHora ? 'hora' : 'dia'} onExport={() => exportarGraficoPDF(grafico, selTitulo, graficoPorHora)} />
         </div>
 
         <div className="space-y-4">
@@ -910,7 +1041,7 @@ export default function VisaoGeralPage() {
             </div>
           </div>
         ) : crmStats ? (
-          <InsightsCRM stats={crmStats} periodo={periodo} />
+          <InsightsCRM stats={crmStats} titulo={selTitulo} frase={selFrase} />
         ) : null}
 
           <div className="rounded-xl p-4 md:p-5" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
