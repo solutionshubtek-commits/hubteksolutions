@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
-import { RefreshCw, ChevronLeft, ChevronRight, Calendar, X } from 'lucide-react'
+import { RefreshCw, ChevronLeft, ChevronRight, Calendar, X, Search } from 'lucide-react'
 import { CRMCardModal } from '@/components/dashboard/CRMCardModal'
 import { ETAPAS_FUNIL, LABELS_ETAPA, LABELS_FUNIL } from '@/lib/crm'
 
@@ -43,6 +43,11 @@ function avatarColor(str: string) {
   let hash = 0
   for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash)
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]
+}
+
+// Normaliza texto para busca: minúsculas e sem acentos.
+function normalizarBusca(texto: string): string {
+  return texto.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 }
 
 function tempoRelativo(data: string): string {
@@ -263,6 +268,7 @@ export default function CRMPage() {
   const [modalLead, setModalLead]   = useState<CRMLead | null>(null)
   const [movendo, setMovendo]       = useState(false)
   const [filtro, setFiltro]         = useState<FiltroVista>('ativas')
+  const [busca, setBusca]           = useState('')
   const isMobile = useIsMobile()
 
   // Calendário
@@ -397,6 +403,10 @@ export default function CRMPage() {
   const labels       = LABELS_ETAPA[funilAtivo] ?? {}
   const leadsDoFunil = leads.filter(l => l.funil_tipo === funilAtivo)
 
+  // Busca por nome (sem acento/maiúsculas) e/ou telefone (só dígitos).
+  const buscaTermo   = normalizarBusca(busca.trim())
+  const buscaDigitos = busca.replace(/\D/g, '')
+
   const leadsFiltrados = leadsDoFunil.filter(l => {
     if (filtro === 'ativas' && l.conversa_encerrada) return false
     if (dataInicio) {
@@ -406,6 +416,11 @@ export default function CRMPage() {
     if (dataFim) {
       const fim = new Date(dataFim); fim.setHours(23,59,59,999)
       if (new Date(l.atualizado_em) > fim) return false
+    }
+    if (buscaTermo) {
+      const nomeOk = l.contato_nome ? normalizarBusca(l.contato_nome).includes(buscaTermo) : false
+      const telOk  = buscaDigitos.length > 0 && l.contato_telefone.replace(/\D/g, '').includes(buscaDigitos)
+      if (!nomeOk && !telOk) return false
     }
     return true
   })
@@ -454,12 +469,39 @@ export default function CRMPage() {
               Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAtivas} ativa{totalAtivas !== 1 ? 's' : ''}
               {totalEncerradas > 0 && ` · ${totalEncerradas} encerrada${totalEncerradas !== 1 ? 's' : ''}`}
               {periodoAtivo && ` · ${leadsFiltrados.length} no período`}
+              {buscaTermo && ` · ${leadsFiltrados.length} resultado${leadsFiltrados.length !== 1 ? 's' : ''} para "${busca.trim()}"`}
             </p>
           </div>
 
           {/* Filtros + badge — ficam à direita no desktop */}
           <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
             {movendo && <RefreshCw size={13} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+
+            {/* Busca por nome ou telefone */}
+            <div className="relative flex items-center">
+              <Search size={13} className="absolute left-2.5 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                placeholder="Buscar nome ou telefone"
+                className="text-xs rounded-lg py-1.5 pl-8 pr-7 w-40 sm:w-56 outline-none"
+                style={{
+                  background: 'var(--bg-surface-2)',
+                  border: `1px solid ${busca ? 'rgba(16,185,129,.3)' : 'var(--border)'}`,
+                  color: 'var(--text-primary)',
+                }}
+              />
+              {busca && (
+                <button
+                  onClick={() => setBusca('')}
+                  className="absolute right-2 hover:opacity-70"
+                  style={{ color: 'var(--text-muted)' }}
+                  aria-label="Limpar busca">
+                  <X size={12} />
+                </button>
+              )}
+            </div>
 
             {/* Toggle ativas/todas */}
             <div className="flex items-center rounded-lg p-0.5"
