@@ -52,6 +52,18 @@ const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
 const MOTOR_PERFIL               = 'gpt-4o-mini'
 const PERFIL_EXTRACTION_INTERVAL = 5
 
+// Janela após uma reativação manual do agente em que ele NÃO pode se
+// auto-escalar de volta para atendimento humano.
+//
+// Reativar é uma decisão humana explícita ("quero o agente nesta conversa"), e
+// sem esta trava o agente a desfazia na mensagem seguinte: o prompt de um tenant
+// de vendas manda transferir para o setor de fechamentos quando o cliente
+// demonstra intenção de compra — que é justamente o fluxo normal da conversa.
+//
+// Curta de propósito. Uma janela longa travaria transferências legítimas e
+// deixaria o agente insistindo em resolver algo que não consegue.
+const CARENCIA_REATIVACAO_MS = 2 * 60 * 1000
+
 // Vocabulario de saudacao e cortesia. Uma mensagem so e classificada como
 // saudacao quando TODAS as suas palavras estao aqui — qualquer termo de
 // conteudo real ("quanto", "preco", "horario") tira a mensagem desta categoria.
@@ -1912,6 +1924,21 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     | { operadores: Array<{ id: string; nome: string }>; criado_em: string }
     | null
 
+  // Carência pós-reativação: um humano acabou de devolver esta conversa ao
+  // agente, então ele não pode se auto-escalar de volta agora. Só vale para o
+  // escalonamento decidido PELO AGENTE — o pedido explícito do cliente
+  // (HUMANO_REGEX, mais abaixo) continua funcionando normalmente dentro da
+  // janela, senão o cliente ficaria preso ao bot depois de pedir uma pessoa.
+  const reativadoEm = conversaExtra.agente_reativado_em as string | null | undefined
+  const emCarenciaDeReativacao =
+    !!reativadoEm && Date.now() - new Date(reativadoEm).getTime() < CARENCIA_REATIVACAO_MS
+
+  if (emCarenciaDeReativacao) {
+    console.log(
+      `[carencia] conversa=${conversa.id} reativada em ${reativadoEm} — auto-escalonamento bloqueado nesta mensagem`
+    )
+  }
+
   if (transferenciaPendente?.operadores?.length) {
     const escolha = interpretarEscolhaOperador(conteudoProcessado, transferenciaPendente.operadores)
 
@@ -2207,6 +2234,35 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   // segurança textual mais abaixo não precisa agir.
   let transferenciaExecutada   = false
 
+  // A tool `transferir_atendimento` escala no MEIO do loop de ferramentas, antes
+  // de existir uma resposta final. Se o fluxo morrer depois disso (motor primário
+  // e backup falharam, ou o modelo devolveu conteúdo vazio), a conversa fica
+  // pausada aguardando um humano e o cliente não recebe absolutamente nada —
+  // foi o que aconteceu com a conversa auditada em 28/07: cliente perguntou o
+  // preço, agente escalou, WhatsApp silencioso.
+  //
+  // Nunca lança: é o último recurso de um caminho que já está falhando.
+  async function avisarTransferenciaSemResposta(): Promise<void> {
+    if (!transferenciaExecutada) return
+    try {
+      const aviso = 'Só um instante! Já pedi para um de nossos atendentes dar sequência ao seu atendimento por aqui. 🙋'
+      await enviarResposta(payload.instanceName, payload.phone, aviso)
+      await saveMessage(supabase, {
+        conversationId: conversa.id,
+        tenantId:       payload.tenantId,
+        origem:         'agente',
+        tipo:           'texto',
+        conteudo:       aviso,
+      })
+      await updateConversationTimestamp(supabase, conversa.id)
+      console.warn(
+        `[transferencia] resposta final falhou apos escalonamento — aviso de fallback enviado. conversa=${conversa.id}`
+      )
+    } catch (err) {
+      console.error('[transferencia] falha ao enviar aviso de fallback:', err)
+    }
+  }
+
   try {
     if (usarTools) {
       let mensagensAcumuladas: ChatMessage[] = [...chatMessages]
@@ -2255,6 +2311,18 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
             if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
 
             if (tc.function.name === 'transferir_atendimento') {
+              if (emCarenciaDeReativacao) {
+                console.warn(
+                  `[carencia] transferir_atendimento bloqueado — conversa reativada ha menos de ` +
+                  `${CARENCIA_REATIVACAO_MS / 1000}s. conversa=${conversa.id} motivo=${String(args.motivo ?? '')}`
+                )
+                toolResults.push({
+                  role:         'tool' as const,
+                  content:      'BLOQUEADO: um atendente acabou de devolver esta conversa para você atender. NÃO transfira agora e NÃO diga ao cliente que vai transferir ou chamar outra pessoa. Continue o atendimento normalmente e responda com o que você tem na base de conhecimento.',
+                  tool_call_id: tc.id,
+                } as ChatMessage)
+                continue
+              }
               await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
               transferenciaExecutada = true
               console.log(
@@ -2340,11 +2408,15 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         : await openAIChatCompletion(chatMessages, chatConfig)
     } catch (errBackup) {
       console.error(`[process-message] Motor backup (${config.motor_ia_backup}) também falhou:`, errBackup)
+      await avisarTransferenciaSemResposta()
       return
     }
   }
 
-  if (!resultado?.content) return
+  if (!resultado?.content) {
+    await avisarTransferenciaSemResposta()
+    return
+  }
 
   const estaFalhando = FALHA_AGENTE_REGEX.test(resultado.content)
   if (estaFalhando && falhasConsecutivas >= 1) {
@@ -2370,7 +2442,13 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   // O agente prometeu uma transferência sem ter chamado a tool que a executa.
   // Cumpre a promessa: pausa o agente e coloca a conversa na fila humana.
-  if (!transferenciaExecutada && ANUNCIO_TRANSFERENCIA_REGEX.test(resultado.content)) {
+  // Dentro da carência de reativação isso não vale — um humano acabou de
+  // devolver a conversa ao agente, e a promessa dele não desfaz essa decisão.
+  if (
+    !transferenciaExecutada &&
+    !emCarenciaDeReativacao &&
+    ANUNCIO_TRANSFERENCIA_REGEX.test(resultado.content)
+  ) {
     console.log(
       `[transferencia] anúncio textual detectado sem tool — escalando. conversa=${conversa.id} tenant=${payload.tenantId}`
     )

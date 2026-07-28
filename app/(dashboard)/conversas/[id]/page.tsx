@@ -214,17 +214,38 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     // humana e vale até alguém retomar (diferente da pausa automática de 6h
     // disparada quando um operador responde pelo WhatsApp Web); e retomar
     // precisa limpar uma expiração que tenha sobrado da pausa automática.
-    const patchPausa = {
-      agente_pausado:  novoPausado,
-      pausado_em:      novoPausado ? new Date().toISOString() : null,
-      pausa_expira_em: null,
-    }
+    const patchPausa = novoPausado
+      ? {
+          agente_pausado:  true,
+          pausado_em:      new Date().toISOString(),
+          pausa_expira_em: null,
+        }
+      : {
+          agente_pausado:  false,
+          pausado_em:      null,
+          pausa_expira_em: null,
+          // Retomar zera todo o estado de atendimento humano — sobra de
+          // transferência anterior faria a próxima mensagem do cliente ser lida
+          // como escolha de operador e devolveria a conversa para a fila.
+          transferencia_pendente:   null,
+          transferencia_tentativas: 0,
+          atendente_id:             null,
+          atendente_nome:           null,
+          // Carência: o agente não pode se auto-escalar logo após ser reativado.
+          agente_reativado_em:      new Date().toISOString(),
+        }
+    // Ao retomar, o estado local precisa refletir a limpeza feita no banco —
+    // senão o cabeçalho continua exibindo o atendente de um atendimento que
+    // acabou de ser encerrado.
+    const patchLocal = novoPausado
+      ? { agente_pausado: true }
+      : { agente_pausado: false, atendente_id: null, atendente_nome: null }
     if (conversa.status === 'encerrada' || conversa.status === 'encerrado') {
       await supabase.from('conversations').update({ status: 'ativa', ...patchPausa }).eq('id', conversa.id)
-      setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: novoPausado } : prev)
+      setConversa(prev => prev ? { ...prev, status: 'ativa', ...patchLocal } : prev)
     } else {
       await supabase.from('conversations').update(patchPausa).eq('id', conversa.id)
-      setConversa(prev => prev ? { ...prev, agente_pausado: novoPausado } : prev)
+      setConversa(prev => prev ? { ...prev, ...patchLocal } : prev)
     }
     await fetch('/api/conversas/registrar-log', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

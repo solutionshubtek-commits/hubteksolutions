@@ -61,11 +61,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             agente_pausado: true,
             pausado_por: session.user.id,
             pausado_em: new Date().toISOString(),
+            // Pausa manual não expira — quem pausou decide quando volta.
+            pausa_expira_em: null,
           }
         : {
             agente_pausado: false,
             pausado_por: null,
             pausado_em: null,
+            pausa_expira_em: null,
+            // Retomar precisa zerar TODO o estado de atendimento humano, não só
+            // o agente_pausado. Se `transferencia_pendente` sobrevivesse a uma
+            // transferência anterior, a próxima mensagem do cliente seria lida
+            // como "escolha de operador" e a conversa voltaria para a fila
+            // humana sem ele ter pedido nada.
+            transferencia_pendente: null,
+            transferencia_tentativas: 0,
+            atendente_id: null,
+            atendente_nome: null,
+            // Marca a decisão humana de devolver a conversa ao agente. Durante a
+            // carência seguinte ele não pode se auto-escalar de volta.
+            agente_reativado_em: new Date().toISOString(),
           }
 
     const { data: atualizada, error } = await supabase

@@ -45,6 +45,9 @@ export interface Conversation {
   // Prazo da pausa automática (operador respondeu pelo WhatsApp Web).
   // null = pausa manual/fila humana, sem expiração.
   pausa_expira_em: string | null
+  // Última reativação manual do agente. Durante a carência seguinte ele não
+  // pode se auto-escalar de volta para atendimento humano.
+  agente_reativado_em: string | null
   criado_em: string
   ultima_mensagem_em: string
 }
