@@ -7,7 +7,7 @@ import {
   extractPhone,
   extractTextContent,
 } from '@/lib/evolution/webhook'
-import { getTenantByInstanceName } from '@/lib/supabase/queries/conversations'
+import { getTenantByInstanceName, HORAS_PAUSA_AUTOMATICA } from '@/lib/supabase/queries/conversations'
 import { acumularMensagem, type MensagemAcumulada } from '@/lib/ai/debounce'
 
 const WHATSAPP_STATUS: Record<string, string> = {
@@ -71,15 +71,60 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .maybeSingle()
 
       if (convAtiva) {
+        // O agente envia as respostas pela própria Evolution API, e algumas
+        // configurações de instância ecoam essas mensagens de volta como
+        // `fromMe: true`. Sem esta checagem, a resposta do agente seria
+        // registrada como fala de operador e — pior — dispararia a pausa
+        // automática abaixo, silenciando o agente logo após a primeira
+        // resposta dele. Se o mesmo texto acabou de sair como 'agente' nesta
+        // conversa, é eco, não um humano digitando.
+        // A comparação é por conteúdo, não exata: o agente salva a resposta
+        // inteira em uma linha, mas a envia fatiada em blocos por
+        // `quebrarEmBlocos`, que ainda converte o Markdown para o formato do
+        // WhatsApp. Cada bloco ecoado é, portanto, um pedaço normalizado do
+        // texto salvo.
+        const limiteEco = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+        const { data: recentesAgente } = await supabase
+          .from('messages')
+          .select('conteudo')
+          .eq('conversation_id', convAtiva.id)
+          .eq('origem', 'agente')
+          .gte('criado_em', limiteEco)
+          .order('criado_em', { ascending: false })
+          .limit(5)
+
+        const normalizar = (t: string) => t.replace(/[*_~`#]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
+        const ecoNormalizado = normalizar(conteudo)
+        const ehEcoDoAgente = (recentesAgente ?? []).some(
+          m => ecoNormalizado.length > 0 && normalizar(m.conteudo ?? '').includes(ecoNormalizado)
+        )
+
+        if (ehEcoDoAgente) return response
+
         await supabase.from('messages').insert({
           conversation_id: convAtiva.id,
+          tenant_id: tenant.id,
           origem: 'operador',
           conteudo,
           from_me: true,
           criado_em: new Date().toISOString(),
         })
+        // Um operador respondeu pelo WhatsApp Web: ele assumiu a conversa, e o
+        // agente precisa sair da frente. Antes disso o agente continuava
+        // respondendo por cima do atendente — o cliente via duas vozes
+        // diferentes na mesma conversa e o operador não tinha como impedir
+        // sem abrir a dashboard.
+        //
+        // A pausa tem prazo (pausa_expira_em) para a conversa não ficar órfã
+        // se o atendente esquecer de retomar. Pausa manual, feita na dashboard,
+        // continua sem expiração.
         await supabase.from('conversations')
-          .update({ ultima_mensagem_em: new Date().toISOString() })
+          .update({
+            ultima_mensagem_em: new Date().toISOString(),
+            agente_pausado: true,
+            pausado_em: new Date().toISOString(),
+            pausa_expira_em: new Date(Date.now() + HORAS_PAUSA_AUTOMATICA * 60 * 60 * 1000).toISOString(),
+          })
           .eq('id', convAtiva.id)
         return response
       }
@@ -95,16 +140,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .maybeSingle()
 
       if (convEncerrada) {
+        // Reabrir por iniciativa do operador também é assumir o atendimento:
+        // quem retomou a conversa foi um humano, então o agente entra pausado
+        // pela mesma janela.
         await supabase.from('conversations')
           .update({
             status: 'ativa',
-            agente_pausado: false,
+            agente_pausado: true,
+            pausado_em: new Date().toISOString(),
+            pausa_expira_em: new Date(Date.now() + HORAS_PAUSA_AUTOMATICA * 60 * 60 * 1000).toISOString(),
             ultima_mensagem_em: new Date().toISOString(),
           })
           .eq('id', convEncerrada.id)
 
         await supabase.from('messages').insert({
           conversation_id: convEncerrada.id,
+          tenant_id: tenant.id,
           origem: 'operador',
           conteudo,
           from_me: true,

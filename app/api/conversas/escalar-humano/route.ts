@@ -19,6 +19,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         atendente_id: null,
         atendente_nome: null,
         pausado_em: new Date().toISOString(),
+        // Fila humana não expira: o agente não pode reassumir sozinho uma
+        // conversa que está esperando uma pessoa.
+        pausa_expira_em: null,
       })
       .eq('id', conversation_id)
       .eq('tenant_id', tenant_id)

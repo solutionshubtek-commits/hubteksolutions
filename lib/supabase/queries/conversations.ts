@@ -65,17 +65,37 @@ export async function findOrCreateConversation(
   return created as Conversation
 }
 
+// Janela padrão da pausa automática disparada quando um operador assume a
+// conversa pelo WhatsApp Web. Depois disso o agente volta sozinho, para que
+// uma conversa não fique órfã caso o atendente esqueça de retomá-la.
+export const HORAS_PAUSA_AUTOMATICA = 6
+
 export async function isAgentPaused(
   supabase: SupabaseClient,
   conversationId: string
 ): Promise<boolean> {
   const { data } = await supabase
     .from('conversations')
-    .select('agente_pausado')
+    .select('agente_pausado, pausa_expira_em')
     .eq('id', conversationId)
     .single()
 
-  return data?.agente_pausado === true
+  if (data?.agente_pausado !== true) return false
+
+  // pausa_expira_em nulo = pausa manual da dashboard, sem prazo para acabar.
+  const expiraEm = (data as { pausa_expira_em?: string | null }).pausa_expira_em
+  if (!expiraEm) return true
+
+  if (new Date(expiraEm).getTime() > Date.now()) return true
+
+  // A pausa automática venceu — o agente reassume e o estado é normalizado no
+  // banco, para que a dashboard reflita a retomada.
+  await supabase
+    .from('conversations')
+    .update({ agente_pausado: false, pausado_em: null, pausa_expira_em: null })
+    .eq('id', conversationId)
+
+  return false
 }
 
 export async function isTenantAgentActive(
@@ -241,6 +261,9 @@ export async function reativarOuCriarConversa(
       .update({
         status: 'ativa',
         agente_pausado: false,
+        // Zera o prazo junto com a pausa: sem isso a conversa reaberta ficaria
+        // com um pausa_expira_em vencido de um atendimento antigo.
+        pausa_expira_em: null,
         ultima_mensagem_em: new Date().toISOString(),
       })
       .eq('id', encerrada.id)

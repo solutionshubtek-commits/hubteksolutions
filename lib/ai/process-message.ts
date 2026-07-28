@@ -81,6 +81,15 @@ const HUMANO_REGEX = /\b(falar\s+com\s+(humano|pessoa|atendente|operador|algu[e�
 
 const FALHA_AGENTE_REGEX = /n[aã]o (tenho|encontrei|possuo|localizei)|n[aã]o (está|esta) (dispon[ií]vel|na base)|n[aã]o (sei|consigo|posso) (responder|ajudar|inform)/i
 
+// Rede de segurança da transferência: detecta o agente ANUNCIANDO ao cliente
+// que outra pessoa vai assumir. A via principal é a tool `transferir_atendimento`,
+// mas ela só existe no fluxo OpenAI — quando o motor backup (Anthropic) responde,
+// ou quando o modelo simplesmente escreve a frase sem chamar a ferramenta, este
+// regex garante que a conversa ainda assim vá para a fila humana. Sem isso o
+// cliente fica esperando um atendente que nunca foi avisado.
+const ANUNCIO_TRANSFERENCIA_REGEX =
+  /\b(vou|irei|posso)\s+(te\s+)?(transferir|encaminhar|repassar|passar)\b|\b(vou|irei)\s+(transferi|encaminha)|\btransferindo\s+(voc[êe]|seu)|\b(te\s+)?transfiro\b|\bvou\s+chamar\s+(o|a|um|uma)\b|\bpedir\s+para\s+(o|a)\s+\w+\s+(te\s+)?(chamar|atender)/i
+
 const FRUSTRACAO_REGEX = /insatisfeito|absurdo|ridículo|ridiculo|horrível|horrivel|péssimo|pessimo|lamentável|lamentavel|decepcionante|revoltante|inaceitável|inaceitavel|não funciona|nao funciona|não resolveu|nao resolveu|tô com raiva|to com raiva|que vergonha|me enganaram|fui lesado/i
 
 const FUNIS_VALIDOS = ['vendas', 'suporte', 'agendamentos', 'qualificacao'] as const
@@ -998,6 +1007,41 @@ const APPOINTMENT_TOOLS: Tool[] = [
   },
 ]
 
+// ─── Tool de transferência para atendimento humano ───────────────────────────
+// AJUSTE (auditoria Renovar 28/07): o prompt de alguns tenants instrui o agente
+// a "transferir para o Fulano do setor X" e proíbe expressamente falar em
+// "humano" ou "atendente". Com isso, o HUMANO_REGEX — que só dispara com o
+// CLIENTE pedindo — nunca era acionado, e a transferência acontecia apenas no
+// texto: `agente_pausado` continuava false, nenhuma notificação era criada e a
+// conversa jamais aparecia na aba "Humano". O cliente ouvia "vou te transferir"
+// e ficava esperando alguém que nunca foi avisado.
+//
+// A transferência agora é uma ação executável, não uma frase. Fica disponível
+// para TODO tenant, independente de agendamentos ou Google Calendar.
+const TRANSFER_TOOLS: Tool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'transferir_atendimento',
+      description:
+        'Transfere a conversa para um atendente humano da equipe e avisa a dashboard. ' +
+        'Chame SEMPRE que for dizer ao cliente que outra pessoa vai assumir, continuar ou dar sequência ao atendimento — ' +
+        'inclusive quando você citar o nome de um colega ou setor. Anunciar a transferência ao cliente sem chamar esta ' +
+        'ferramenta não transfere nada e deixa o cliente esperando.',
+      parameters: {
+        type: 'object',
+        properties: {
+          motivo: {
+            type: 'string',
+            description: 'Motivo curto da transferência (ex: "cliente quer fechar a compra", "dúvida fora da base de conhecimento")',
+          },
+        },
+        required: ['motivo'],
+      },
+    },
+  },
+]
+
 interface ToolCall {
   id: string
   type: string
@@ -1561,7 +1605,16 @@ async function escalarParaHumano(
   try {
     await supabase
       .from('conversations')
-      .update({ agente_pausado: true, atendente_id: null, atendente_nome: null, pausado_em: new Date().toISOString() })
+      // pausa_expira_em nulo de propósito: a conversa está numa fila esperando
+      // uma pessoa, e o agente não pode reassumir sozinho depois de algumas
+      // horas — isso reintroduziria o agente por cima de um atendimento humano.
+      .update({
+        agente_pausado: true,
+        atendente_id: null,
+        atendente_nome: null,
+        pausado_em: new Date().toISOString(),
+        pausa_expira_em: null,
+      })
       .eq('id', conversationId)
 
     const { data: conv } = await supabase
@@ -2117,6 +2170,10 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   } else if (temCalendar) {
     toolsAtivas.push(...CALENDAR_TOOLS)
   }
+  // Transferir para um humano não depende de agenda: vale para qualquer tenant,
+  // inclusive os de vendas puras (caso da Renovar), que antes não tinham tool
+  // alguma ativa e portanto nunca entravam no fluxo com ferramentas.
+  toolsAtivas.push(...TRANSFER_TOOLS)
 
   const usarTools =
     toolsAtivas.length > 0 &&
@@ -2146,6 +2203,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   // AJUSTE (feedback Gabriel 15/07): rastreia se um agendamento foi de fato
   // registrado nesta interação — usado para travar o avanço do lead no CRM.
   let agendamentoCriadoPorTool = false
+  // Evita escalar duas vezes a mesma conversa: se a tool já rodou, a rede de
+  // segurança textual mais abaixo não precisa agir.
+  let transferenciaExecutada   = false
 
   try {
     if (usarTools) {
@@ -2176,6 +2236,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
               'criar_agendamento_hubtek', 'cancelar_agendamento_hubtek',
               'reagendar_agendamento_hubtek', 'criar_recontato',
               'criar_agendamento', 'reagendar', 'cancelar_agendamento',
+              'transferir_atendimento',
             ]
             if (toolsUnicas.includes(tc.function.name)) {
               if (toolsExecutadas.has(tc.function.name)) {
@@ -2192,6 +2253,20 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
             const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
             const isAppointmentTool = APPOINTMENT_TOOLS.some(t => t.function.name === tc.function.name)
             if (tc.function.name === 'criar_recontato') recontotoCriadoPorTool = true
+
+            if (tc.function.name === 'transferir_atendimento') {
+              await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
+              transferenciaExecutada = true
+              console.log(
+                `[transferencia] conversa=${conversa.id} tenant=${payload.tenantId} motivo=${String(args.motivo ?? '')}`
+              )
+              toolResults.push({
+                role:         'tool' as const,
+                content:      'Transferência registrada: a conversa foi marcada como aguardando atendimento humano e a equipe foi notificada na dashboard. Avise o cliente que alguém dará sequência por aqui.',
+                tool_call_id: tc.id,
+              } as ChatMessage)
+              continue
+            }
 
             // Guarda de servidor: bloqueia a criação quando o cliente não escolheu
             // horário nas mensagens recentes. Falha visível, nunca em silêncio.
@@ -2292,6 +2367,15 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   await enviarResposta(payload.instanceName, payload.phone, resultado.content)
   await updateConversationTimestamp(supabase, conversa.id)
+
+  // O agente prometeu uma transferência sem ter chamado a tool que a executa.
+  // Cumpre a promessa: pausa o agente e coloca a conversa na fila humana.
+  if (!transferenciaExecutada && ANUNCIO_TRANSFERENCIA_REGEX.test(resultado.content)) {
+    console.log(
+      `[transferencia] anúncio textual detectado sem tool — escalando. conversa=${conversa.id} tenant=${payload.tenantId}`
+    )
+    await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
+  }
 
   await logAiUsage(supabase, {
     tenantId:       payload.tenantId,

@@ -163,13 +163,28 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
     if (pausadoPorAdmin || !tenantId || toggling) return
     setToggling(true)
     const novoEstado = !agentAtivo
-    const supabase = createClient()
-    await supabase.from('tenants').update({
-      agente_ativo: novoEstado,
-      agente_pausado_em: novoEstado ? null : new Date().toISOString(),
-    }).eq('id', tenantId)
-    setAgentAtivo(novoEstado)
-    setToggling(false)
+    try {
+      // O update precisa passar pelo servidor: a policy `tenants_update` só
+      // aceita admin_hubtek, então escrever direto daqui era descartado pela
+      // RLS para o dono do tenant — a tela mostrava "pausado" e o agente
+      // seguia respondendo no WhatsApp.
+      const res = await fetch('/api/agent/toggle-global', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ativo: novoEstado }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        // Só reflete na tela o que o banco confirmou.
+        alert(json.error ?? 'Não foi possível alterar o estado do agente.')
+        return
+      }
+      setAgentAtivo(json.data?.agente_ativo ?? novoEstado)
+    } catch {
+      alert('Não foi possível alterar o estado do agente. Verifique sua conexão.')
+    } finally {
+      setToggling(false)
+    }
   }
 
   function handleToggleTema() {

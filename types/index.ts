@@ -42,6 +42,9 @@ export interface Conversation {
   agente_pausado: boolean
   pausado_por: string | null
   pausado_em: string | null
+  // Prazo da pausa automática (operador respondeu pelo WhatsApp Web).
+  // null = pausa manual/fila humana, sem expiração.
+  pausa_expira_em: string | null
   criado_em: string
   ultima_mensagem_em: string
 }

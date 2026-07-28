@@ -86,6 +86,17 @@ export default function ConversasPage() {
           )
         }
       )
+      // Sem este listener, uma conversa NOVA só aparecia depois de recarregar a
+      // página — o cliente mandava mensagem no WhatsApp e a aba "Ativas"
+      // continuava vazia, dando a impressão de que a conversa não fora gravada.
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'conversations', filter: `tenant_id=eq.${tenantId}` },
+        (payload) => {
+          const nova = payload.new as Conversa
+          setConversas(prev => (prev.some(c => c.id === nova.id) ? prev : [nova, ...prev]))
+        }
+      )
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [tenantId])

@@ -210,11 +210,20 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
     setPausando(true)
     const supabase = createClient()
     const novoPausado = !conversa.agente_pausado
+    // pausa_expira_em vai a null nos dois sentidos: pausar aqui é decisão
+    // humana e vale até alguém retomar (diferente da pausa automática de 6h
+    // disparada quando um operador responde pelo WhatsApp Web); e retomar
+    // precisa limpar uma expiração que tenha sobrado da pausa automática.
+    const patchPausa = {
+      agente_pausado:  novoPausado,
+      pausado_em:      novoPausado ? new Date().toISOString() : null,
+      pausa_expira_em: null,
+    }
     if (conversa.status === 'encerrada' || conversa.status === 'encerrado') {
-      await supabase.from('conversations').update({ status: 'ativa', agente_pausado: novoPausado, pausado_em: novoPausado ? new Date().toISOString() : null }).eq('id', conversa.id)
+      await supabase.from('conversations').update({ status: 'ativa', ...patchPausa }).eq('id', conversa.id)
       setConversa(prev => prev ? { ...prev, status: 'ativa', agente_pausado: novoPausado } : prev)
     } else {
-      await supabase.from('conversations').update({ agente_pausado: novoPausado, pausado_em: novoPausado ? new Date().toISOString() : null }).eq('id', conversa.id)
+      await supabase.from('conversations').update(patchPausa).eq('id', conversa.id)
       setConversa(prev => prev ? { ...prev, agente_pausado: novoPausado } : prev)
     }
     await fetch('/api/conversas/registrar-log', {
