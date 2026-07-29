@@ -12,7 +12,17 @@ export interface ChatMessage {
 export interface ChatConfig {
   temperature?: number
   maxTokens?: number
+  // Permite rodar chamadas auxiliares (correção ortográfica, resumo de
+  // histórico) em um modelo mais barato. As cotas da OpenAI são POR MODELO:
+  // o que roda no mini não consome nada do teto do gpt-4o, que é o gargalo
+  // do fluxo principal. Ausente = gpt-4o, o comportamento de sempre.
+  model?: string
 }
+
+// Ferramenta que o modelo é obrigado ou não a chamar. 'required' força uma
+// chamada de tool na resposta — só faz sentido quando SABEMOS que uma ação é
+// esperada. Ver o comentário em openAIChatCompletionWithTools.
+export type ToolChoice = 'auto' | 'required'
 
 export interface ChatCompletionResult {
   content: string
@@ -29,7 +39,7 @@ export async function openAIChatCompletion(
   config: ChatConfig = {}
 ): Promise<ChatCompletionResult> {
   const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: config.model ?? 'gpt-4o',
     messages: messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     temperature: config.temperature ?? 0.7,
     max_tokens: config.maxTokens ?? 1000,
@@ -41,16 +51,29 @@ export async function openAIChatCompletion(
   }
 }
 
+// `toolChoice` passou a ser parâmetro (auditoria 29/07). Antes era 'required'
+// fixo, herdado do commit de 28/05 que resolvia o agente prometer uma ação de
+// agenda sem executá-la ("um momento, por favor" sem chamar a ferramenta).
+//
+// O efeito colateral só apareceu quando a ferramenta de transferência passou a
+// valer para todo tenant: num tenant de vendas puro, `transferir_atendimento` é
+// a ÚNICA ferramenta ativa, e 'required' obrigava o modelo a transferir toda
+// mensagem que não fosse saudação — o cliente reclamou que o agente mandava
+// tudo para o humano, e a causa era esta linha, não o prompt.
+//
+// Agora quem chama decide: o fluxo de agenda mantém 'required' onde precisa,
+// o resto usa 'auto'. Padrão 'auto' de propósito — forçar é a exceção.
 export async function openAIChatCompletionWithTools(
   messages: ChatMessage[],
   tools: OpenAI.Chat.Completions.ChatCompletionTool[],
-  config: ChatConfig = {}
+  config: ChatConfig = {},
+  toolChoice: ToolChoice = 'auto'
 ): Promise<ChatCompletionWithToolsResult> {
   const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: config.model ?? 'gpt-4o',
     messages: messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     tools,
-    tool_choice: 'required',
+    tool_choice: toolChoice,
     temperature: config.temperature ?? 0.7,
     max_tokens: config.maxTokens ?? 1000,
   })

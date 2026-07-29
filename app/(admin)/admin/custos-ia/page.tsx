@@ -125,6 +125,10 @@ export default function CustosIAPage() {
   const [selectedAno, setSelectedAno] = useState<number>(new Date().getFullYear())
   const [rawData, setRawData] = useState<AiUsageRow[]>([])
   const [conversasPorMes, setConversasPorMes] = useState<Record<string, number>>({})
+  // A consulta de conversas já trazia tenant_id, mas só era agregada por mês —
+  // por isso a coluna "Conversas" da tabela por cliente ficava sempre em zero
+  // enquanto o total do rodapé (que usa conversasPorMes) aparecia certo.
+  const [conversasPorTenant, setConversasPorTenant] = useState<Record<string, number>>({})
   const [instanciasPorTenant, setInstanciasPorTenant] = useState<Record<string, number>>({})
   const [showCustosModal, setShowCustosModal] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
@@ -169,11 +173,14 @@ export default function CustosIAPage() {
       const { data: convData } = await convQuery
 
       const porMes: Record<string, number> = {}
-      ;(convData ?? []).forEach((c: { criado_em: string }) => {
+      const porTenant: Record<string, number> = {}
+      ;(convData ?? []).forEach((c: { criado_em: string; tenant_id: string }) => {
         const mes = String(new Date(c.criado_em).getMonth() + 1)
         porMes[mes] = (porMes[mes] ?? 0) + 1
+        porTenant[c.tenant_id] = (porTenant[c.tenant_id] ?? 0) + 1
       })
       setConversasPorMes(porMes)
+      setConversasPorTenant(porTenant)
     } finally {
       setLoading(false)
     }
@@ -222,6 +229,7 @@ export default function CustosIAPage() {
         clienteMap[r.tenant_id] = { tenantId: r.tenant_id, nome, plano, openai_tokens: 0, anthropic_tokens: 0, openai_custo: 0, anthropic_custo: 0, total_custo: 0, total_tokens: 0, conversas_ano: 0 }
       }
       const t = clienteMap[r.tenant_id]
+      t.conversas_ano = conversasPorTenant[r.tenant_id] ?? 0
       const tok = r.tokens_entrada + r.tokens_saida
       const custo = Number(r.custo_estimado_reais)
       t.total_tokens += tok; t.total_custo += custo
@@ -230,6 +238,10 @@ export default function CustosIAPage() {
     })
   }
   const clientes = Object.values(clienteMap).sort((a, b) => b.total_custo - a.total_custo)
+  // Total do rodapé da tabela = soma das linhas exibidas. Antes usava
+  // totalConversasAno (todas as conversas do ano, inclusive de tenants sem
+  // consumo de IA registrado), o que não fechava com a coluna.
+  const totalConversasClientes = clientes.reduce((s, c) => s + c.conversas_ano, 0)
 
   const mesAtual = new Date().getMonth() + 1
   const varPct = (() => {
@@ -593,7 +605,7 @@ export default function CustosIAPage() {
                 <tfoot>
                   <tr style={{ background: 'var(--bg-secondary)', borderTop: '2px solid var(--border)' }}>
                     <td className="px-5 py-3 font-bold" colSpan={2} style={{ color: 'var(--text-primary)' }}>Total</td>
-                    <td className="px-4 py-3 text-right font-semibold" style={{ color: '#818CF8' }}>{totalConversasAno}</td>
+                    <td className="px-4 py-3 text-right font-semibold" style={{ color: '#818CF8' }}>{totalConversasClientes}</td>
                     <td className="px-4 py-3 text-right font-semibold" style={{ color: '#10A37F' }}>{fmtBRL(totalOpenAI)}</td>
                     <td className="px-4 py-3 text-right font-semibold" style={{ color: '#D97757' }}>{fmtBRL(totalAnthropic)}</td>
                     <td className="px-4 py-3 text-right font-semibold" style={{ color: 'var(--text-secondary)' }}>{fmtTokens(totalTokens)}</td>

@@ -50,6 +50,9 @@ const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
 }
 
 const MOTOR_PERFIL               = 'gpt-4o-mini'
+// Modelo das chamadas auxiliares que não falam com o cliente (correção da
+// pergunta, resumo do histórico). Cota separada da do gpt-4o e ~16x mais barato.
+const MOTOR_AUXILIAR             = 'gpt-4o-mini'
 const PERFIL_EXTRACTION_INTERVAL = 5
 
 // Janela após uma reativação manual do agente em que ele NÃO pode se
@@ -109,6 +112,24 @@ const ANUNCIO_TRANSFERENCIA_REGEX =
   /\b(vou|irei)\s+(te\s+)?(transferir|encaminhar|repassar|passar)\b|\b(vou|irei)\s+(transferi|encaminha)|\btransferindo\s+(voc[êe]|seu)|\b(te\s+)?transfiro\b|\bvou\s+chamar\s+(o|a|um|uma)\b|\bpedir\s+para\s+(o|a)\s+\w+\s+(te\s+)?(chamar|atender)/i
 
 const FRUSTRACAO_REGEX = /insatisfeito|absurdo|ridículo|ridiculo|horrível|horrivel|péssimo|pessimo|lamentável|lamentavel|decepcionante|revoltante|inaceitável|inaceitavel|não funciona|nao funciona|não resolveu|nao resolveu|tô com raiva|to com raiva|que vergonha|me enganaram|fui lesado/i
+
+// ─── Tamanho da janela de contexto do RAG ────────────────────────────────────
+// Cada trecho da base custa ~730 tokens no prompt (medido). Com 10 trechos o
+// prompt ia a 10.084 tokens por chamada; com 5 fica em ~7.000 — 30% a menos em
+// TODA mensagem de TODO cliente, que é o que permite escalar dentro da cota da
+// OpenAI.
+//
+// Por que 5 e não 4: no teste de 20 perguntas de referência, 16 das 17
+// respondíveis estavam nas 3 primeiras posições e uma na quinta. Com 5 nenhuma
+// resposta se perde; com 4, perde-se aquela.
+const RAG_TRECHOS_PADRAO = 5
+
+// Perguntas panorâmicas ("quais colchões vocês têm", "todos os tamanhos") só
+// são respondidas por inteiro varrendo vários trechos. Nesses casos vale pagar
+// o prompt maior — é a diferença entre uma resposta completa e uma resposta
+// que omite metade do catálogo sem avisar.
+const RAG_TRECHOS_PERGUNTA_AMPLA = 8
+const PERGUNTA_AMPLA_REGEX = /\b(quais|todos|todas|op[çc][õo]es|cat[áa]logo|tipos)\b/i
 
 const FUNIS_VALIDOS = ['vendas', 'suporte', 'agendamentos', 'qualificacao'] as const
 type FunilTipo = typeof FUNIS_VALIDOS[number]
@@ -1085,12 +1106,15 @@ function normalizarTelefone(tel: string, dddPadrao = '51'): string {
 
 // ─── Helpers RAG ──────────────────────────────────────────────────────────────
 
+// Correção ortográfica: tarefa mecânica, sem ganho perceptível no modelo maior.
+// Roda no mini para sair do teto de tokens/minuto do gpt-4o, que é o gargalo do
+// fluxo principal (as cotas da OpenAI são por modelo).
 async function normalizarPergunta(pergunta: string): Promise<string> {
   try {
     const resposta = await openAIChatCompletion([
       { role: 'system', content: 'Corrija erros ortográficos e expanda abreviações do texto abaixo. Retorne apenas o texto corrigido, sem explicações.' },
       { role: 'user', content: pergunta },
-    ], { temperature: 0, maxTokens: 100 })
+    ], { temperature: 0, maxTokens: 100, model: MOTOR_AUXILIAR })
     return resposta.content.trim() || pergunta
   } catch { return pergunta }
 }
@@ -1121,7 +1145,9 @@ async function gerarResumoHistorico(
     const resposta = await openAIChatCompletion([
       { role: 'system', content: 'Resuma em até 5 linhas os pontos principais desta conversa de atendimento: o problema do cliente, informações fornecidas e o que já foi resolvido. Seja objetivo e em português.' },
       { role: 'user', content: texto },
-    ], { temperature: 0, maxTokens: 200 })
+      // Resumo de histórico também roda no mini: é a chamada auxiliar mais cara
+      // em tokens de entrada (~1.5k) e a que mais pesava no teto do gpt-4o.
+    ], { temperature: 0, maxTokens: 200, model: MOTOR_AUXILIAR })
     return resposta.content.trim()
   } catch { return '' }
 }
@@ -2105,11 +2131,14 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       const contextoAnterior = ultimaMsgAgente?.conteudo ?? undefined
       const textoParaEmbedding = await expandirPergunta(perguntaNormalizada, contextoAnterior)
       const embedding = await generateEmbedding(textoParaEmbedding)
+      const trechosDesejados = PERGUNTA_AMPLA_REGEX.test(conteudoProcessado)
+        ? RAG_TRECHOS_PERGUNTA_AMPLA
+        : RAG_TRECHOS_PADRAO
       const { data: docs, error: ragError } = await supabase.rpc('match_knowledge', {
         query_embedding:  embedding,
         match_tenant_id:  payload.tenantId,
         match_threshold:  0.35,
-        match_count:      10,
+        match_count:      trechosDesejados,
       })
       if (ragError) console.error('[RAG] Erro no match_knowledge:', ragError)
       let docsBrutos = (docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>
@@ -2308,12 +2337,27 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       let rodada            = 0
       const toolsExecutadas = new Set<string>()
 
+      // Forçar a chamada de ferramenta ('required') só se justifica quando uma
+      // ação de agenda é de fato esperada: é o caso em que o modelo tende a
+      // responder "vou verificar os horários" sem consultar nada. Fora disso
+      // 'auto', para o agente poder simplesmente conversar.
+      //
+      // Da rodada 2 em diante é SEMPRE 'auto': as ferramentas já rodaram, e
+      // forçar de novo só fazia o modelo repetir chamadas já bloqueadas até
+      // esgotar as 5 rodadas — cada uma reenviando o prompt inteiro (~10k
+      // tokens). Era daí que vinha o consumo de ~62k tokens por mensagem.
+      const temFerramentasDeAgenda = temAgendamentosHubtek || temCalendar
+      const forcarFerramentaNaPrimeira = temFerramentasDeAgenda && intencao === 'agendamento'
+
       while (rodada < MAX_RODADAS) {
         rodada++
+        const toolChoiceDaRodada =
+          rodada === 1 && forcarFerramentaNaPrimeira ? 'required' : 'auto'
         const respostaComTools = await openAIChatCompletionWithTools(
           mensagensAcumuladas,
           toolsAtivas as Parameters<typeof openAIChatCompletionWithTools>[1],
-          chatConfig
+          chatConfig,
+          toolChoiceDaRodada
         )
 
         if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
