@@ -99,8 +99,14 @@ const FALHA_AGENTE_REGEX = /n[aã]o (tenho|encontrei|possuo|localizei)|n[aã]o (
 // ou quando o modelo simplesmente escreve a frase sem chamar a ferramenta, este
 // regex garante que a conversa ainda assim vá para a fila humana. Sem isso o
 // cliente fica esperando um atendente que nunca foi avisado.
+//
+// AJUSTE (auditoria Renovar 29/07): `posso` saiu do grupo de verbos. Ele fazia
+// uma oferta hipotética ("posso te transferir para o Micael, se preferir")
+// pausar o agente e jogar a conversa na fila — o cliente nem tinha aceitado.
+// `vou`/`irei` são afirmações de que a transferência JÁ está acontecendo, que é
+// o caso que esta rede de segurança existe para cobrir.
 const ANUNCIO_TRANSFERENCIA_REGEX =
-  /\b(vou|irei|posso)\s+(te\s+)?(transferir|encaminhar|repassar|passar)\b|\b(vou|irei)\s+(transferi|encaminha)|\btransferindo\s+(voc[êe]|seu)|\b(te\s+)?transfiro\b|\bvou\s+chamar\s+(o|a|um|uma)\b|\bpedir\s+para\s+(o|a)\s+\w+\s+(te\s+)?(chamar|atender)/i
+  /\b(vou|irei)\s+(te\s+)?(transferir|encaminhar|repassar|passar)\b|\b(vou|irei)\s+(transferi|encaminha)|\btransferindo\s+(voc[êe]|seu)|\b(te\s+)?transfiro\b|\bvou\s+chamar\s+(o|a|um|uma)\b|\bpedir\s+para\s+(o|a)\s+\w+\s+(te\s+)?(chamar|atender)/i
 
 const FRUSTRACAO_REGEX = /insatisfeito|absurdo|ridículo|ridiculo|horrível|horrivel|péssimo|pessimo|lamentável|lamentavel|decepcionante|revoltante|inaceitável|inaceitavel|não funciona|nao funciona|não resolveu|nao resolveu|tô com raiva|to com raiva|que vergonha|me enganaram|fui lesado/i
 
@@ -119,7 +125,7 @@ Após cada interação, retorne ao objetivo de venda — não perca o fio condut
 
 CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em vendas):
 - AGENDAMENTO: Se o cliente pedir para marcar uma reunião, demonstração ou visita, execute o agendamento normalmente usando as ferramentas disponíveis. Após confirmar, aproveite para avançar na conversa de venda.
-- SUPORTE BÁSICO: Se o cliente tiver uma dúvida ou problema simples relacionado ao produto/serviço, resolva de forma objetiva. Se não conseguir resolver, encaminhe para atendimento humano sem abandonar o contexto de venda.
+- SUPORTE BÁSICO: Se o cliente tiver uma dúvida ou problema simples relacionado ao produto/serviço, resolva de forma objetiva. Se faltar um detalhe pontual, diga que vai confirmar esse detalhe com a equipe, siga o atendimento e não interrompa a venda por causa disso.
 - QUALIFICAÇÃO: Você já faz isso naturalmente ao entender o perfil do cliente — não precisa mudar o tom.`,
 
   suporte: `
@@ -193,6 +199,10 @@ function calcularDelayDigitacao(texto: string): number {
 
 function converterMarkdownParaWhatsApp(texto: string): string {
   return texto
+    // [texto](url) → url. O WhatsApp não entende link de Markdown: o cliente via
+    // o endereço entre colchetes e parênteses e não conseguia clicar. O prompt já
+    // pede o endereço puro, mas o modelo formata assim mesmo (auditoria 29/07).
+    .replace(/\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '$2')
     .replace(/\*\*\*(.+?)\*\*\*/g, '*$1*')   // ***bold+italic*** → *bold+italic*
     .replace(/\*\*(.+?)\*\*/g, '*$1*')        // **negrito** → *negrito*
     .replace(/\_\_(.+?)\_\_/g, '_$1_')        // __itálico__ → _itálico_
@@ -712,7 +722,8 @@ REGRAS DE COMPORTAMENTO:
 
 2. QUANDO A BASE NÃO TEM A RESPOSTA
    - Para perguntas gerais que não exigem dados específicos da empresa, responda naturalmente.
-   - Para perguntas que exigem dados específicos da empresa e que não estão na base, diga: "Não tenho essa informação no momento. Para mais detalhes, entre em contato diretamente conosco."
+   - Para perguntas que exigem dados específicos da empresa e que não estão na base, responda o que você tem sobre o assunto e diga: "Vou confirmar esse detalhe com a equipe e já te retorno." Em seguida continue o atendimento normalmente.
+   - Nunca escreva "não tenho essa informação", "não sei informar", "não consigo responder" ou equivalentes: essas frases encerram o atendimento sem necessidade.
 
 3. RESPOSTAS
    - Seja direto e objetivo. Responda o que foi perguntado.
@@ -2101,7 +2112,27 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         match_count:      10,
       })
       if (ragError) console.error('[RAG] Erro no match_knowledge:', ragError)
-      knowledgeDocs = ((docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>)
+      let docsBrutos = (docs ?? []) as Array<{ conteudo_texto: string; similarity: number; criado_em: string }>
+
+      // AJUSTE (auditoria Renovar 29/07): rede de segurança para perguntas curtas.
+      // Mensagens como "aceita pix?" ou "ainda tem?" geram um embedding difuso e
+      // nenhum trecho passa do threshold — o agente ficava sem base alguma e
+      // respondia que ia verificar. Quando a busca com threshold volta vazia,
+      // repete sem piso e pega os 5 trechos mais próximos: são os melhores que
+      // existem, e o prompt já instrui a não usar trecho que não responda a pergunta.
+      if (docsBrutos.length === 0) {
+        const { data: docsFallback, error: fallbackError } = await supabase.rpc('match_knowledge', {
+          query_embedding:  embedding,
+          match_tenant_id:  payload.tenantId,
+          match_threshold:  0,
+          match_count:      5,
+        })
+        if (fallbackError) console.error('[RAG] Erro no fallback sem threshold:', fallbackError)
+        docsBrutos = (docsFallback ?? []) as typeof docsBrutos
+        console.log(`[RAG] fallback sem threshold acionado — ${docsBrutos.length} chunks`)
+      }
+
+      knowledgeDocs = docsBrutos
         .sort((a, b) => new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime())
       console.log(`[RAG] ${knowledgeDocs.length} chunks | similarities: ${knowledgeDocs.map(d => d.similarity.toFixed(3)).join(', ')}`)
     } catch (err) {
@@ -2139,8 +2170,15 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   // `notaLembrete` presente = esta mensagem é resposta a um lembrete de
   // agendamento; não deve cair na saudação genérica de boas-vindas — o agente
   // precisa responder no contexto do agendamento.
+  //
+  // AJUSTE (auditoria Renovar 29/07): a boas-vindas fixa só vale quando a
+  // primeira mensagem é APENAS um cumprimento. Antes ela respondia qualquer
+  // primeira mensagem e dava return, jogando fora o conteúdo do cliente: quem
+  // chegava de anúncio com "Esse item ainda está disponível? — <link>" recebia um
+  // "em que posso ajudar?" genérico, e a regra de abertura do prompt do tenant
+  // nunca chegava a rodar. Mensagem com conteúdo real agora segue o fluxo normal.
   const isPrimeiraMsg = historico.filter(m => m.origem === 'cliente').length === 1
-  if (isPrimeiraMsg && config.prompt_principal && !notaLembrete) {
+  if (isPrimeiraMsg && ehSomenteSaudacao(conteudoProcessado) && config.prompt_principal && !notaLembrete) {
     const saudacao    = getSaudacao()
     const nomeCliente = payload.pushName ? `, ${payload.pushName.split(' ')[0]}` : ''
     const boasVindas  = `${saudacao}${nomeCliente}! 👋 Em que posso ajudar?`
@@ -2418,8 +2456,14 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     return
   }
 
+  // AJUSTE (auditoria Renovar 29/07): passou a exigir TRÊS respostas de falha
+  // seguidas (as duas anteriores + esta). Com duas, uma conversa de vendas em que
+  // o cliente pede dois detalhes que não estão na base — tipo de madeira, sentido
+  // de abertura do baú — era escalada no meio do atendimento, mesmo com o agente
+  // tendo preço, frete e prazo para seguir vendendo. A regra 2 do prompt acima
+  // deixou de mandar o agente escrever a frase que este regex detecta.
   const estaFalhando = FALHA_AGENTE_REGEX.test(resultado.content)
-  if (estaFalhando && falhasConsecutivas >= 1) {
+  if (estaFalhando && falhasConsecutivas >= 2) {
     const msgEscalada = 'Entendo que não consegui resolver sua dúvida. Vou encaminhar você para um atendente que poderá te ajudar melhor! 🙋'
     await enviarResposta(payload.instanceName, payload.phone, msgEscalada)
     await saveMessage(supabase, { conversationId: conversa.id, tenantId: payload.tenantId, origem: 'agente', tipo: 'texto', conteudo: msgEscalada })
