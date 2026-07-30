@@ -8,10 +8,9 @@ import {
   saveMessage,
   updateMessageTranscription,
   updateConversationTimestamp,
-  logAiUsage,
 } from '@/lib/supabase/queries/conversations'
 import { openAIChatCompletion, openAIChatCompletionWithTools, openaiClient } from './openai'
-import { registrarUso, calcularCusto, type UsoCtx } from './uso'
+import { registrarUso, type UsoCtx } from './uso'
 import { anthropicChatCompletion, MODELO_ANTHROPIC } from './anthropic'
 import { transcribeAudio, interpretImage } from './openai'
 import { generateEmbedding } from './embeddings'
@@ -420,7 +419,8 @@ type ResultadoLembrete =
 // retorna 'ambiguo', para que o agente pergunte em vez de assumir.
 async function classificarRespostaLembreteIA(
   mensagem: string,
-  contextoAppt: string
+  contextoAppt: string,
+  ctx?: UsoCtx
 ): Promise<AcaoLembrete | 'ambiguo'> {
   try {
     const resposta = await openAIChatCompletion(
@@ -438,8 +438,13 @@ Na dúvida entre duas intenções, responda "ambiguo". Nunca invente.`,
         },
         { role: 'user', content: mensagem },
       ],
-      { temperature: 0, maxTokens: 20 }
+      // Rodava no gpt-4o por omissão do campo `model`, como acontecia com
+      // expandirPergunta. Classificar em 4 rótulos com teto de 20 tokens de
+      // saída é tarefa mecânica: vai para o mini, que além de mais barato não
+      // consome o teto de tokens/minuto do gpt-4o.
+      { temperature: 0, maxTokens: 20, model: MOTOR_AUXILIAR }
     )
+    await registrarUso(ctx, MOTOR_AUXILIAR, resposta.tokensIn, resposta.tokensOut)
     const raw = resposta.content.trim().replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(raw) as { intencao?: string }
     const mapa: Record<string, AcaoLembrete | 'ambiguo'> = {
@@ -510,7 +515,11 @@ async function interpretarRespostaLembrete(
       const dataCtx = new Date(appt.data_hora).toLocaleString('pt-BR', {
         timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit',
       })
-      acao = await classificarRespostaLembreteIA(texto, `${appt.servico || 'atendimento'} em ${dataCtx}`)
+      acao = await classificarRespostaLembreteIA(
+        texto,
+        `${appt.servico || 'atendimento'} em ${dataCtx}`,
+        { supabase, tenantId, conversationId }
+      )
     }
 
     if (acao === 'ambiguo') {
@@ -2371,6 +2380,10 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   let resultado: { content: string; tokensIn: number; tokensOut: number } | null = null
   let motorUsado             = config.motor_ia_principal
+  // Marca que o consumo do motor já foi registrado dentro do loop de tools, onde
+  // cada rodada é contabilizada individualmente. Evita dupla contagem no
+  // registro pós-try/catch, que existe para os caminhos SEM ferramentas.
+  let usoDoMotorRegistrado   = false
   let recontotoCriadoPorTool = false
   // AJUSTE (feedback Gabriel 15/07): rastreia se um agendamento foi de fato
   // registrado nesta interação — usado para travar o avanço do lead no CRM.
@@ -2437,6 +2450,23 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
           chatConfig,
           toolChoiceDaRodada
         )
+
+        // Cada rodada é uma chamada faturada, e reenvia o prompt INTEIRO mais os
+        // resultados das tools acumulados — a rodada 3 custa mais que a 1. Antes
+        // só a última rodada era contabilizada (a que preenche `resultado`), e
+        // todas as anteriores sumiam do relatório. Num fluxo de agendamento que
+        // usa 3 rodadas, dois terços do custo real da mensagem não apareciam.
+        //
+        // Registrado aqui dentro, por rodada. `usoDoMotorRegistrado` evita a
+        // dupla contagem no registro pós-try/catch, que cobre os caminhos sem
+        // ferramentas.
+        await registrarUso(
+          usoCtx,
+          MOTOR_PRINCIPAL_OPENAI,
+          respostaComTools.tokensIn,
+          respostaComTools.tokensOut
+        )
+        usoDoMotorRegistrado = true
 
         if (respostaComTools.toolCalls && respostaComTools.toolCalls.length > 0) {
           const toolResults: ChatMessage[] = []
@@ -2551,8 +2581,11 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
         }
       }
 
+      // Estourou MAX_RODADAS sem resposta final: faz uma chamada sem tools para
+      // fechar. É uma chamada a mais e precisa ser contabilizada como tal.
       if (!resultado) {
         resultado = await openAIChatCompletion(mensagensAcumuladas, chatConfig)
+        await registrarUso(usoCtx, MOTOR_PRINCIPAL_OPENAI, resultado.tokensIn, resultado.tokensOut)
       }
     } else {
       resultado = config.motor_ia_principal === 'openai'
@@ -2566,11 +2599,42 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
       resultado  = config.motor_ia_backup === 'anthropic'
         ? await anthropicChatCompletion(chatMessages, chatConfig)
         : await openAIChatCompletion(chatMessages, chatConfig)
+
+      // O backup é uma chamada NOVA, num modelo possivelmente diferente. Se o
+      // motor primário era o loop de tools e ele falhou no meio, as rodadas já
+      // feitas foram registradas e `usoDoMotorRegistrado` está marcado — sem
+      // este registro explícito, a chamada de backup passaria despercebida.
+      await registrarUso(
+        usoCtx,
+        motorUsado === 'anthropic' ? MODELO_ANTHROPIC : MOTOR_PRINCIPAL_OPENAI,
+        resultado.tokensIn,
+        resultado.tokensOut
+      )
+      usoDoMotorRegistrado = true
     } catch (errBackup) {
       console.error(`[process-message] Motor backup (${config.motor_ia_backup}) também falhou:`, errBackup)
       await avisarTransferenciaSemResposta()
       return
     }
+  }
+
+  // ─── Registro de consumo do motor principal ────────────────────────────────
+  //
+  // Registrado AQUI, no ponto em que os tokens foram gastos — não no fim do
+  // fluxo, onde ficava antes. Entre este ponto e o antigo local do logAiUsage
+  // existem quatro `return`: resposta sem conteúdo, escalonamento por falhas
+  // repetidas, transferência anunciada e falha de envio. Em todos eles o
+  // provedor já havia cobrado os tokens e o registro era simplesmente perdido.
+  //
+  // Era a maior fonte das mensagens do agente sem linha em ai_usage (81 msgs do
+  // agente para 54 registros em julho/2026) — e justamente nos caminhos de
+  // exceção, que são os que mais interessam auditar.
+  //
+  // Fica antes até da checagem de conteúdo vazio: uma resposta vazia consumiu
+  // tokens de entrada do mesmo jeito.
+  if (resultado && !usoDoMotorRegistrado) {
+    const modeloDoMotor = motorUsado === 'anthropic' ? MODELO_ANTHROPIC : MOTOR_PRINCIPAL_OPENAI
+    await registrarUso(usoCtx, modeloDoMotor, resultado.tokensIn, resultado.tokensOut)
   }
 
   if (!resultado?.content) {
@@ -2643,19 +2707,8 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
   }
 
-  // `motorUsado` é o PROVEDOR ('openai' | 'anthropic'); calcularCusto precisa do
-  // MODELO. Antes o provedor era passado direto e a tabela de preços tinha uma
-  // linha por provedor — o que cobrava qualquer chamada da OpenAI como gpt-4o.
-  const modeloUsado = motorUsado === 'anthropic' ? MODELO_ANTHROPIC : MOTOR_PRINCIPAL_OPENAI
-
-  await logAiUsage(supabase, {
-    tenantId:       payload.tenantId,
-    conversationId: conversa.id,
-    tokensIn:       resultado.tokensIn,
-    tokensOut:      resultado.tokensOut,
-    motor:          motorUsado,
-    custoReais:     calcularCusto(modeloUsado, resultado.tokensIn, resultado.tokensOut),
-  })
+  // O consumo do motor principal já foi registrado logo após a resposta do
+  // modelo — ver o comentário lá sobre por que não pode ficar aqui no fim.
 
   if (!recontotoCriadoPorTool) {
     detectarMeChama({
