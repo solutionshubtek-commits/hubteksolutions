@@ -5,7 +5,7 @@ import {
   MessageSquare, Users, PauseCircle,
   ArrowUp, ArrowDown, Play, Pause, Phone,
   Filter, Download, FileText, ShieldAlert, MessageCircle, LogOut, ChevronDown,
-  Bot, UserCheck, AlertCircle, CheckCircle2, Calendar, X,
+  Bot, UserCheck, AlertCircle, CheckCircle2, Calendar, X, Smartphone,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 import { LABELS_FUNIL } from '@/lib/crm'
@@ -113,10 +113,11 @@ interface ConversaRecente {
   ultima_mensagem_em: string
 }
 
-interface InstanciaBanida {
+interface InstanciaProblema {
   id: string
   instance_name: string
   apelido: string
+  status: string
 }
 
 interface DiaDado {
@@ -590,6 +591,11 @@ function logParaAtividade(log: { id: string; acao: string; descricao: string; cr
 
 const CONV_LIMIT_STEP = 20
 
+// A rota de status devolve o vocabulário da Evolution ('open') ou o nosso
+// ('conectado'), conforme a origem da resposta. Qualquer outro valor —
+// 'connecting', 'close', 'banido' — significa que o número não está recebendo.
+const ESTADOS_CONECTADOS = ['open', 'conectado']
+
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function VisaoGeralPage() {
@@ -615,7 +621,7 @@ export default function VisaoGeralPage() {
   const [tenantId, setTenantId]             = useState<string | null>(null)
   const [pausando, setPausando]             = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
-  const [instanciasBanidas, setInstanciasBanidas] = useState<InstanciaBanida[]>([])
+  const [instanciasProblema, setInstanciasProblema] = useState<InstanciaProblema[]>([])
   const [desconectando, setDesconectando]   = useState<Record<string, boolean>>({})
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
   const [atividades, setAtividades]         = useState<AtividadeItem[]>([])
@@ -694,12 +700,19 @@ export default function VisaoGeralPage() {
       // filtrar por 'ativa' deixava esta tabela vazia depois de um fim de
       // semana — parecia que a dashboard tinha perdido os atendimentos. O
       // recorte por status agora é escolha do usuário, no filtro acima da lista.
-      const [convRes, bandasRes] = await Promise.all([
+      // O status vem da API, não da tabela: `tenant_instances.status` depende do
+      // evento connection.update chegar, e quando ele não chega o registro
+      // congela. A rota consulta o socket da Evolution e corrige o banco.
+      const [convRes, statusRes] = await Promise.all([
         supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tid).order('ultima_mensagem_em',{ascending:false}).limit(CONV_LIMIT_STEP),
-        supabase.from('tenant_instances').select('id,instance_name,apelido').eq('tenant_id',tid).eq('status','banido'),
+        fetch(`/api/whatsapp/status?tenant_id=${tid}`)
+          .then(r => r.ok ? r.json() as Promise<{ instancias: InstanciaProblema[] }> : { instancias: [] })
+          .catch(() => ({ instancias: [] as InstanciaProblema[] })),
       ])
 
-      setInstanciasBanidas((bandasRes.data??[]) as InstanciaBanida[])
+      setInstanciasProblema(
+        (statusRes.instancias ?? []).filter(i => !ESTADOS_CONECTADOS.includes(i.status))
+      )
 
       type ConvRaw = { id:string;contato_nome:string;contato_telefone:string;status:string;agente_pausado:boolean;ultima_mensagem_em:string;messages:Array<{conteudo:string;criado_em:string}> }
       const convComMsg: ConversaRecente[] = ((convRes.data??[]) as unknown as ConvRaw[]).map(c => {
@@ -862,7 +875,7 @@ export default function VisaoGeralPage() {
     setConfirmDesconectar(null)
     try {
       const res = await fetch('/api/whatsapp/desconectar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_name:instanceName})})
-      if (res.ok) setInstanciasBanidas(prev=>prev.filter(i=>i.instance_name!==instanceName))
+      if (res.ok) setInstanciasProblema(prev=>prev.filter(i=>i.instance_name!==instanceName))
     } finally { setDesconectando(prev=>({...prev,[instanceName]:false})) }
   }
 
@@ -977,19 +990,26 @@ export default function VisaoGeralPage() {
         </div>
       </div>
 
-      {/* Alerta instâncias banidas */}
-      {instanciasBanidas.length > 0 && (
+      {/* Alerta: número banido ou desconectado.
+          Antes só o banimento era sinalizado. Uma instância que simplesmente cai
+          — sessão expirada, celular desconectado — não avisava ninguém: a
+          dashboard seguia em silêncio enquanto os clientes mandavam mensagem no
+          WhatsApp e o agente não recebia nada. */}
+      {instanciasProblema.length > 0 && (
         <div className="rounded-xl p-4 space-y-3" style={{ background:'#EF444408', border:'1px solid #EF444430' }}>
           <div className="flex items-center gap-2">
             <ShieldAlert size={16} className="text-red-400 flex-shrink-0" />
             <p className="text-sm font-semibold text-red-400">
-              {instanciasBanidas.length===1?'Número banido pelo WhatsApp':`${instanciasBanidas.length} números banidos`}
+              {instanciasProblema.every(i => i.status === 'banido')
+                ? (instanciasProblema.length === 1 ? 'Número banido pelo WhatsApp' : `${instanciasProblema.length} números banidos`)
+                : 'WhatsApp desconectado — o agente não está recebendo mensagens'}
             </p>
           </div>
           <div className="space-y-2">
-            {instanciasBanidas.map(inst => {
+            {instanciasProblema.map(inst => {
               const estaDesconectando = desconectando[inst.instance_name]??false
               const pedindoConfirm    = confirmDesconectar===inst.instance_name
+              const banido            = inst.status === 'banido'
               return (
                 <div key={inst.id} className="rounded-lg p-3" style={{ background:'#EF444410', border:'1px solid #EF444425' }}>
                   <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -998,10 +1018,22 @@ export default function VisaoGeralPage() {
                       <div className="min-w-0">
                         <span className="text-sm font-medium text-red-400">{inst.apelido}</span>
                         <span className="text-xs font-mono ml-2 hidden sm:inline" style={{ color:'var(--text-muted)' }}>{inst.instance_name}</span>
+                        <p className="text-xs mt-0.5" style={{ color:'var(--text-secondary)' }}>
+                          {banido
+                            ? 'Número bloqueado pelo WhatsApp. Fale com o suporte.'
+                            : 'Reconecte lendo o QR Code para o agente voltar a atender.'}
+                        </p>
                       </div>
                     </div>
                     {!pedindoConfirm ? (
                       <div className="flex items-center gap-2 flex-shrink-0">
+                        {!banido && (
+                          <a href="/reconexao-whatsapp"
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
+                            style={{ background:'#F59E0B', border:'1px solid #F59E0B', color:'#000' }}>
+                            <Smartphone size={12} /> Reconectar agora
+                          </a>
+                        )}
                         <button onClick={() => setConfirmDesconectar(inst.instance_name)}
                           className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg"
                           style={{ background:'var(--bg-surface)', border:'1px solid #EF444440', color:'#EF4444' }}>
