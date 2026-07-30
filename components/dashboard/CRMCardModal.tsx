@@ -55,7 +55,10 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
   const labels = LABELS_ETAPA[funilAtivo] ?? {}
   const idxAtual = etapas.indexOf(lead.etapa)
   const etapasFinais = etapas.slice(-2)
-  const isEncerrado = etapasFinais.includes(lead.etapa) || lead.conversa_encerrada
+  // Só a etapa final tira o lead de circulação. A conversa estar encerrada no
+  // WhatsApp diz respeito ao canal — o cron encerra tudo que passa 24h sem
+  // mensagem, e isso escondia os botões de mover em praticamente todo card.
+  const isEncerrado = etapasFinais.includes(lead.etapa)
   const etapasParaMover = etapas.filter(e => e !== lead.etapa)
   const [historico, setHistorico] = useState<HistoricoItem[]>([])
   const [carregandoHistorico, setCarregandoHistorico] = useState(false)
@@ -120,8 +123,9 @@ export function CRMCardModal({ lead, funilAtivo, onClose, onMover }: Props) {
             </span>
             {lead.conversa_encerrada && (
               <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                title="A conversa no WhatsApp está encerrada — ela reabre quando o cliente escrever de novo. O lead segue no funil."
                 style={{ background: 'rgba(107,107,107,.15)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                Encerrada
+                Conversa encerrada
               </span>
             )}
           </div>

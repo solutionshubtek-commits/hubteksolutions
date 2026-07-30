@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { RefreshCw, ChevronLeft, ChevronRight, Calendar, X, Search } from 'lucide-react'
 import { CRMCardModal } from '@/components/dashboard/CRMCardModal'
-import { ETAPAS_FUNIL, LABELS_ETAPA, LABELS_FUNIL } from '@/lib/crm'
+import { ETAPAS_FUNIL, ETAPAS_FINAIS, LABELS_ETAPA, LABELS_FUNIL } from '@/lib/crm'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -65,7 +65,18 @@ function formatarDataBR(date: Date): string {
 const DIAS_SEMANA = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 
-type FiltroVista = 'ativas' | 'todas'
+type FiltroVista = 'abertos' | 'todos'
+
+// O que tira um lead do funil é ele chegar a uma etapa final (fechado/perdido e
+// equivalentes) — não a conversa do WhatsApp estar encerrada.
+//
+// Este filtro olhava `conversa_encerrada`, e o cron encerra qualquer conversa
+// parada há 24h. Consequência: depois de um fim de semana o quadro abria vazio,
+// com todos os leads escondidos atrás da aba secundária, inclusive negociações
+// em andamento.
+function estaFinalizado(lead: CRMLead): boolean {
+  return (ETAPAS_FINAIS[lead.funil_tipo] ?? []).includes(lead.etapa)
+}
 
 // ─── Hook: detectar mobile ────────────────────────────────────────────────────
 
@@ -267,7 +278,7 @@ export default function CRMPage() {
   const [funilAtivo, setFunilAtivo] = useState<string>('vendas')
   const [modalLead, setModalLead]   = useState<CRMLead | null>(null)
   const [movendo, setMovendo]       = useState(false)
-  const [filtro, setFiltro]         = useState<FiltroVista>('ativas')
+  const [filtro, setFiltro]         = useState<FiltroVista>('abertos')
   const [busca, setBusca]           = useState('')
   const isMobile = useIsMobile()
 
@@ -372,7 +383,7 @@ export default function CRMPage() {
     const { draggableId, destination } = result
     if (!destination) return
     const lead = leads.find(l => l.id === draggableId)
-    if (!lead || lead.etapa === destination.droppableId || lead.conversa_encerrada) return
+    if (!lead || lead.etapa === destination.droppableId) return
 
     setLeads(prev => prev.map(l =>
       l.id === draggableId
@@ -408,7 +419,7 @@ export default function CRMPage() {
   const buscaDigitos = busca.replace(/\D/g, '')
 
   const leadsFiltrados = leadsDoFunil.filter(l => {
-    if (filtro === 'ativas' && l.conversa_encerrada) return false
+    if (filtro === 'abertos' && estaFinalizado(l)) return false
     if (dataInicio) {
       const ini = new Date(dataInicio); ini.setHours(0,0,0,0)
       if (new Date(l.atualizado_em) < ini) return false
@@ -425,9 +436,9 @@ export default function CRMPage() {
     return true
   })
 
-  const totalAtivas     = leadsDoFunil.filter(l => !l.conversa_encerrada).length
-  const totalEncerradas = leadsDoFunil.filter(l => l.conversa_encerrada).length
-  const periodoAtivo    = !!(dataInicio || dataFim)
+  const totalAbertos     = leadsDoFunil.filter(l => !estaFinalizado(l)).length
+  const totalFinalizados = leadsDoFunil.filter(estaFinalizado).length
+  const periodoAtivo     = !!(dataInicio || dataFim)
 
   const labelPeriodo = dataInicio && dataFim
     ? `${formatarDataBR(dataInicio)} – ${formatarDataBR(dataFim)}`
@@ -466,8 +477,8 @@ export default function CRMPage() {
           <div className="min-w-0">
             <h1 className="text-lg sm:text-xl font-bold" style={{ color: 'var(--text-primary)' }}>CRM</h1>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAtivas} ativa{totalAtivas !== 1 ? 's' : ''}
-              {totalEncerradas > 0 && ` · ${totalEncerradas} encerrada${totalEncerradas !== 1 ? 's' : ''}`}
+              Funil de {LABELS_FUNIL[funilAtivo] ?? funilAtivo} · {totalAbertos} em aberto
+              {totalFinalizados > 0 && ` · ${totalFinalizados} finalizado${totalFinalizados !== 1 ? 's' : ''}`}
               {periodoAtivo && ` · ${leadsFiltrados.length} no período`}
               {buscaTermo && ` · ${leadsFiltrados.length} resultado${leadsFiltrados.length !== 1 ? 's' : ''} para "${busca.trim()}"`}
             </p>
@@ -506,18 +517,18 @@ export default function CRMPage() {
             {/* Toggle ativas/todas */}
             <div className="flex items-center rounded-lg p-0.5"
               style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
-              {(['ativas', 'todas'] as FiltroVista[]).map(f => (
+              {(['abertos', 'todos'] as FiltroVista[]).map(f => (
                 <button key={f} onClick={() => setFiltro(f)}
                   className="px-2.5 sm:px-3 py-1 rounded-md text-xs font-medium transition-colors"
                   style={{
                     background: filtro === f ? 'var(--bg-hover)' : 'transparent',
                     color: filtro === f ? 'var(--text-primary)' : 'var(--text-muted)',
                   }}>
-                  {f === 'ativas' ? 'Ativas' : 'Todas'}
-                  {f === 'todas' && totalEncerradas > 0 && (
+                  {f === 'abertos' ? 'Em aberto' : 'Todos'}
+                  {f === 'todos' && totalFinalizados > 0 && (
                     <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px]"
                       style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
-                      +{totalEncerradas}
+                      +{totalFinalizados}
                     </span>
                   )}
                 </button>
@@ -641,9 +652,13 @@ export default function CRMPage() {
                         )}
                         {leadsNaEtapa.map((lead, index) => {
                           const av = avatarColor(lead.id)
+                          // Conversa encerrada no WhatsApp é informação sobre o
+                          // canal, não sobre o lead: continua sendo possível
+                          // movê-lo no funil. O bloqueio anterior congelava o
+                          // quadro inteiro 24h depois da última mensagem.
                           const encerrado = lead.conversa_encerrada
                           return (
-                            <Draggable key={lead.id} draggableId={lead.id} index={index} isDragDisabled={encerrado}>
+                            <Draggable key={lead.id} draggableId={lead.id} index={index}>
                               {(prov, snap) => (
                                 <div
                                   ref={prov.innerRef}
@@ -652,22 +667,22 @@ export default function CRMPage() {
                                   onClick={() => setModalLead(lead)}
                                   className="rounded-lg p-2.5 select-none"
                                   style={{
-                                    cursor:     encerrado ? 'pointer' : snap.isDragging ? 'grabbing' : 'grab',
-                                    opacity:    encerrado ? 0.55 : 1,
+                                    cursor:     snap.isDragging ? 'grabbing' : 'grab',
                                     background: snap.isDragging ? 'var(--bg-hover)' : 'var(--bg-surface-2)',
                                     border:     `1px solid ${snap.isDragging ? 'var(--border-2)' : 'var(--border)'}`,
                                     boxShadow:  snap.isDragging ? '0 8px 24px rgba(0,0,0,.4)' : 'none',
                                     transform:  snap.isDragging ? 'rotate(1.5deg)' : 'none',
                                     transition: snap.isDragging ? 'none' : 'border-color .15s, opacity .15s',
                                     // Touch: área de toque maior
-                                    touchAction: encerrado ? 'auto' : 'none',
+                                    touchAction: 'none',
                                     ...prov.draggableProps.style,
                                   }}>
                                   {encerrado && (
                                     <div className="flex justify-end mb-1">
                                       <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold"
+                                        title="A conversa no WhatsApp está encerrada — ela reabre quando o cliente escrever de novo. O lead segue no funil."
                                         style={{ background: 'rgba(107,107,107,.15)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                                        Encerrada
+                                        Conversa encerrada
                                       </span>
                                     </div>
                                   )}
