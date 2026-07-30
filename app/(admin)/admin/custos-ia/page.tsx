@@ -186,7 +186,6 @@ export default function CustosIAPage() {
   const [showExportModal, setShowExportModal] = useState(false)
   const [custosFixos, setCustosFixos] = useState<CustosFixos>(CUSTOS_FIXOS_DEFAULT)
   const [numClientes, setNumClientes] = useState(1)
-  const [exportMes, setExportMes] = useState<number>(new Date().getMonth() + 1)
   const [salvandoCustos, setSalvandoCustos] = useState(false)
   const [erroCustos, setErroCustos] = useState('')
   // Competência de onde os valores vieram, quando o mês selecionado ainda não
@@ -268,11 +267,11 @@ export default function CustosIAPage() {
   // (balizMes/selectedAno), o mesmo período que alimenta os cards de baliza e
   // o TXT de fechamento. Trocar o mês recarrega os custos daquele mês.
   //
-  // O balizador é sempre MENSAL — é referência de fechamento. Quando o seletor
-  // de período está num mês, segue esse mês; na visão consolidada do ano, usa o
-  // próprio seletor (`exportMes`), que só aparece nesse caso. Antes existiam
-  // dois seletores de mês concorrentes na mesma tela.
-  const balizMes = selectedMes === 'todos' ? exportMes : selectedMes
+  // O balizador é sempre MENSAL — é referência de fechamento, e fechamento não
+  // existe para "ano inteiro". Quando o seletor de período está num mês, segue
+  // esse mês; na visão consolidada, cai no mês corrente. Não tem seletor
+  // próprio: o período é escolhido num lugar só, no topo da página.
+  const balizMes = selectedMes === 'todos' ? new Date().getMonth() + 1 : selectedMes
   const competencia = `${selectedAno}-${String(balizMes).padStart(2, '0')}`
 
   const carregarCustos = useCallback(async () => {
@@ -454,11 +453,27 @@ export default function CustosIAPage() {
     ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
     : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
   const balizCustoInstExtras = balizInstanciasExtras * CUSTO_INSTANCIA_EXTRA
-  // Custo operacional = API + fixo (inst. extras sao receita, nao custo)
-  const balizCustoTotal = balizCustoAPI + fixoPorCliente
-  // Margem = valor_plano + receita_inst_extras - custo_fixo - custo_API
-  const balizMargem = balizPlano.valor + balizCustoInstExtras - fixoPorCliente - balizCustoAPI
-  const balizMargemPct = balizPlano.valor > 0 ? (balizMargem / balizPlano.valor) * 100 : 0
+
+  // ESCOPO. Em "Todos os clientes", `balizCustoAPI` é o consumo somado de TODOS
+  // e `balizConversas` são as conversas de todos — mas o custo fixo continuava
+  // sendo `fixoPorCliente`, a fatia de UM cliente. Somar os dois misturava
+  // escopos e produzia um "custo operacional" e um "custo por conversa" que não
+  // correspondiam a nada: nem ao consolidado, nem a um cliente.
+  //
+  // Agora o custo fixo e a receita acompanham o escopo selecionado.
+  const ehConsolidado = selectedTenant === 'todos'
+  const balizCustoFixo = ehConsolidado ? totalFixoMensal : fixoPorCliente
+  // No consolidado a receita é a soma dos planos de todos os clientes; antes
+  // usava o plano 'essencial' como padrão para o conjunto inteiro, o que fazia
+  // a margem consolidada comparar o custo de N clientes com a mensalidade de um.
+  const balizReceitaPlano = ehConsolidado
+    ? tenants.reduce((s, t) => s + (PLANOS[t.plano ?? 'essencial']?.valor ?? 0), 0)
+    : balizPlano.valor
+
+  // Custo operacional = API + fixo (instâncias extras são receita, não custo)
+  const balizCustoTotal = balizCustoAPI + balizCustoFixo
+  const balizMargem = balizReceitaPlano + balizCustoInstExtras - balizCustoFixo - balizCustoAPI
+  const balizMargemPct = balizReceitaPlano > 0 ? (balizMargem / balizReceitaPlano) * 100 : 0
   const balizCustoPorConv = balizConversas > 0 ? balizCustoAPI / balizConversas : 0
 
   // ── Export TXT ──
@@ -653,11 +668,11 @@ export default function CustosIAPage() {
         <div className="rounded-xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between mb-5">
             <h2 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Conversas por mês — {selectedAno}</h2>
-            <LegendaDot cor="#6366F1" label="Conversas iniciadas" />
+            <LegendaDot cor="#6366F1" label="Conversas abertas no mês" />
           </div>
           <GraficoBarras series={seriesMensal} maxVal={maxBarConv} mesAtual={mesAtual} selectedAno={selectedAno} loading={loading}
             getHeight={m => (m.conversas / maxBarConv) * 100}
-            renderTooltip={m => (<><div className="font-semibold mb-0.5">{m.label}</div><div style={{ color: '#818CF8' }}>{m.conversas} conversa{m.conversas !== 1 ? 's' : ''}</div>{m.conversas > 0 && m.total > 0 && <div className="text-gray-400 text-xs mt-1">{fmtBRL(m.total / m.conversas)}/conversa</div>}</>)}
+            renderTooltip={m => (<><div className="font-semibold mb-0.5">{m.label}</div><div style={{ color: '#818CF8' }}>{m.conversas} conversa{m.conversas !== 1 ? 's' : ''} aberta{m.conversas !== 1 ? 's' : ''}</div>{m.conversas > 0 && m.total > 0 && <div className="text-gray-400 text-xs mt-1">{fmtBRL(m.total / m.conversas)} custo do mês / conversa aberta</div>}</>)}
             renderBarra={m => m.conversas > 0 ? (<div className="w-full h-full" style={{ background: 'linear-gradient(to top, #4F46E5, #818CF8)' }} />) : null}
           />
         </div>
@@ -672,19 +687,11 @@ export default function CustosIAPage() {
             </h2>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
               {selectedMes === 'todos'
-                ? 'Referência para fechamento mensal — escolha o mês ao lado'
-                : 'Referência para fechamento mensal — segue o período selecionado acima'}
+                ? 'Fechamento é sempre mensal — mostrando o mês corrente. Escolha um mês no topo da página para fechar outro.'
+                : 'Referência para fechamento mensal — segue o período selecionado no topo'}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Só aparece na visão consolidada do ano. Com um mês escolhido no
-                seletor de período, o balizador segue aquele mês — dois seletores
-                de mês na mesma tela se contradiziam. */}
-            {selectedMes === 'todos' && (
-              <SelectField value={exportMes} onChange={v => setExportMes(Number(v))}>
-                {MESES_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-              </SelectField>
-            )}
             <div className="relative">
               <button
                 onClick={() => setShowExportModal(prev => !prev)}
@@ -716,32 +723,56 @@ export default function CustosIAPage() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
-          <BalizCard label="Conversas" value={String(balizConversas)} sub={`/ ${balizPlano.limite} limite`} cor="#6366F1" />
+          <BalizCard label="Conversas" value={String(balizConversas)} sub={ehConsolidado ? 'todos os clientes' : `/ ${balizPlano.limite} limite`} cor="#6366F1" />
           <BalizCard label="Custo API" value={fmtBRL(balizCustoAPI)} sub="tokens consumidos" cor="#10A37F" />
-          <BalizCard label="Custo fixo rateado" value={fmtBRL(fixoPorCliente)} sub={`${numClientes} cliente(s)`} cor="#8B5CF6" />
+          <BalizCard
+            label={ehConsolidado ? 'Custo fixo total' : 'Custo fixo rateado'}
+            value={fmtBRL(balizCustoFixo)}
+            sub={ehConsolidado ? 'todos os clientes' : `1 de ${numClientes} cliente(s)`}
+            cor="#8B5CF6"
+          />
           <BalizCard
             label="Instâncias extras"
             value={balizInstanciasExtras > 0 ? fmtBRL(balizCustoInstExtras) : '—'}
-            sub={balizInstanciasExtras > 0 ? `${balizInstanciasExtras}x R$${CUSTO_INSTANCIA_EXTRA}` : 'nenhuma'}
+            sub={balizInstanciasExtras > 0 ? `${balizInstanciasExtras}x R$${CUSTO_INSTANCIA_EXTRA} (receita)` : 'nenhuma'}
             cor={balizInstanciasExtras > 0 ? '#F59E0B' : 'var(--text-secondary)'}
           />
           <BalizCard label="Custo operacional" value={fmtBRL(balizCustoTotal)} sub="API + fixo" cor="#F59E0B" />
-          <BalizCard label="Valor do plano" value={fmtBRL(balizPlano.valor)} sub={balizPlano.label} cor="#10B981" />
-          <BalizCard label="Margem estimada" value={fmtBRL(balizMargem)} sub={`${balizMargemPct.toFixed(0)}% do plano`} cor={balizMargem >= 0 ? '#10B981' : '#EF4444'} />
+          <BalizCard
+            label={ehConsolidado ? 'Receita dos planos' : 'Valor do plano'}
+            value={fmtBRL(balizReceitaPlano)}
+            sub={ehConsolidado ? `${tenants.length} cliente(s)` : balizPlano.label}
+            cor="#10B981"
+          />
+          <BalizCard label="Margem estimada" value={fmtBRL(balizMargem)} sub={`${balizMargemPct.toFixed(0)}% da receita`} cor={balizMargem >= 0 ? '#10B981' : '#EF4444'} />
         </div>
 
-        {balizCustoPorConv > 0 && (
-          <div className="mt-3 pt-3 border-t flex items-center gap-2 text-xs" style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
-            <span>Custo médio por conversa (API):</span>
-            <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{fmtBRL(balizCustoPorConv)}</span>
-            <span className="ml-4">Custo total por conversa (API + fixo):</span>
-            <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{balizConversas > 0 ? fmtBRL(balizCustoTotal / balizConversas) : '—'}</span>
+        {balizConversas > 0 && (
+          <div className="mt-3 pt-3 border-t space-y-1 text-xs" style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span>Custo de API por conversa:</span>
+              <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{fmtBRL(balizCustoPorConv)}</span>
+              <span className="ml-4">Custo operacional por conversa (API + fixo):</span>
+              <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{fmtBRL(balizCustoTotal / balizConversas)}</span>
+            </div>
+            {/* O divisor são as conversas ABERTAS no mês (conversations.criado_em).
+                O numerador é o custo INCORRIDO no mês, que inclui mensagens de
+                conversas abertas em meses anteriores. Os dois não se referem
+                exatamente ao mesmo conjunto — em regime estável a diferença é
+                pequena, mas num mês de retomada de conversas antigas o valor
+                fica superestimado. Dito na tela para o número não ser lido como
+                "custo de uma conversa do início ao fim". */}
+            <p style={{ color: 'var(--text-muted)' }}>
+              Custo incorrido em {MESES_FULL[balizMes - 1]} ÷ conversas abertas em {MESES_FULL[balizMes - 1]}.
+              Conversas abertas em meses anteriores e ainda ativas geram custo aqui sem entrar no divisor.
+            </p>
           </div>
         )}
 
-        {selectedTenant === 'todos' && (
+        {ehConsolidado && (
           <p className="text-xs mt-2" style={{ color: 'var(--text-secondary)' }}>
-            * Selecione um cliente específico para aplicar o plano contratado no balizador.
+            * Consolidado: custo fixo total e soma das mensalidades de {tenants.length} cliente(s).
+            Selecione um cliente para ver o fechamento individual dele.
           </p>
         )}
       </div>
