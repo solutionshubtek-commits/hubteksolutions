@@ -1,8 +1,12 @@
+import { exigirAdminHubtek } from '@/lib/auth/admin'
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
   try {
+    const guarda = await exigirAdminHubtek()
+    if (guarda.erro) return guarda.erro
+
     const { tenant_id, nova_senha } = await request.json()
 
     if (!tenant_id || !nova_senha) {

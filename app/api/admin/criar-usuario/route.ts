@@ -1,12 +1,26 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { exigirAdminHubtek } from '@/lib/auth/admin'
+
+// Papéis que esta rota pode atribuir. `admin_hubtek` fica DE FORA de propósito:
+// a rota roda com service role e recebia `role` direto do corpo, então aceitar
+// esse valor permitiria criar um administrador da Hubtek por chamada de API.
+// Admin da plataforma se cria no banco, não por formulário.
+const ROLES_PERMITIDOS = ['admin_tenant', 'self_managed', 'operador']
 
 export async function POST(request: Request) {
   try {
+    const guarda = await exigirAdminHubtek()
+    if (guarda.erro) return guarda.erro
+
     const { email, senha, tenant_id, role, nome, slug, instancias } = await request.json()
 
     if (!email || !senha || !tenant_id || !role) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes.' }, { status: 400 })
+    }
+
+    if (!ROLES_PERMITIDOS.includes(role)) {
+      return NextResponse.json({ error: `Papel inválido: ${role}` }, { status: 400 })
     }
 
     const supabaseAdmin = createClient(
@@ -91,7 +105,12 @@ export async function POST(request: Request) {
         const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.hubteksolutions.tech'
         const onboardingRes = await fetch(`${APP_URL}/api/admin/criar-instancia-evolution`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            // Chamada servidor-a-servidor não carrega cookie de sessão; o
+            // segredo interno é o que autentica este salto.
+            'x-internal-secret': process.env.CRON_SECRET ?? '',
+          },
           body: JSON.stringify({ tenant_id, instancias }),
         })
         if (!onboardingRes.ok) {

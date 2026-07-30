@@ -1,9 +1,13 @@
+import { exigirAdminHubtek } from '@/lib/auth/admin'
 // app/api/admin/testar-calendar/route.ts
 import { NextResponse } from 'next/server'
 import { listEventsByDay } from '@/lib/google-calendar'
 
 export async function POST(request: Request) {
   try {
+    const guarda = await exigirAdminHubtek()
+    if (guarda.erro) return guarda.erro
+
     const { client_email, private_key, calendar_id } = await request.json()
 
     if (!client_email || !private_key || !calendar_id) {

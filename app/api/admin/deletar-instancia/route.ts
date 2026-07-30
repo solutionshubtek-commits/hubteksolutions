@@ -1,8 +1,12 @@
+import { exigirAdminHubtek } from '@/lib/auth/admin'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 export async function DELETE(request: NextRequest) {
   try {
+    const guarda = await exigirAdminHubtek()
+    if (guarda.erro) return guarda.erro
+
     const { instance_name, tenant_id } = await request.json()
 
     if (!instance_name || !tenant_id) {

@@ -1,3 +1,4 @@
+import { exigirAdminHubtek } from '@/lib/auth/admin'
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { resend } from '@/lib/resend/client'
@@ -17,6 +18,9 @@ function fmtBRL(val: number) {
 
 export async function POST(request: Request) {
   try {
+    const guarda = await exigirAdminHubtek()
+    if (guarda.erro) return guarda.erro
+
     const body = await request.json()
     const { tenant_id, tenant_nome, email_destino, mes_ref, ciclos } = body
 

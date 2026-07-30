@@ -1,8 +1,14 @@
+import { exigirAdminOuSegredoInterno } from '@/lib/auth/admin'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 export async function POST(request: NextRequest) {
   try {
+    // Chamada tanto pelo navegador (admin cadastrando cliente) quanto por
+    // criar-usuario via fetch interno, que não carrega cookie de sessão.
+    const guarda = await exigirAdminOuSegredoInterno(request)
+    if (guarda.erro) return guarda.erro
+
     const { tenant_id, instancias } = await request.json()
 
     if (!tenant_id || !Array.isArray(instancias) || instancias.length === 0) {
