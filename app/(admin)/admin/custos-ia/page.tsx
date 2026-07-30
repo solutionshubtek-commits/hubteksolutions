@@ -31,7 +31,11 @@ const PLANOS: Record<string, { label: string; limite: number; valor: number }> =
 
 const CUSTO_INSTANCIA_EXTRA = 67.00
 
-const CUSTOS_FIXOS_DEFAULT = {
+// Fallback usado só enquanto a API não responde, ou quando a competência ainda
+// não tem nada gravado e não há mês anterior para herdar. A fonte de verdade é
+// a tabela `custos_operacionais` (migration 007) — antes destes valores viverem
+// no banco, o modal não persistia nada e todo F5 restaurava esta constante.
+const CUSTOS_FIXOS_DEFAULT: CustosFixos = {
   vercel: 98.27,
   supabase: 122.83,
   vps: 33.00,
@@ -39,6 +43,36 @@ const CUSTOS_FIXOS_DEFAULT = {
   claudePro: 120.00,
   github: 19.65,
   resend: 98.27,
+  creditosOpenai: 0,
+  creditosAnthropic: 0,
+}
+
+// Rótulos e agrupamento do modal. `grupo: 'creditos'` separa visualmente o que é
+// recarga de engine do que é infraestrutura — são naturezas diferentes: os
+// créditos variam a cada mês conforme o consumo, a infra é recorrente e estável.
+const CAMPOS_CUSTO: Array<{ chave: keyof CustosFixos; label: string; grupo: 'infra' | 'creditos' }> = [
+  { chave: 'vercel',            label: 'Vercel',            grupo: 'infra'    },
+  { chave: 'supabase',          label: 'Supabase',          grupo: 'infra'    },
+  { chave: 'vps',               label: 'VPS',               grupo: 'infra'    },
+  { chave: 'dominio',           label: 'Domínio',           grupo: 'infra'    },
+  { chave: 'claudePro',         label: 'Claude Pro',        grupo: 'infra'    },
+  { chave: 'github',            label: 'GitHub',            grupo: 'infra'    },
+  { chave: 'resend',            label: 'Resend',            grupo: 'infra'    },
+  { chave: 'creditosOpenai',    label: 'Créditos OpenAI',   grupo: 'creditos' },
+  { chave: 'creditosAnthropic', label: 'Créditos Anthropic', grupo: 'creditos' },
+]
+
+// camelCase da UI ↔ snake_case da coluna `chave` em custos_operacionais.
+const CHAVE_API: Record<keyof CustosFixos, string> = {
+  vercel:            'vercel',
+  supabase:          'supabase',
+  vps:               'vps',
+  dominio:           'dominio',
+  claudePro:         'claude_pro',
+  github:            'github',
+  resend:            'resend',
+  creditosOpenai:    'creditos_openai',
+  creditosAnthropic: 'creditos_anthropic',
 }
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -89,6 +123,16 @@ interface CustosFixos {
   claudePro: number
   github: number
   resend: number
+  // Recarga de créditos nas engines: dinheiro que efetivamente sai para
+  // OpenAI/Anthropic no mês. É custo fixo operacional.
+  //
+  // NÃO confundir com `custo_estimado_reais` da ai_usage, que aparece nos
+  // relatórios como "Custo API": aquilo é uma estimativa POR CLIENTE derivada
+  // de tokens, usada para entender consumo e precificar o produto. Os dois
+  // números falam do mesmo fornecedor, mas respondem perguntas diferentes e não
+  // devem ser somados um ao outro.
+  creditosOpenai: number
+  creditosAnthropic: number
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -135,6 +179,12 @@ export default function CustosIAPage() {
   const [custosFixos, setCustosFixos] = useState<CustosFixos>(CUSTOS_FIXOS_DEFAULT)
   const [numClientes, setNumClientes] = useState(1)
   const [exportMes, setExportMes] = useState<number>(new Date().getMonth() + 1)
+  const [salvandoCustos, setSalvandoCustos] = useState(false)
+  const [erroCustos, setErroCustos] = useState('')
+  // Competência de onde os valores vieram, quando o mês selecionado ainda não
+  // tem lançamento próprio. Fica visível no modal para os créditos herdados não
+  // passarem por valor confirmado do mês.
+  const [custosHerdadosDe, setCustosHerdadosDe] = useState<string | null>(null)
 
   const anosDisponiveis = Array.from(new Set(rawData.map(r => r.ciclo_ano))).sort((a, b) => b - a)
   if (anosDisponiveis.length === 0) anosDisponiveis.push(new Date().getFullYear())
@@ -187,6 +237,73 @@ export default function CustosIAPage() {
   }, [selectedTenant, selectedAno])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ── Custos fixos: carregar / salvar ──
+  //
+  // Escopo por competência = mês selecionado no seletor de fechamento
+  // (exportMes/selectedAno), o mesmo período que alimenta os cards de baliza e
+  // o TXT de fechamento. Trocar o mês recarrega os custos daquele mês.
+  const competencia = `${selectedAno}-${String(exportMes).padStart(2, '0')}`
+
+  const carregarCustos = useCallback(async () => {
+    setErroCustos('')
+    try {
+      const res = await fetch(`/api/admin/custos-operacionais?competencia=${competencia}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data: { valores: Record<string, number>; herdadoDe: string | null } = await res.json()
+
+      setCustosHerdadosDe(data.herdadoDe)
+      setCustosFixos(prev => {
+        const proximo = { ...prev }
+        for (const [campo, chaveApi] of Object.entries(CHAVE_API) as Array<[keyof CustosFixos, string]>) {
+          // Só sobrescreve o que veio do banco: uma chave ausente mantém o
+          // default em vez de virar 0 e sumir do rateio silenciosamente.
+          if (chaveApi in data.valores) proximo[campo] = data.valores[chaveApi]
+        }
+        return proximo
+      })
+      if ('num_clientes' in data.valores) {
+        setNumClientes(Math.max(1, data.valores.num_clientes))
+      }
+    } catch (err) {
+      console.error('[custos-ia] falha ao carregar custos fixos:', err)
+      setErroCustos('Não foi possível carregar os custos salvos. Os valores exibidos são os padrões.')
+    }
+  }, [competencia])
+
+  useEffect(() => { carregarCustos() }, [carregarCustos])
+
+  async function salvarCustos() {
+    setSalvandoCustos(true)
+    setErroCustos('')
+    try {
+      const valores: Record<string, number> = { num_clientes: numClientes }
+      for (const [campo, chaveApi] of Object.entries(CHAVE_API) as Array<[keyof CustosFixos, string]>) {
+        valores[chaveApi] = custosFixos[campo]
+      }
+
+      const res = await fetch('/api/admin/custos-operacionais', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ competencia, valores }),
+      })
+      if (!res.ok) {
+        const corpo = await res.json().catch(() => ({}))
+        throw new Error(corpo.error ?? `HTTP ${res.status}`)
+      }
+
+      // Gravou nesta competência: os valores deixam de ser herdados.
+      setCustosHerdadosDe(null)
+      setShowCustosModal(false)
+    } catch (err) {
+      // O modal fica ABERTO no erro. Fechar aqui repetiria o bug original, em
+      // que o usuário via o modal fechar e presumia que tinha salvado.
+      console.error('[custos-ia] falha ao salvar custos fixos:', err)
+      setErroCustos(err instanceof Error ? err.message : 'Falha ao salvar. Tente novamente.')
+    } finally {
+      setSalvandoCustos(false)
+    }
+  }
 
   // ── Derivados ──
 
@@ -319,6 +436,8 @@ export default function CustosIAPage() {
       `Claude Pro: ${fmtBRL(custosFixos.claudePro)}`,
       `GitHub:     ${fmtBRL(custosFixos.github)}`,
       `Resend:     ${fmtBRL(custosFixos.resend)}`,
+      `Créditos OpenAI:    ${fmtBRL(custosFixos.creditosOpenai)}`,
+      `Créditos Anthropic: ${fmtBRL(custosFixos.creditosAnthropic)}`,
       `Total fixo: ${fmtBRL(totalFixoMensal)} ÷ ${numClientes} cliente(s) = ${fmtBRL(fixoPorCliente)}/cliente`,
       ...(instExtras > 0 ? [`Instâncias extras: ${instExtras}x R$ ${CUSTO_INSTANCIA_EXTRA.toFixed(2)} = ${fmtBRL(custoInstExtras)}`] : []),
       ``,
@@ -638,20 +757,52 @@ export default function CustosIAPage() {
               <button onClick={() => setShowCustosModal(false)}><X size={18} style={{ color: 'var(--text-secondary)' }} /></button>
             </div>
             <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-              Valores mensais em R$. Rateados pelo número de clientes ativos para calcular o custo por cliente.
+              Valores de <strong>{MESES_FULL[exportMes - 1]}/{selectedAno}</strong>, em R$. Rateados pelo número de clientes ativos para calcular o custo por cliente.
             </p>
-            <div className="grid grid-cols-2 gap-3">
-              {(Object.keys(custosFixos) as (keyof CustosFixos)[]).map(k => (
-                <div key={k}>
-                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-                    {k === 'claudePro' ? 'Claude Pro' : k.charAt(0).toUpperCase() + k.slice(1)}
-                  </label>
-                  <input type="number" value={custosFixos[k]}
-                    onChange={e => setCustosFixos(prev => ({ ...prev, [k]: Number(e.target.value) }))}
-                    className="w-full mt-1 px-3 py-1.5 rounded-lg text-sm focus:outline-none"
-                    style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-                </div>
-              ))}
+
+            {custosHerdadosDe && (
+              <div className="p-3 rounded-lg text-xs" style={{ background: '#F59E0B18', border: '1px solid #F59E0B40', color: '#F59E0B' }}>
+                Este mês ainda não tem lançamento próprio — os valores abaixo vieram de{' '}
+                {new Date(`${custosHerdadosDe}T00:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}.
+                Confira principalmente os créditos, que mudam a cada recarga, e salve para fixá-los nesta competência.
+              </div>
+            )}
+
+            <div>
+              <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Infraestrutura</p>
+              <div className="grid grid-cols-2 gap-3">
+                {CAMPOS_CUSTO.filter(c => c.grupo === 'infra').map(({ chave, label }) => (
+                  <div key={chave}>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>{label}</label>
+                    <input type="number" min={0} step="0.01" value={custosFixos[chave]}
+                      onChange={e => setCustosFixos(prev => ({ ...prev, [chave]: Number(e.target.value) }))}
+                      className="w-full mt-1 px-3 py-1.5 rounded-lg text-sm focus:outline-none"
+                      style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Créditos de IA</p>
+              <p className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>
+                Quanto foi recarregado nas engines neste mês. É custo fixo e entra no rateio — não confundir
+                com o &quot;Custo API&quot; dos relatórios, que é a estimativa de consumo por cliente a partir dos tokens.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                {CAMPOS_CUSTO.filter(c => c.grupo === 'creditos').map(({ chave, label }) => (
+                  <div key={chave}>
+                    <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>{label}</label>
+                    <input type="number" min={0} step="0.01" value={custosFixos[chave]}
+                      onChange={e => setCustosFixos(prev => ({ ...prev, [chave]: Number(e.target.value) }))}
+                      className="w-full mt-1 px-3 py-1.5 rounded-lg text-sm focus:outline-none"
+                      style={{ background: 'var(--bg-secondary)', border: '1px solid #10B98140', color: 'var(--text-primary)' }} />
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs mt-2 font-medium" style={{ color: '#10B981' }}>
+                Total recarregado: {fmtBRL(custosFixos.creditosOpenai + custosFixos.creditosAnthropic)}
+              </p>
             </div>
             <div>
               <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Nº de clientes ativos (para rateio)</label>
@@ -672,8 +823,19 @@ export default function CustosIAPage() {
                 {fmtBRL(fixoPorCliente)}/cliente
               </span>
             </div>
-            <button onClick={() => setShowCustosModal(false)} className="w-full py-2 rounded-lg text-sm font-semibold" style={{ background: '#10B981', color: '#fff' }}>
-              Salvar
+            {erroCustos && (
+              <div className="p-3 rounded-lg text-xs" style={{ background: '#EF444418', border: '1px solid #EF444440', color: '#EF4444' }}>
+                {erroCustos}
+              </div>
+            )}
+
+            <button
+              onClick={salvarCustos}
+              disabled={salvandoCustos}
+              className="w-full py-2 rounded-lg text-sm font-semibold disabled:opacity-60"
+              style={{ background: '#10B981', color: '#fff' }}
+            >
+              {salvandoCustos ? 'Salvando…' : 'Salvar'}
             </button>
           </div>
         </div>
