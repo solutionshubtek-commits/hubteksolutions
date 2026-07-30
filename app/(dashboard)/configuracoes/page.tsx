@@ -48,7 +48,18 @@ const HORARIO_PADRAO: HorarioFuncionamento = {
 }
 
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp']
+
+// Quem enxerga a tela de configurações.
 const ROLES_GESTAO = ['admin_hubtek', 'admin_tenant', 'self_managed']
+
+// Quem escreve o COMPORTAMENTO do agente: prompt, base de conhecimento e as
+// credenciais do Google Calendar.
+//
+// `admin_tenant` fica de fora de propósito. Ele administra a operação da
+// empresa — operadores, horário, identidade visual, funil — mas o conteúdo que
+// dita como o agente responde é entregue pela Hubtek. Quem contrata autogestão
+// (`self_managed`) assume esse controle e entra aqui.
+const ROLES_AGENTE = ['admin_hubtek', 'self_managed']
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -120,6 +131,7 @@ export default function ConfiguracoesPage() {
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
   const isGestao = ROLES_GESTAO.includes(role)
+  const podeConfigurarAgente = ROLES_AGENTE.includes(role)
   const podeGerenciarOperadores = role === 'admin_tenant' || role === 'self_managed'
   const agendamentosAtivo = funcaoPrincipal === 'agendamentos'
 
@@ -157,7 +169,7 @@ export default function ConfiguracoesPage() {
           setGcPrivateKey(gc?.private_key ?? '')
           setGcCalendarId(gc?.calendar_id ?? '')
         }
-        if (ROLES_GESTAO.includes(userData.role)) {
+        if (ROLES_AGENTE.includes(userData.role)) {
           const { data: files } = await supabase
             .from('knowledge_base').select('id, nome_arquivo, tipo, tamanho_bytes, criado_em')
             .eq('tenant_id', userData.tenant_id).order('criado_em', { ascending: false })
@@ -313,11 +325,21 @@ export default function ConfiguracoesPage() {
       ? { client_email: gcClientEmail.trim(), private_key: gcPrivateKey.trim(), calendar_id: gcCalendarId.trim() }
       : null
 
+    // Campos do agente só entram no payload de quem pode editá-los.
+    //
+    // Sem esta separação, um admin_tenant salvando o horário de atendimento
+    // sobrescreveria prompt e credenciais do Calendar com o que estivesse no
+    // estado da tela — e, como os campos ficam ocultos para ele, o estado
+    // carrega o valor lido no fetch mas nada garante isso em telas parciais.
+    // Omitir a chave é o único jeito de o update não tocar na coluna.
+    const camposAgente = podeConfigurarAgente
+      ? { prompt_agente: tenant.prompt_agente, google_calendar_config: gcConfig }
+      : {}
+
     const { error: tenantErr } = await supabase.from('tenants').update({
-      prompt_agente: tenant.prompt_agente,
+      ...camposAgente,
       mensagem_fora_horario: tenant.mensagem_fora_horario,
       horario_funcionamento: horarioComFuncoes,
-      google_calendar_config: gcConfig,
     }).eq('id', tenant.id)
 
     if (tenantErr) {
@@ -328,6 +350,9 @@ export default function ConfiguracoesPage() {
 
     const diasStr = horario.dias.map(d => DIAS_NUM_TO_STR[d]).filter(Boolean)
 
+    // O upsert em agent_config precisa do prompt atual mesmo quando quem salva
+    // não pode editá-lo: um upsert sem a coluna gravaria NULL na criação da
+    // linha. O valor vem do que foi lido no carregamento da tela, inalterado.
     const { error: agentErr } = await supabase.from('agent_config').upsert({
       tenant_id: tenantId,
       prompt_principal: tenant.prompt_agente,
@@ -568,7 +593,9 @@ export default function ConfiguracoesPage() {
             <div className="rounded-xl p-6" style={cardStyle}>
               <h2 className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Agente de atendimento</h2>
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                Descreva como o agente deve se comportar, qual o tom, quais informações usar.
+                {podeConfigurarAgente
+                  ? 'Descreva como o agente deve se comportar, qual o tom, quais informações usar.'
+                  : 'Escolha o funil que o agente segue nesta operação.'}
               </p>
 
               {/* Função principal — seleção única (radio) */}
@@ -593,15 +620,24 @@ export default function ConfiguracoesPage() {
                 </div>
               </div>
 
-              <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Prompt do agente</label>
-              <textarea value={tenant?.prompt_agente || ''}
-                onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
-                rows={6} placeholder="Descreva como o agente deve se comportar..."
-                className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none"
-                style={inputStyle} />
-              <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-                {(tenant?.prompt_agente || '').length} caracteres · ~{Math.round((tenant?.prompt_agente || '').length / 4)} tokens
-              </p>
+              {podeConfigurarAgente ? (
+                <>
+                  <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Prompt do agente</label>
+                  <textarea value={tenant?.prompt_agente || ''}
+                    onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
+                    rows={6} placeholder="Descreva como o agente deve se comportar..."
+                    className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none"
+                    style={inputStyle} />
+                  <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                    {(tenant?.prompt_agente || '').length} caracteres · ~{Math.round((tenant?.prompt_agente || '').length / 4)} tokens
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs rounded-lg px-3 py-2.5" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-muted)' }}>
+                  O treinamento do agente — prompt e base de conhecimento — é mantido pela equipe Hubtek.
+                  Para ajustar o comportamento do atendimento, fale com o suporte.
+                </p>
+              )}
             </div>
 
             {/* Horário */}
@@ -654,8 +690,9 @@ export default function ConfiguracoesPage() {
 
             {isGestao && agendamentosAtivo && <GestaoProfissionais />}
 
-            {/* Google Calendar */}
-            {agendamentosAtivo && (
+            {/* Google Calendar — credenciais de service account, mesma alçada
+                do prompt e da base de conhecimento. */}
+            {agendamentosAtivo && podeConfigurarAgente && (
               <div className="rounded-xl p-6" style={cardStyle}>
                 <div className="flex items-center gap-2 mb-1">
                   <Calendar size={15} style={{ color: '#10B981' }} />
@@ -731,6 +768,7 @@ export default function ConfiguracoesPage() {
             )}
 
             {/* Base de conhecimento */}
+            {podeConfigurarAgente && (
             <div className="rounded-xl p-6" style={cardStyle}>
               <div className="flex items-center justify-between mb-1">
                 <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Base de conhecimento</h2>
@@ -790,6 +828,7 @@ export default function ConfiguracoesPage() {
                 </div>
               )}
             </div>
+            )}
           </>
         )}
 

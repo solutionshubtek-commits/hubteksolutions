@@ -89,17 +89,21 @@ export function GestaoOperadores({ tenantId }: Props) {
     } finally { setAcaoId(null) }
   }
 
-  async function reenviarSenha(id: string) {
-    setAcaoId(id)
+  async function reenviarSenha(op: Operador) {
+    // A rota gera uma senha nova — a atual deixa de funcionar. Confirmar evita
+    // derrubar o acesso de um operador que está atendendo no momento.
+    if (!confirm(`Enviar um novo acesso para ${op.email}?\n\nA senha atual deixa de funcionar imediatamente.`)) return
+    setAcaoId(op.id)
     try {
       const res = await fetch('/api/operadores/reenviar-senha', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operador_id: id })
+        body: JSON.stringify({ operador_id: op.id })
       })
       const json = await res.json()
       if (!res.ok) { mostrarErro(json.error ?? 'Erro ao reenviar.'); return }
-      mostrarSucesso('Nova senha provisória enviada por e-mail.')
+      mostrarSucesso(`Novo acesso enviado para ${op.email}.`)
+      await carregarOperadores()
     } finally { setAcaoId(null) }
   }
 
@@ -172,22 +176,27 @@ export function GestaoOperadores({ tenantId }: Props) {
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-3 shrink-0">
                 <button
-                  onClick={() => reenviarSenha(op.id)}
+                  onClick={() => reenviarSenha(op)}
                   disabled={acaoId === op.id}
-                  title="Reenviar senha provisória"
-                  className="p-2 rounded-lg transition-colors disabled:opacity-40"
-                  style={{ color: 'var(--text-muted)' }}
+                  title="Gera uma nova senha provisória e envia por e-mail"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40"
+                  style={{ border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)' }}
                 >
-                  {acaoId === op.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  {acaoId === op.id
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <RefreshCw className="w-3.5 h-3.5" />}
+                  Reenviar acesso
                 </button>
+                {/* Separado do botão acima para não errar o clique: um reenvia
+                    credenciais, o outro corta o acesso. */}
                 <button
                   onClick={() => removerOperador(op.id)}
                   disabled={acaoId === op.id}
                   title="Remover operador"
                   className="p-2 rounded-lg transition-colors disabled:opacity-40"
-                  style={{ color: 'var(--text-muted)' }}
+                  style={{ color: '#EF4444' }}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>

@@ -10,6 +10,39 @@ function gerarSenhaProvisoria(): string {
   return senha
 }
 
+async function enviarEmailConvite({ email, nome, senhaProvisoria, nomeTenant }: {
+  email: string; nome: string; senhaProvisoria: string; nomeTenant?: string | null
+}) {
+  const { Resend } = await import('resend')
+  const resend = new Resend(process.env.RESEND_API_KEY)
+
+  await resend.emails.send({
+    from: 'Hubtek Solutions <noreply@hubteksolutions.tech>',
+    to: email,
+    subject: `Você foi adicionado como operador — ${nomeTenant ?? 'Hubtek'}`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f9f9f9; border-radius: 8px;">
+        <h2 style="color: #111; margin-bottom: 8px;">Olá, ${nome}!</h2>
+        <p style="color: #444; line-height: 1.6;">
+          Você foi cadastrado como <strong>operador</strong> na plataforma <strong>Hubtek Solutions</strong>
+          ${nomeTenant ? `para a empresa <strong>${nomeTenant}</strong>` : ''}.
+        </p>
+        <p style="color: #444; line-height: 1.6;">Use as credenciais abaixo para acessar o sistema:</p>
+        <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 20px; margin: 24px 0;">
+          <p style="margin: 0 0 8px;"><strong>E-mail:</strong> ${email}</p>
+          <p style="margin: 0;"><strong>Senha provisória:</strong> <span style="font-family: monospace; font-size: 16px; color: #333;">${senhaProvisoria}</span></p>
+        </div>
+        <p style="color: #444; line-height: 1.6;">Ao entrar pela primeira vez, você será solicitado a definir uma nova senha.</p>
+        <a href="https://app.hubteksolutions.tech/login"
+           style="display: inline-block; background: #111; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-top: 8px;">
+          Acessar plataforma
+        </a>
+        <p style="color: #999; font-size: 12px; margin-top: 32px;">Hubtek Solutions · suporte: wa.me/5551980104924</p>
+      </div>
+    `
+  })
+}
+
 export async function POST(req: NextRequest) {
   try {
     const supabase = createClient()
@@ -57,12 +90,13 @@ export async function POST(req: NextRequest) {
     // Verificar se e-mail já existe neste tenant
     const { data: existente } = await supabase
       .from('users')
-      .select('id')
+      .select('id, role, ativo')
       .eq('tenant_id', tenantAlvo)
       .eq('email', email.toLowerCase())
-      .single()
+      .maybeSingle()
 
-    if (existente) {
+    // Operador ativo (ou usuário de outro papel) com este e-mail: barra mesmo.
+    if (existente && (existente.ativo || existente.role !== 'operador')) {
       return NextResponse.json({ error: 'Este e-mail já está cadastrado neste tenant' }, { status: 400 })
     }
 
@@ -81,6 +115,34 @@ export async function POST(req: NextRequest) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
+
+    // Reativação de operador removido.
+    //
+    // `remover` faz soft delete (ativo=false) e bane a conta no Auth, mas o
+    // registro continua em public.users. Sem este caminho, a checagem de e-mail
+    // duplicado acima rejeitava para sempre quem já tivesse sido removido: o
+    // mesmo e-mail nunca mais podia ser recadastrado, sem nenhuma forma de
+    // desfazer pela interface.
+    if (existente) {
+      const { error: reativarAuthErr } = await supabaseAdmin.auth.admin.updateUserById(existente.id, {
+        password: senhaProvisoria,
+        ban_duration: 'none',
+      })
+      if (reativarAuthErr) {
+        return NextResponse.json({ error: `Auth error: ${reativarAuthErr.message}` }, { status: 500 })
+      }
+
+      const { error: reativarErr } = await supabaseAdmin
+        .from('users')
+        .update({ nome, ativo: true, senha_provisoria: true, role: 'operador' })
+        .eq('id', existente.id)
+      if (reativarErr) {
+        return NextResponse.json({ error: `DB error: ${reativarErr.message}` }, { status: 500 })
+      }
+
+      await enviarEmailConvite({ email: email.toLowerCase(), nome, senhaProvisoria, nomeTenant: tenant?.nome })
+      return NextResponse.json({ ok: true, reativado: true })
+    }
 
     const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: email.toLowerCase(),
@@ -117,35 +179,7 @@ export async function POST(req: NextRequest) {
       }, { status: 500 })
     }
 
-    // Enviar e-mail via Resend
-    const { Resend } = await import('resend')
-    const resend = new Resend(process.env.RESEND_API_KEY)
-
-    await resend.emails.send({
-      from: 'Hubtek Solutions <noreply@hubteksolutions.tech>',
-      to: email.toLowerCase(),
-      subject: `Você foi adicionado como operador — ${tenant?.nome ?? 'Hubtek'}`,
-      html: `
-        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f9f9f9; border-radius: 8px;">
-          <h2 style="color: #111; margin-bottom: 8px;">Olá, ${nome}!</h2>
-          <p style="color: #444; line-height: 1.6;">
-            Você foi cadastrado como <strong>operador</strong> na plataforma <strong>Hubtek Solutions</strong>
-            ${tenant?.nome ? `para a empresa <strong>${tenant.nome}</strong>` : ''}.
-          </p>
-          <p style="color: #444; line-height: 1.6;">Use as credenciais abaixo para acessar o sistema:</p>
-          <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 20px; margin: 24px 0;">
-            <p style="margin: 0 0 8px;"><strong>E-mail:</strong> ${email.toLowerCase()}</p>
-            <p style="margin: 0;"><strong>Senha provisória:</strong> <span style="font-family: monospace; font-size: 16px; color: #333;">${senhaProvisoria}</span></p>
-          </div>
-          <p style="color: #444; line-height: 1.6;">Ao entrar pela primeira vez, você será solicitado a definir uma nova senha.</p>
-          <a href="https://app.hubteksolutions.tech/login"
-             style="display: inline-block; background: #111; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-top: 8px;">
-            Acessar plataforma
-          </a>
-          <p style="color: #999; font-size: 12px; margin-top: 32px;">Hubtek Solutions · suporte: wa.me/5551980104924</p>
-        </div>
-      `
-    })
+    await enviarEmailConvite({ email: email.toLowerCase(), nome, senhaProvisoria, nomeTenant: tenant?.nome })
 
     return NextResponse.json({ ok: true })
   } catch (err) {

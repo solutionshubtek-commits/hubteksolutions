@@ -1959,17 +1959,18 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   await updateConversationTimestamp(supabase, conversa.id)
 
-  const tenantAtivoGlobal = await isTenantAgentActive(supabase, payload.tenantId)
-  if (!tenantAtivoGlobal) return
-
-  const pausado = await isAgentPaused(supabase, conversa.id)
-  if (pausado) return
-
+  // A configuração é lida aqui, antes dos returns de agente desligado/pausado,
+  // porque o funil do CRM sai dela — e o lead precisa nascer mesmo quando o
+  // agente não vai responder esta mensagem.
   const config = await getAgentConfig(supabase, payload.tenantId)
-  if (!config || !config.ativo) return
 
-  // ─── CRM: extrai função principal e cria lead automaticamente ─────────────
-  const configExtra     = config as unknown as Record<string, unknown>
+  // ─── CRM: todo contato entra no funil ─────────────────────────────────────
+  // O upsert fica ANTES dos returns abaixo de propósito. Quando ele rodava
+  // depois, um contato atendido direto por um operador (conversa pausada) nunca
+  // virava lead: a dashboard mostrava N conversas e N-1 cards no CRM, sem
+  // explicação visível. Quem atende — IA ou humano — não muda o fato de que
+  // existe um lead.
+  const configExtra     = (config ?? {}) as unknown as Record<string, unknown>
   const funcoesAtivas   = (configExtra.funcoes_ativas as string[]) ?? []
   const funcaoPrincipal = funcoesAtivas[0] as FunilTipo | undefined
 
@@ -1984,6 +1985,14 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     ).catch(() => {})
   }
   // ──────────────────────────────────────────────────────────────────────────
+
+  const tenantAtivoGlobal = await isTenantAgentActive(supabase, payload.tenantId)
+  if (!tenantAtivoGlobal) return
+
+  const pausado = await isAgentPaused(supabase, conversa.id)
+  if (pausado) return
+
+  if (!config || !config.ativo) return
 
   const estaDentroDoHorario = isWithinOperatingHours(config)
   if (!estaDentroDoHorario) {

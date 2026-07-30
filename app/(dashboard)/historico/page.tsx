@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useRouter } from 'next/navigation'
 import { History, Search, ClipboardList, Bot, Pause, Play, MessageSquare, Paperclip, ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface Conversa {
@@ -29,7 +30,7 @@ const ACAO_CONFIG: Record<string, { icon: React.ElementType; cor: string; label:
   enviou_midia:    { icon: Paperclip,     cor: '#818CF8', label: 'Enviou mídia' },
 }
 
-const POR_PAGINA = 10
+const POR_PAGINA = 20
 
 function tempoRelativo(data: string) {
   const diff = Math.floor((Date.now() - new Date(data).getTime()) / 1000)
@@ -49,14 +50,22 @@ function iniciais(nome: string) {
   return nome.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase()
 }
 
-function Paginacao({ pagina, total, onChange }: { pagina: number; total: number; onChange: (p: number) => void }) {
-  if (total <= 1) return null
+// A faixa aparece mesmo com uma única página. Antes o rodapé sumia quando havia
+// menos de POR_PAGINA registros, e a leitura era de que a paginação não existia
+// — o cliente não tinha como saber quantos registros estava vendo.
+function Paginacao({ pagina, total, totalRegistros, onChange }: {
+  pagina: number; total: number; totalRegistros: number; onChange: (p: number) => void
+}) {
+  if (totalRegistros === 0) return null
+  const primeiro = (pagina - 1) * POR_PAGINA + 1
+  const ultimo   = Math.min(pagina * POR_PAGINA, totalRegistros)
   return (
     <div className="flex items-center justify-between px-4 md:px-5 py-3" style={{ borderTop: '1px solid var(--border)' }}>
       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-        Página {pagina} de {total}
+        {primeiro}–{ultimo} de {totalRegistros}
+        {total > 1 && ` · página ${pagina} de ${total}`}
       </span>
-      <div className="flex gap-2">
+      <div className="flex gap-2" style={{ visibility: total > 1 ? 'visible' : 'hidden' }}>
         <button onClick={() => onChange(Math.max(1, pagina - 1))} disabled={pagina === 1}
           className="flex items-center justify-center rounded-lg"
           style={{ width: 32, height: 32, border: '1px solid var(--border)', background: 'var(--bg-surface-2)', color: 'var(--text-secondary)', cursor: pagina === 1 ? 'not-allowed' : 'pointer', opacity: pagina === 1 ? 0.4 : 1 }}>
@@ -73,6 +82,7 @@ function Paginacao({ pagina, total, onChange }: { pagina: number; total: number;
 }
 
 export default function HistoricoPage() {
+  const router = useRouter()
   const [tenantId, setTenantId]   = useState<string | null>(null)
   const [userRole, setUserRole]   = useState<string | null>(null)
 
@@ -173,6 +183,12 @@ export default function HistoricoPage() {
   useEffect(() => { fetchLogs() }, [fetchLogs])
   useEffect(() => { setPaginaLog(1) }, [buscarLog])
 
+  // A conversa encerrada continua acessível em /conversas/[id] — a tela de
+  // detalhe carrega o histórico de mensagens independentemente do status.
+  function abrirConversa(id: string) {
+    router.push(`/conversas/${id}`)
+  }
+
   const inputStyle = { background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
   const podeVerLogs = userRole && ['admin_hubtek', 'admin_tenant', 'self_managed'].includes(userRole)
 
@@ -214,16 +230,21 @@ export default function HistoricoPage() {
                 <table className="w-full">
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      {['Contato', 'Telefone', 'Início', 'Encerramento'].map(h => (
-                        <th key={h} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
+                      {['Contato', 'Telefone', 'Início', 'Encerramento', ''].map((h, i) => (
+                        <th key={i} className="text-left text-xs font-medium px-6 py-3 uppercase tracking-wider"
                           style={{ color: 'var(--text-muted)' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {conversas.map((c, i) => (
-                      <tr key={c.id} className="transition-colors"
+                      <tr key={c.id} className="transition-colors cursor-pointer"
                         style={{ borderBottom: i === conversas.length - 1 ? 'none' : '1px solid var(--border)' }}
+                        onClick={() => abrirConversa(c.id)}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirConversa(c.id) } }}
+                        tabIndex={0}
+                        role="link"
+                        aria-label={`Abrir conversa com ${c.contato_nome || c.contato_telefone}`}
                         onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
                         onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                         <td className="px-6 py-4">
@@ -238,6 +259,9 @@ export default function HistoricoPage() {
                         <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{c.contato_telefone}</td>
                         <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{formatarData(c.criado_em)}</td>
                         <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{formatarData(c.ultima_mensagem_em)}</td>
+                        <td className="px-6 py-4 text-right">
+                          <ChevronRight size={15} style={{ color: 'var(--text-muted)' }} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -247,16 +271,17 @@ export default function HistoricoPage() {
               {/* Cards — mobile */}
               <div className="md:hidden divide-y" style={{ borderColor: 'var(--border)' }}>
                 {conversas.map(c => (
-                  <div key={c.id} className="p-4">
+                  <div key={c.id} className="p-4 cursor-pointer" onClick={() => abrirConversa(c.id)}>
                     <div className="flex items-center gap-3 mb-2">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
                         style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)' }}>
                         {iniciais(c.contato_nome)}
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{c.contato_nome || 'Sem nome'}</p>
                         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{c.contato_telefone}</p>
                       </div>
+                      <ChevronRight size={15} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                     </div>
                     <div className="grid grid-cols-2 gap-1 text-xs" style={{ color: 'var(--text-secondary)' }}>
                       <div><span style={{ color: 'var(--text-muted)' }}>Início: </span>{formatarData(c.criado_em)}</div>
@@ -266,7 +291,7 @@ export default function HistoricoPage() {
                 ))}
               </div>
 
-              <Paginacao pagina={paginaConv} total={totalPaginasConv} onChange={setPaginaConv} />
+              <Paginacao pagina={paginaConv} total={totalPaginasConv} totalRegistros={totalConversas} onChange={setPaginaConv} />
             </>
           )}
         </div>
@@ -333,7 +358,7 @@ export default function HistoricoPage() {
                     )
                   })}
                 </div>
-                <Paginacao pagina={paginaLog} total={totalPaginasLog} onChange={setPaginaLog} />
+                <Paginacao pagina={paginaLog} total={totalPaginasLog} totalRegistros={totalLogs} onChange={setPaginaLog} />
               </>
             )}
           </div>

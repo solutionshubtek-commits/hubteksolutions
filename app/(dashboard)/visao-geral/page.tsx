@@ -164,6 +164,26 @@ function formatFone(fone: string) {
   return fone
 }
 
+type FiltroStatus = 'todos' | 'ativo' | 'pausado' | 'encerrado'
+
+// O banco tem as duas grafias por histórico — ver STATUS_ENCERRADOS em
+// lib/supabase/queries/conversations.ts.
+function estaEncerrada(c: ConversaRecente) {
+  return c.status === 'encerrada' || c.status === 'encerrado'
+}
+
+function rotuloStatus(c: ConversaRecente) {
+  if (estaEncerrada(c)) return 'Encerrada'
+  return c.agente_pausado ? 'Pausado' : 'Ativo'
+}
+
+// Cor do badge de status, reaproveitada pelas versões desktop e mobile.
+const CORES_STATUS: Record<string, string> = {
+  Ativo:     '#10B981',
+  Pausado:   '#F59E0B',
+  Encerrada: '#6B7280',
+}
+
 function tempoRelativo(data: string) {
   const diff = Math.floor((Date.now() - new Date(data).getTime()) / 1000)
   if (diff < 60) return 'agora'
@@ -175,7 +195,7 @@ function tempoRelativo(data: string) {
 function exportarCSV(conversas: ConversaRecente[]) {
   const header = 'Contato,Telefone,Última mensagem,Status,Hora\n'
   const rows = conversas.map(c =>
-    `"${c.contato_nome||''}","${c.contato_telefone}","${c.ultima_mensagem}","${c.agente_pausado?'Pausado':'Ativo'}","${tempoRelativo(c.ultima_mensagem_em)}"`
+    `"${c.contato_nome||''}","${c.contato_telefone}","${c.ultima_mensagem}","${rotuloStatus(c)}","${tempoRelativo(c.ultima_mensagem_em)}"`
   ).join('\n')
   const blob = new Blob([header+rows], {type:'text/csv;charset=utf-8;'})
   const url = URL.createObjectURL(blob)
@@ -195,7 +215,7 @@ function exportarConversasPDF(conversas: ConversaRecente[]) {
     linhas: conversas.map(c => ({
       contato: c.contato_nome||'—', telefone: c.contato_telefone,
       msg: c.ultima_mensagem.slice(0,40)+(c.ultima_mensagem.length>40?'...':''),
-      status: c.agente_pausado?'Pausado':'Ativo', hora: tempoRelativo(c.ultima_mensagem_em),
+      status: rotuloStatus(c), hora: tempoRelativo(c.ultima_mensagem_em),
     })),
     nomeArquivo: `conversas_${new Date().toISOString().slice(0,10)}`,
   })
@@ -517,6 +537,50 @@ function GraficoBarras({ dados, crmStats, granularidade, onExport }: {
   )
 }
 
+// Data local no formato YYYY-MM-DD. Não usar toISOString().slice(0,10): ele
+// converte para UTC e, à noite no fuso do Brasil, joga a mensagem para o dia
+// seguinte — o gráfico ficava com um dia de defasagem no fim do expediente.
+function toDiaLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Mensagens do tenant no intervalo, paginadas.
+//
+// O gráfico conta CONVERSAS COM ATIVIDADE no dia, e para isso precisa da data
+// real de cada mensagem. Antes ele agrupava por `conversations.ultima_mensagem_em`,
+// o que dava uma barra única por conversa no dia em que ela falou pela última
+// vez: uma semana inteira de atendimento aparecia empilhada em um só dia.
+//
+// O PostgREST devolve no máximo 1000 linhas por requisição, daí a paginação. O
+// teto de 20 páginas evita travar a tela em tenants de volume alto — no pior
+// caso o gráfico subestima os dias mais antigos da janela, o que é preferível a
+// uma aba congelada.
+const MSGS_PAGINA = 1000
+const MSGS_MAX_PAGINAS = 20
+
+async function buscarMensagensPeriodo(
+  supabase: ReturnType<typeof createClient>,
+  tenantId: string,
+  inicioISO: string,
+  fimISO: string,
+): Promise<Array<{ conversation_id: string; criado_em: string }>> {
+  const todas: Array<{ conversation_id: string; criado_em: string }> = []
+  for (let pagina = 0; pagina < MSGS_MAX_PAGINAS; pagina++) {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('conversation_id, criado_em')
+      .eq('tenant_id', tenantId)
+      .gte('criado_em', inicioISO)
+      .lte('criado_em', fimISO)
+      .order('criado_em', { ascending: true })
+      .range(pagina * MSGS_PAGINA, pagina * MSGS_PAGINA + MSGS_PAGINA - 1)
+    if (error || !data || data.length === 0) break
+    todas.push(...(data as Array<{ conversation_id: string; criado_em: string }>))
+    if (data.length < MSGS_PAGINA) break
+  }
+  return todas
+}
+
 function logParaAtividade(log: { id: string; acao: string; descricao: string; criado_em: string }): AtividadeItem {
   const corMap: Record<string, string> = {
     pausou_ia:'#F59E0B', retomou_ia:'#10B981', enviou_mensagem:'#818CF8', enviou_midia:'#818CF8',
@@ -543,7 +607,7 @@ export default function VisaoGeralPage() {
   const [showCustom, setShowCustom]         = useState(false)
   const [customTmp, setCustomTmp]           = useState<{ inicio: string; fim: string }>({ inicio: '', fim: '' })
   const customRef = useRef<HTMLDivElement>(null)
-  const [filtroStatus, setFiltroStatus]     = useState<'todos' | 'ativo' | 'pausado'>('todos')
+  const [filtroStatus, setFiltroStatus]     = useState<FiltroStatus>('todos')
   const [carregando, setCarregando]         = useState(true)
   const [carregandoMais, setCarregandoMais] = useState(false)
   const [convLimit, setConvLimit]           = useState(CONV_LIMIT_STEP)
@@ -626,8 +690,12 @@ export default function VisaoGeralPage() {
       setTenantId(userData.tenant_id)
       const tid = userData.tenant_id
 
+      // Sem filtro de status: o cron encerra conversas paradas há 24h, então
+      // filtrar por 'ativa' deixava esta tabela vazia depois de um fim de
+      // semana — parecia que a dashboard tinha perdido os atendimentos. O
+      // recorte por status agora é escolha do usuário, no filtro acima da lista.
       const [convRes, bandasRes] = await Promise.all([
-        supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tid).eq('status','ativa').order('ultima_mensagem_em',{ascending:false}).limit(CONV_LIMIT_STEP),
+        supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tid).order('ultima_mensagem_em',{ascending:false}).limit(CONV_LIMIT_STEP),
         supabase.from('tenant_instances').select('id,instance_name,apelido').eq('tenant_id',tid).eq('status','banido'),
       ])
 
@@ -679,19 +747,18 @@ export default function VisaoGeralPage() {
     // Hoje (preset): buckets por hora (00h → hora atual), leitura em tempo real.
     if (!sel.custom && p === '1') {
       const hoje0 = new Date(); hoje0.setHours(0,0,0,0)
-      const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',tid).gte('ultima_mensagem_em',hoje0.toISOString())
+      const msgs = await buscarMensagensPeriodo(supabase, tid, hoje0.toISOString(), new Date().toISOString())
       const y = hoje0.getFullYear(), m = String(hoje0.getMonth()+1).padStart(2,'0'), d = String(hoje0.getDate()).padStart(2,'0')
       const horaAtual = new Date().getHours()
       const chaveHora = (h: number) => `${y}-${m}-${d}T${String(h).padStart(2,'0')}:00:00`
-      const porHora: Record<string,number> = {}
-      for (let h = 0; h <= horaAtual; h++) porHora[chaveHora(h)] = 0
-      ;(data??[]).forEach(c => {
-        const dt = new Date(c.ultima_mensagem_em ?? '')
+      const porHora: Record<string, Set<string>> = {}
+      for (let h = 0; h <= horaAtual; h++) porHora[chaveHora(h)] = new Set()
+      msgs.forEach(msg => {
+        const dt = new Date(msg.criado_em)
         if (isNaN(dt.getTime())) return
-        const key = chaveHora(dt.getHours())
-        if (porHora[key] !== undefined) porHora[key]++
+        porHora[chaveHora(dt.getHours())]?.add(msg.conversation_id)
       })
-      setGrafico(Object.entries(porHora).map(([dia,total])=>({dia,total})))
+      setGrafico(Object.entries(porHora).map(([dia, convs]) => ({ dia, total: convs.size })))
       return
     }
 
@@ -704,12 +771,16 @@ export default function VisaoGeralPage() {
       inicio = new Date(); inicio.setDate(inicio.getDate()-parseInt(p)); inicio.setHours(0,0,0,0)
       fim = new Date(); fim.setHours(23,59,59,999)
     }
-    const { data } = await supabase.from('conversations').select('ultima_mensagem_em').eq('tenant_id',tid).gte('ultima_mensagem_em',inicio.toISOString()).lte('ultima_mensagem_em',fim.toISOString())
-    const porDia: Record<string,number> = {}
+    const msgs = await buscarMensagensPeriodo(supabase, tid, inicio.toISOString(), fim.toISOString())
+    const porDia: Record<string, Set<string>> = {}
     const curr = new Date(inicio)
-    while (curr<=fim) { porDia[curr.toISOString().slice(0,10)]=0; curr.setDate(curr.getDate()+1) }
-    ;(data??[]).forEach(c => { const dia=(c.ultima_mensagem_em??'').slice(0,10); if (porDia[dia]!==undefined) porDia[dia]++ })
-    const resultado = Object.entries(porDia).map(([dia,total])=>({dia,total}))
+    while (curr<=fim) { porDia[toDiaLocal(curr)] = new Set(); curr.setDate(curr.getDate()+1) }
+    msgs.forEach(msg => {
+      const dt = new Date(msg.criado_em)
+      if (isNaN(dt.getTime())) return
+      porDia[toDiaLocal(dt)]?.add(msg.conversation_id)
+    })
+    const resultado = Object.entries(porDia).map(([dia, convs]) => ({ dia, total: convs.size }))
     graficoCache.current[cacheKey] = resultado
     setGrafico(resultado)
   }, [])
@@ -753,7 +824,7 @@ export default function VisaoGeralPage() {
     const novoLimit = convLimit + CONV_LIMIT_STEP
     const supabase = createClient()
     type ConvRaw = { id:string;contato_nome:string;contato_telefone:string;status:string;agente_pausado:boolean;ultima_mensagem_em:string;messages:Array<{conteudo:string;criado_em:string}> }
-    const { data } = await supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tenantId).eq('status','ativa').order('ultima_mensagem_em',{ascending:false}).limit(novoLimit)
+    const { data } = await supabase.from('conversations').select(`id,contato_nome,contato_telefone,status,agente_pausado,ultima_mensagem_em,messages(conteudo,criado_em)`).eq('tenant_id',tenantId).order('ultima_mensagem_em',{ascending:false}).limit(novoLimit)
     const convComMsg: ConversaRecente[] = ((data??[]) as unknown as ConvRaw[]).map(c => {
       const msgs = (c.messages??[]).sort((a,b)=>new Date(b.criado_em).getTime()-new Date(a.criado_em).getTime())
       return { ...c, ultima_mensagem:msgs[0]?.conteudo??'—' }
@@ -762,9 +833,11 @@ export default function VisaoGeralPage() {
   }, [tenantId, convLimit])
 
   useEffect(() => {
-    if (filtroStatus==='todos') setConversasFiltradas(conversas)
-    else if (filtroStatus==='ativo') setConversasFiltradas(conversas.filter(c=>!c.agente_pausado))
-    else setConversasFiltradas(conversas.filter(c=>c.agente_pausado))
+    if (filtroStatus === 'todos') { setConversasFiltradas(conversas); return }
+    if (filtroStatus === 'encerrado') { setConversasFiltradas(conversas.filter(estaEncerrada)); return }
+    setConversasFiltradas(conversas.filter(c =>
+      !estaEncerrada(c) && (filtroStatus === 'pausado' ? c.agente_pausado : !c.agente_pausado)
+    ))
   }, [filtroStatus, conversas])
 
   async function handlePausarRetomar(conversa: ConversaRecente) {
@@ -1020,7 +1093,9 @@ export default function VisaoGeralPage() {
               Volume de conversas — {selTitulo}
             </h2>
             <p className="text-xs mt-0.5" style={{ color:'var(--text-muted)' }}>
-              {graficoPorHora ? 'Total por hora (dia vigente).' : 'Total agregado por dia.'}
+              {graficoPorHora
+                ? 'Conversas com mensagem em cada hora do dia vigente.'
+                : 'Conversas com mensagem em cada dia — uma conversa que segue no dia seguinte conta nos dois.'}
             </p>
           </div>
           <GraficoBarras dados={grafico} crmStats={crmStats} granularidade={graficoPorHora ? 'hora' : 'dia'} onExport={() => exportarGraficoPDF(grafico, selTitulo, graficoPorHora)} />
@@ -1071,12 +1146,13 @@ export default function VisaoGeralPage() {
           <div>
             <h2 className="font-semibold text-sm md:text-base" style={{ color:'var(--text-primary)' }}>Conversas recentes</h2>
             <p className="text-xs mt-0.5 hidden sm:block" style={{ color:'var(--text-muted)' }}>
-              {conversasFiltradas.length} conversa{conversasFiltradas.length!==1?'s':''} ativa{conversasFiltradas.length!==1?'s':''}.
+              {conversasFiltradas.length} conversa{conversasFiltradas.length!==1?'s':''}
+              {filtroStatus!=='todos' && ` ${({ativo:'ativa',pausado:'pausada',encerrado:'encerrada'} as const)[filtroStatus]}${conversasFiltradas.length!==1?'s':''}`}.
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1 rounded-lg p-1" style={{ background:'var(--bg-surface-2)', border:'1px solid var(--border)' }}>
-              {([['todos','Todos'],['ativo','Ativos'],['pausado','Pausados']] as const).map(([val,label]) => (
+              {([['todos','Todas'],['ativo','Ativas'],['pausado','Pausadas'],['encerrado','Encerradas']] as const).map(([val,label]) => (
                 <button key={val} onClick={() => setFiltroStatus(val)}
                   className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors"
                   style={{ background:filtroStatus===val?'var(--bg-hover)':'transparent', color:filtroStatus===val?'var(--text-primary)':'var(--text-muted)' }}>
@@ -1150,24 +1226,32 @@ export default function VisaoGeralPage() {
                         <p className="text-sm truncate" style={{ color:'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
                       </td>
                       <td className="px-6 py-4">
-                        {c.agente_pausado ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B]" /> Pausado
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" /> Ativo
-                          </span>
-                        )}
+                        {(() => {
+                          const rotulo = rotuloStatus(c)
+                          const cor = CORES_STATUS[rotulo]
+                          return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+                              style={{ background:`${cor}1A`, border:`1px solid ${cor}4D`, color:cor }}>
+                              <span className="w-1.5 h-1.5 rounded-full" style={{ background:cor }} /> {rotulo}
+                            </span>
+                          )
+                        })()}
                       </td>
                       <td className="px-6 py-4">
                         <span className="text-sm" style={{ color:'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
                       </td>
                       <td className="px-6 py-4">
-                        <button onClick={() => handlePausarRetomar(c)} disabled={pausando===c.id}
-                          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${c.agente_pausado?'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30':'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'}`}>
-                          {c.agente_pausado?<><Play size={11} /> Retomar</>:<><Pause size={11} /> Pausar</>}
-                        </button>
+                        {/* Pausar/retomar não se aplica a conversa encerrada: o
+                            agente só volta a responder quando o cliente escreve
+                            de novo, e aí a conversa é reaberta pelo webhook. */}
+                        {estaEncerrada(c) ? (
+                          <span className="text-xs" style={{ color:'var(--text-label)' }}>—</span>
+                        ) : (
+                          <button onClick={() => handlePausarRetomar(c)} disabled={pausando===c.id}
+                            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${c.agente_pausado?'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30':'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'}`}>
+                            {c.agente_pausado?<><Play size={11} /> Retomar</>:<><Pause size={11} /> Pausar</>}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1189,19 +1273,24 @@ export default function VisaoGeralPage() {
                         <p className="text-xs" style={{ color:'var(--text-muted)' }}>{formatFone(c.contato_telefone)}</p>
                       </div>
                     </div>
-                    {c.agente_pausado ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[#F59E0B]">Pausado</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#10B981]/10 border border-[#10B981]/30 text-[#10B981]">Ativo</span>
-                    )}
+                    {(() => {
+                      const rotulo = rotuloStatus(c)
+                      const cor = CORES_STATUS[rotulo]
+                      return (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
+                          style={{ background:`${cor}1A`, border:`1px solid ${cor}4D`, color:cor }}>{rotulo}</span>
+                      )
+                    })()}
                   </div>
                   <p className="text-xs truncate" style={{ color:'var(--text-secondary)' }}>{c.ultima_mensagem}</p>
                   <div className="flex items-center justify-between">
                     <span className="text-xs" style={{ color:'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
-                    <button onClick={() => handlePausarRetomar(c)} disabled={pausando===c.id}
-                      className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 ${c.agente_pausado?'bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30':'bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/30'}`}>
-                      {c.agente_pausado?<><Play size={10} /> Retomar</>:<><Pause size={10} /> Pausar</>}
-                    </button>
+                    {!estaEncerrada(c) && (
+                      <button onClick={() => handlePausarRetomar(c)} disabled={pausando===c.id}
+                        className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 ${c.agente_pausado?'bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30':'bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/30'}`}>
+                        {c.agente_pausado?<><Play size={10} /> Retomar</>:<><Pause size={10} /> Pausar</>}
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

@@ -53,35 +53,23 @@ export async function GET(request: Request) {
     const etapas = ETAPAS_FUNIL[funilAtivo] ?? []
     const labels = LABELS_ETAPA[funilAtivo] ?? {}
 
-    // Leads ativos por etapa — LEFT join para não perder leads
+    // Leads por etapa — todos os leads do funil ativo.
+    //
+    // A contagem NÃO depende mais do status da conversa. O cron encerra qualquer
+    // conversa parada há 24h, então dois dias sem mensagem zeravam o funil
+    // inteiro na tela: o lead continuava em "em_negociacao" no banco e a
+    // dashboard mostrava zero. Etapa do funil e status da conversa são coisas
+    // diferentes — quem fecha o lead é a etapa final, não o silêncio do cliente.
     const { data: leadsData } = await supabase
       .from('crm_leads')
-      .select('etapa, conversation_id')
+      .select('etapa')
       .eq('tenant_id', tid)
       .eq('funil_tipo', funilAtivo)
 
-    // Busca status das conversas separadamente para evitar problema do inner join
-    const convIds = (leadsData ?? []).map(l => l.conversation_id).filter(Boolean)
-    const convStatusMap: Record<string, string> = {}
-    if (convIds.length > 0) {
-      const { data: convsData } = await supabase
-        .from('conversations')
-        .select('id, status')
-        .in('id', convIds)
-      ;(convsData ?? []).forEach((c: { id: string; status: string }) => {
-        convStatusMap[c.id] = c.status
-      })
-    }
-
-    // Contagem por etapa — todas as etapas, só ativas
     const contagemEtapa: Record<string, number> = {}
     etapas.forEach(e => { contagemEtapa[e] = 0 })
-    ;(leadsData ?? []).forEach((l: { etapa: string; conversation_id: string }) => {
-      const status = convStatusMap[l.conversation_id]
-      const ativa = status === 'ativa'
-      if (ativa && contagemEtapa[l.etapa] !== undefined) {
-        contagemEtapa[l.etapa]++
-      }
+    ;(leadsData ?? []).forEach((l: { etapa: string }) => {
+      if (contagemEtapa[l.etapa] !== undefined) contagemEtapa[l.etapa]++
     })
 
     const inicioISO = inicioInsights.toISOString()
