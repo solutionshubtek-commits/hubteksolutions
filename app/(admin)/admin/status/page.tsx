@@ -169,6 +169,32 @@ const ACOES: Record<string, Record<string, AcaoContextual[]>> = {
   },
 }
 
+// Instância fora tem causa e conserto próprios — nada a ver com o container da
+// Evolution, que nesse caso está de pé. Orienta para o que resolve: reparear.
+function acoesInstanciaFora(fora: Array<{ instance_name: string; apelido: string | null; tenant_nome: string | null; estado: string }>): AcaoContextual[] {
+  return [
+    {
+      titulo: 'Instâncias sem receber mensagens',
+      descricao: fora
+        .map(i => `${i.tenant_nome ?? '—'} · ${i.apelido ?? i.instance_name} (${i.instance_name}): ${i.estado}`)
+        .join('\n'),
+    },
+    {
+      titulo: 'A Evolution API está no ar',
+      descricao: 'O serviço responde normalmente — o problema é o pareamento destas instâncias com o WhatsApp. Reiniciar o container não resolve e derruba os outros clientes.',
+    },
+    {
+      titulo: 'Como religar',
+      descricao: 'Um restart da instância costuma reconectar sem precisar de QR Code. Se voltar para "connecting", o cliente precisa ler o QR na tela de Reconexão WhatsApp.',
+      codigo: `curl -X POST "$EVOLUTION_API_URL/instance/restart/${fora[0]?.instance_name ?? '<instancia>'}" -H "apikey: $EVOLUTION_API_KEY"`,
+    },
+    {
+      titulo: 'Impacto',
+      descricao: 'Os clientes destes tenants estão mandando mensagem no WhatsApp e ninguém recebe. Não há fila nem recuperação: o que chega enquanto a instância está fora se perde.',
+    },
+  ]
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function statusCor(s: StatusLevel) {
@@ -229,21 +255,59 @@ async function verificarSupabase(): Promise<Omit<ServicoStatus, 'nome' | 'descri
   }
 }
 
+interface InstanciaFora {
+  instance_name: string
+  apelido: string | null
+  tenant_nome: string | null
+  estado: string
+}
+
+// Instâncias fora do ar, guardadas para virarem ação contextual no card.
+let instanciasForaCache: InstanciaFora[] = []
+
 async function verificarEvolution(): Promise<Omit<ServicoStatus, 'nome' | 'descricao' | 'icon' | 'acoes'>> {
   const t = Date.now()
   try {
-    const res = await fetch('/api/admin/health/evolution', { signal: AbortSignal.timeout(5000) })
+    // Timeout maior que os 5s antigos: a rota agora consulta o socket de cada
+    // instância, não só o ping da API.
+    const res = await fetch('/api/admin/health/evolution', { signal: AbortSignal.timeout(15000) })
     const latencia = Date.now() - t
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
+    const data = await res.json() as {
+      total: number; conectadas: number; desconectadas: InstanciaFora[]
+    }
+    instanciasForaCache = data.desconectadas ?? []
+
+    // Banimento é estado terminal e já conhecido — mantê-lo em vermelho deixaria
+    // o painel permanentemente alarmado e treinaria todo mundo a ignorá-lo.
+    // Vermelho fica reservado para queda: instância que deveria estar atendendo
+    // e não está, que é o caso acionável agora.
+    const caidas  = instanciasForaCache.filter(i => i.estado !== 'banido')
+    const banidas = instanciasForaCache.filter(i => i.estado === 'banido')
+    const nomes = (l: InstanciaFora[]) =>
+      l.map(i => i.tenant_nome ?? i.apelido ?? i.instance_name).join(', ')
+
+    if (caidas.length > 0) {
+      return {
+        status: 'erro',
+        latencia,
+        detalhe: `${caidas.length} de ${data.total} instância(s) sem receber: ${nomes(caidas)}`,
+      }
+    }
+    if (banidas.length > 0) {
+      return {
+        status: 'degradado',
+        latencia,
+        detalhe: `${data.conectadas}/${data.total} conectada(s) · banida(s): ${nomes(banidas)}`,
+      }
+    }
     return {
       status: latencia > 3000 ? 'degradado' : 'ok',
       latencia,
-      detalhe: data.instancias
-        ? `${data.instancias} instância(s) ativa(s) · ${latencia}ms`
-        : `Respondendo em ${latencia}ms`,
+      detalhe: `${data.conectadas}/${data.total} instância(s) conectada(s) · ${latencia}ms`,
     }
   } catch (e) {
+    instanciasForaCache = []
     return { status: 'erro', latencia: null, detalhe: `Inacessível: ${(e as Error).message}` }
   }
 }
@@ -344,7 +408,7 @@ function ServicoCard({ servico, index, total }: { servico: ServicoStatus; index:
             <div key={i} className="rounded-lg p-4 space-y-2"
               style={{ background: 'var(--bg-surface)', border: `1px solid ${statusCor(servico.status)}20` }}>
               <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{acao.titulo}</p>
-              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{acao.descricao}</p>
+              <p className="text-xs leading-relaxed whitespace-pre-line" style={{ color: 'var(--text-secondary)' }}>{acao.descricao}</p>
               {acao.codigo && (
                 <code className="block text-xs px-3 py-2 rounded-lg font-mono mt-1"
                   style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: '#10B981' }}>
@@ -407,7 +471,9 @@ export default function StatusPage() {
     setServicos(SERVICOS_BASE.map((base, i) => ({
       ...base,
       ...resultados[i],
-      acoes: ACOES[base.nome]?.[resultados[i].status] ?? [],
+      acoes: base.nome === 'Evolution API' && instanciasForaCache.length > 0
+        ? acoesInstanciaFora(instanciasForaCache)
+        : ACOES[base.nome]?.[resultados[i].status] ?? [],
     })))
 
     setUltimaVerificacao(new Date())
