@@ -167,12 +167,20 @@ export default function CustosIAPage() {
   const [tenants, setTenants] = useState<TenantOption[]>([])
   const [selectedTenant, setSelectedTenant] = useState<string>('todos')
   const [selectedAno, setSelectedAno] = useState<number>(new Date().getFullYear())
+  // 'todos' = ano inteiro consolidado; 1..12 = mês específico. Filtra KPIs,
+  // tabela por cliente e balizador. Os gráficos continuam mostrando os 12 meses
+  // (é o que eles existem para mostrar) e apenas destacam o mês selecionado.
+  const [selectedMes, setSelectedMes] = useState<number | 'todos'>('todos')
   const [rawData, setRawData] = useState<AiUsageRow[]>([])
-  const [conversasPorMes, setConversasPorMes] = useState<Record<string, number>>({})
-  // A consulta de conversas já trazia tenant_id, mas só era agregada por mês —
-  // por isso a coluna "Conversas" da tabela por cliente ficava sempre em zero
-  // enquanto o total do rodapé (que usa conversasPorMes) aparecia certo.
-  const [conversasPorTenant, setConversasPorTenant] = useState<Record<string, number>>({})
+  // Conversas cruas do ano: { tenant_id, mes }. Guardadas sem agregar porque o
+  // filtro de período precisa recortar por mês E por cliente ao mesmo tempo —
+  // um mapa pré-agregado só por mês (como era antes) não permite as duas coisas.
+  const [conversasRaw, setConversasRaw] = useState<Array<{ tenantId: string; mes: number }>>([])
+  // Anos que realmente têm dados. Vem de consulta própria, SEM filtro de ano:
+  // derivar de `rawData` era um beco sem saída, porque a query já filtra por
+  // `ciclo_ano = selectedAno` — o dropdown só listava o ano corrente e não
+  // havia como trocar de ano pela interface.
+  const [anosComDados, setAnosComDados] = useState<number[]>([])
   const [instanciasPorTenant, setInstanciasPorTenant] = useState<Record<string, number>>({})
   const [showCustosModal, setShowCustosModal] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
@@ -186,8 +194,10 @@ export default function CustosIAPage() {
   // passarem por valor confirmado do mês.
   const [custosHerdadosDe, setCustosHerdadosDe] = useState<string | null>(null)
 
-  const anosDisponiveis = Array.from(new Set(rawData.map(r => r.ciclo_ano))).sort((a, b) => b - a)
-  if (anosDisponiveis.length === 0) anosDisponiveis.push(new Date().getFullYear())
+  const anoAtual = new Date().getFullYear()
+  const anosDisponiveis = anosComDados.length > 0
+    ? Array.from(new Set([...anosComDados, anoAtual])).sort((a, b) => b - a)
+    : [anoAtual]
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
@@ -222,28 +232,48 @@ export default function CustosIAPage() {
       if (selectedTenant !== 'todos') convQuery = convQuery.eq('tenant_id', selectedTenant)
       const { data: convData } = await convQuery
 
-      const porMes: Record<string, number> = {}
-      const porTenant: Record<string, number> = {}
-      ;(convData ?? []).forEach((c: { criado_em: string; tenant_id: string }) => {
-        const mes = String(new Date(c.criado_em).getMonth() + 1)
-        porMes[mes] = (porMes[mes] ?? 0) + 1
-        porTenant[c.tenant_id] = (porTenant[c.tenant_id] ?? 0) + 1
-      })
-      setConversasPorMes(porMes)
-      setConversasPorTenant(porTenant)
+      setConversasRaw(
+        (convData ?? []).map((c: { criado_em: string; tenant_id: string }) => ({
+          tenantId: c.tenant_id,
+          // getUTCMonth, não getMonth. `ai_usage.ciclo_mes` é gravado no
+          // servidor a partir de `new Date().getMonth()+1`, que na Vercel roda
+          // em UTC. Usar o mês LOCAL do navegador (BRT = UTC-3) jogava as
+          // conversas criadas entre 21h e meia-noite para o mês anterior,
+          // enquanto os tokens da mesma conversa ficavam no mês seguinte — os
+          // gráficos "Custo mensal" e "Conversas por mês" desalinhavam na virada.
+          mes: new Date(c.criado_em).getUTCMonth() + 1,
+        }))
+      )
     } finally {
       setLoading(false)
     }
   }, [selectedTenant, selectedAno])
+
+  // Anos com dados — consulta própria, sem filtro de ano. Precisa ser separada
+  // de fetchData justamente porque aquela query filtra por `selectedAno`.
+  const fetchAnos = useCallback(async () => {
+    const supabase = createClient()
+    const { data } = await supabase.from('ai_usage').select('ciclo_ano')
+    const anos = Array.from(new Set((data ?? []).map((r: { ciclo_ano: number }) => r.ciclo_ano)))
+    setAnosComDados(anos)
+  }, [])
+
+  useEffect(() => { fetchAnos() }, [fetchAnos])
 
   useEffect(() => { fetchData() }, [fetchData])
 
   // ── Custos fixos: carregar / salvar ──
   //
   // Escopo por competência = mês selecionado no seletor de fechamento
-  // (exportMes/selectedAno), o mesmo período que alimenta os cards de baliza e
+  // (balizMes/selectedAno), o mesmo período que alimenta os cards de baliza e
   // o TXT de fechamento. Trocar o mês recarrega os custos daquele mês.
-  const competencia = `${selectedAno}-${String(exportMes).padStart(2, '0')}`
+  //
+  // O balizador é sempre MENSAL — é referência de fechamento. Quando o seletor
+  // de período está num mês, segue esse mês; na visão consolidada do ano, usa o
+  // próprio seletor (`exportMes`), que só aparece nesse caso. Antes existiam
+  // dois seletores de mês concorrentes na mesma tela.
+  const balizMes = selectedMes === 'todos' ? exportMes : selectedMes
+  const competencia = `${selectedAno}-${String(balizMes).padStart(2, '0')}`
 
   const carregarCustos = useCallback(async () => {
     setErroCustos('')
@@ -308,11 +338,32 @@ export default function CustosIAPage() {
 
   // ── Derivados ──
 
-  const totalCusto = rawData.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
-  const totalTokens = rawData.reduce((s, r) => s + r.tokens_entrada + r.tokens_saida, 0)
-  const totalOpenAI = rawData.filter(r => r.motor_utilizado === 'openai').reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
-  const totalAnthropic = rawData.filter(r => r.motor_utilizado === 'anthropic').reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
-  const totalConversasAno = Object.values(conversasPorMes).reduce((s, v) => s + v, 0)
+  // Recorte do período: 'todos' = ano inteiro, número = aquele mês.
+  const noPeriodo = useCallback(
+    (mes: number) => selectedMes === 'todos' || mes === selectedMes,
+    [selectedMes]
+  )
+
+  const dadosPeriodo     = rawData.filter(r => noPeriodo(r.ciclo_mes))
+  const conversasPeriodo = conversasRaw.filter(c => noPeriodo(c.mes))
+
+  // Rótulo do período, usado nos títulos e nos KPIs para o número exibido nunca
+  // ficar ambíguo entre "ano inteiro" e "mês selecionado".
+  const periodoLabel = selectedMes === 'todos'
+    ? String(selectedAno)
+    : `${MESES_FULL[selectedMes - 1]}/${selectedAno}`
+
+  // Mapa mês → total de conversas (do ano inteiro; os gráficos precisam dos 12).
+  const conversasPorMes = conversasRaw.reduce<Record<string, number>>((acc, c) => {
+    acc[String(c.mes)] = (acc[String(c.mes)] ?? 0) + 1
+    return acc
+  }, {})
+
+  const totalCusto = dadosPeriodo.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
+  const totalTokens = dadosPeriodo.reduce((s, r) => s + r.tokens_entrada + r.tokens_saida, 0)
+  const totalOpenAI = dadosPeriodo.filter(r => r.motor_utilizado === 'openai').reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
+  const totalAnthropic = dadosPeriodo.filter(r => r.motor_utilizado === 'anthropic').reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
+  const totalConversasPeriodo = conversasPeriodo.length
   const totalFixoMensal = Object.values(custosFixos).reduce((s, v) => s + v, 0)
   const fixoPorCliente = numClientes > 0 ? totalFixoMensal / numClientes : totalFixoMensal
 
@@ -339,15 +390,37 @@ export default function CustosIAPage() {
 
   const clienteMap: Record<string, ClienteRow> = {}
   if (selectedTenant === 'todos') {
-    rawData.forEach(r => {
-      const nome = getTenantNome(r.tenants)
-      const planoRaw = Array.isArray(r.tenants) ? r.tenants[0]?.plano : (r.tenants as { plano?: string } | null)?.plano
-      const plano = planoRaw ?? 'essencial'
+    // Semeia com TODOS os tenants, não só com quem tem linha em ai_usage.
+    // Antes a tabela era construída apenas a partir de rawData, então um cliente
+    // com conversas mas sem consumo registrado sumia da listagem — e como o
+    // registro de consumo é reconhecidamente incompleto (logAiUsage só roda no
+    // fim do fluxo), isso escondia clientes reais. Agora ele aparece com custo
+    // zero, que é uma informação, em vez de não aparecer, que é um buraco.
+    tenants.forEach(t => {
+      clienteMap[t.id] = {
+        tenantId: t.id, nome: t.nome, plano: t.plano ?? 'essencial',
+        openai_tokens: 0, anthropic_tokens: 0, openai_custo: 0, anthropic_custo: 0,
+        total_custo: 0, total_tokens: 0, conversas_ano: 0,
+      }
+    })
+
+    // Conversas do período, por cliente.
+    conversasPeriodo.forEach(c => {
+      if (clienteMap[c.tenantId]) clienteMap[c.tenantId].conversas_ano += 1
+    })
+
+    dadosPeriodo.forEach(r => {
+      // Fallback para tenant que exista em ai_usage mas não na lista de tenants
+      // (cliente removido, por exemplo) — melhor mostrar que ocultar.
       if (!clienteMap[r.tenant_id]) {
-        clienteMap[r.tenant_id] = { tenantId: r.tenant_id, nome, plano, openai_tokens: 0, anthropic_tokens: 0, openai_custo: 0, anthropic_custo: 0, total_custo: 0, total_tokens: 0, conversas_ano: 0 }
+        const planoRaw = Array.isArray(r.tenants) ? r.tenants[0]?.plano : (r.tenants as { plano?: string } | null)?.plano
+        clienteMap[r.tenant_id] = {
+          tenantId: r.tenant_id, nome: getTenantNome(r.tenants), plano: planoRaw ?? 'essencial',
+          openai_tokens: 0, anthropic_tokens: 0, openai_custo: 0, anthropic_custo: 0,
+          total_custo: 0, total_tokens: 0, conversas_ano: 0,
+        }
       }
       const t = clienteMap[r.tenant_id]
-      t.conversas_ano = conversasPorTenant[r.tenant_id] ?? 0
       const tok = r.tokens_entrada + r.tokens_saida
       const custo = Number(r.custo_estimado_reais)
       t.total_tokens += tok; t.total_custo += custo
@@ -355,10 +428,11 @@ export default function CustosIAPage() {
       else { t.anthropic_tokens += tok; t.anthropic_custo += custo }
     })
   }
-  const clientes = Object.values(clienteMap).sort((a, b) => b.total_custo - a.total_custo)
-  // Total do rodapé da tabela = soma das linhas exibidas. Antes usava
-  // totalConversasAno (todas as conversas do ano, inclusive de tenants sem
-  // consumo de IA registrado), o que não fechava com a coluna.
+  // Ordena por custo e, no empate (vários clientes zerados), por conversas —
+  // senão a lista embaralha a cada render sem critério visível.
+  const clientes = Object.values(clienteMap).sort(
+    (a, b) => b.total_custo - a.total_custo || b.conversas_ano - a.conversas_ano
+  )
   const totalConversasClientes = clientes.reduce((s, c) => s + c.conversas_ano, 0)
 
   const mesAtual = new Date().getMonth() + 1
@@ -369,11 +443,12 @@ export default function CustosIAPage() {
   })()
 
   // ── Balizador do mês selecionado ──
+  //
   const balizTenant = tenants.find(t => t.id === selectedTenant)
   const balizPlanoKey = balizTenant?.plano ?? 'essencial'
   const balizPlano = PLANOS[balizPlanoKey] ?? PLANOS.essencial
-  const balizRows = rawData.filter(r => r.ciclo_mes === exportMes)
-  const balizConversas = conversasPorMes[String(exportMes)] ?? 0
+  const balizRows = rawData.filter(r => r.ciclo_mes === balizMes)
+  const balizConversas = conversasPorMes[String(balizMes)] ?? 0
   const balizCustoAPI = balizRows.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
   const balizInstanciasExtras = selectedTenant !== 'todos'
     ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
@@ -392,18 +467,23 @@ export default function CustosIAPage() {
     const nomeCliente = tenant?.nome ?? 'Consolidado'
     const planoKey = tenant?.plano ?? 'essencial'
     const plano = PLANOS[planoKey] ?? PLANOS.essencial
-    const mesRows = rawData.filter(r => r.ciclo_mes === exportMes)
-    const conversas = conversasPorMes[String(exportMes)] ?? 0
+    const mesRows = rawData.filter(r => r.ciclo_mes === balizMes)
+    const conversas = conversasPorMes[String(balizMes)] ?? 0
     const tokens = mesRows.reduce((s, r) => s + r.tokens_entrada + r.tokens_saida, 0)
     const custoAPI = mesRows.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
     const instExtras = selectedTenant !== 'todos'
       ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
       : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
-    const custoInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
-    const custoTotal = custoAPI + fixoPorCliente + custoInstExtras
-    const margem = plano.valor - custoTotal
+    // Instância extra é RECEITA (o cliente paga R$ 67 por instância adicional),
+    // não custo. O card "Margem estimada" da tela sempre tratou assim, mas o TXT
+    // e o PDF somavam ao custo e subtraíam da margem — o mesmo fechamento dava
+    // números diferentes na tela e no arquivo entregue ao cliente. Alinhado com
+    // a tela, que é a definição correta.
+    const receitaInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
+    const custoTotal = custoAPI + fixoPorCliente
+    const margem = plano.valor + receitaInstExtras - custoTotal
     const custoPorConv = conversas > 0 ? custoAPI / conversas : 0
-    const mesNome = `${MESES_FULL[exportMes - 1]} ${selectedAno}`
+    const mesNome = `${MESES_FULL[balizMes - 1]} ${selectedAno}`
     const pad = (s: string, n: number) => s.padEnd(n, ' ')
 
     const linhas = [
@@ -417,10 +497,10 @@ export default function CustosIAPage() {
       `${pad('Total de tokens:', 25)} ${tokens.toLocaleString('pt-BR')}`,
       `${pad('Custo estimado (API):', 25)} ${fmtBRL(custoAPI)}`,
       `${pad('Custo fixo rateado:', 25)} ${fmtBRL(fixoPorCliente)}`,
-      ...(instExtras > 0 ? [`${pad('Instâncias extras:', 25)} ${instExtras}x ${fmtBRL(CUSTO_INSTANCIA_EXTRA)} = ${fmtBRL(custoInstExtras)}`] : []),
       `${pad('Custo total operacional:', 25)} ${fmtBRL(custoTotal)}`,
       `─────────────────────────────────────`,
       `${pad('Valor do plano:', 25)} ${fmtBRL(plano.valor)}`,
+      ...(instExtras > 0 ? [`${pad('Instâncias extras:', 25)} ${instExtras}x ${fmtBRL(CUSTO_INSTANCIA_EXTRA)} = ${fmtBRL(receitaInstExtras)} (receita)`] : []),
       `${pad('Margem estimada:', 25)} ${fmtBRL(margem)}`,
       `${pad('Custo médio/conversa:', 25)} ${fmtBRL(custoPorConv)}`,
       `─────────────────────────────────────`,
@@ -440,7 +520,7 @@ export default function CustosIAPage() {
       `Créditos OpenAI:    ${fmtBRL(custosFixos.creditosOpenai)}`,
       `Créditos Anthropic: ${fmtBRL(custosFixos.creditosAnthropic)}`,
       `Total fixo: ${fmtBRL(totalFixoMensal)} ÷ ${numClientes} cliente(s) = ${fmtBRL(fixoPorCliente)}/cliente`,
-      ...(instExtras > 0 ? [`Instâncias extras: ${instExtras}x R$ ${CUSTO_INSTANCIA_EXTRA.toFixed(2)} = ${fmtBRL(custoInstExtras)}`] : []),
+      ...(instExtras > 0 ? [`Instâncias extras (receita): ${instExtras}x R$ ${CUSTO_INSTANCIA_EXTRA.toFixed(2)} = ${fmtBRL(receitaInstExtras)}`] : []),
       ``,
       `─────────────────────────────────────`,
       `Hubtek Solutions — app.hubteksolutions.tech`,
@@ -450,7 +530,7 @@ export default function CustosIAPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `fechamento_${nomeCliente.replace(/\s+/g, '_')}_${MESES_LABEL[exportMes - 1]}${selectedAno}.txt`
+    a.download = `fechamento_${nomeCliente.replace(/\s+/g, '_')}_${MESES_LABEL[balizMes - 1]}${selectedAno}.txt`
     a.click()
     URL.revokeObjectURL(url)
     setShowExportModal(false)
@@ -462,24 +542,25 @@ export default function CustosIAPage() {
     const nomeCliente = tenant?.nome ?? 'Consolidado'
     const planoKey = tenant?.plano ?? 'essencial'
     const plano = PLANOS[planoKey] ?? PLANOS.essencial
-    const mesRows = rawData.filter(r => r.ciclo_mes === exportMes)
-    const conversas = conversasPorMes[String(exportMes)] ?? 0
+    const mesRows = rawData.filter(r => r.ciclo_mes === balizMes)
+    const conversas = conversasPorMes[String(balizMes)] ?? 0
     const custoAPI = mesRows.reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
     const instExtras = selectedTenant !== 'todos'
       ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
       : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
-    const custoInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
-    const custoTotal = custoAPI + fixoPorCliente + custoInstExtras
-    const margem = plano.valor - custoTotal
-    const mesNome = `${MESES_FULL[exportMes - 1]} ${selectedAno}`
+    // Mesma correção do TXT: instância extra é receita, não custo.
+    const receitaInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
+    const custoTotal = custoAPI + fixoPorCliente
+    const margem = plano.valor + receitaInstExtras - custoTotal
+    const mesNome = `${MESES_FULL[balizMes - 1]} ${selectedAno}`
 
     const linhasPDF = [
       { descricao: 'Conversas iniciadas',     valor: conversas },
       { descricao: 'Custo estimado (API)',     valor: fmtBRL(custoAPI) },
       { descricao: 'Custo fixo rateado',       valor: fmtBRL(fixoPorCliente) },
-      ...(instExtras > 0 ? [{ descricao: `Instâncias extras (${instExtras}x R$${CUSTO_INSTANCIA_EXTRA})`, valor: fmtBRL(custoInstExtras) }] : []),
       { descricao: 'Custo total operacional',  valor: fmtBRL(custoTotal) },
       { descricao: 'Valor do plano',           valor: fmtBRL(plano.valor) },
+      ...(instExtras > 0 ? [{ descricao: `Instâncias extras — receita (${instExtras}x R$${CUSTO_INSTANCIA_EXTRA})`, valor: fmtBRL(receitaInstExtras) }] : []),
       { descricao: 'Margem estimada',          valor: fmtBRL(margem) },
     ]
 
@@ -491,7 +572,7 @@ export default function CustosIAPage() {
         { label: 'Valor',     key: 'valor',     align: 'right' },
       ],
       linhas: linhasPDF,
-      nomeArquivo: `fechamento_${nomeCliente.replace(/\s+/g, '_')}_${MESES_LABEL[exportMes - 1]}${selectedAno}`,
+      nomeArquivo: `fechamento_${nomeCliente.replace(/\s+/g, '_')}_${MESES_LABEL[balizMes - 1]}${selectedAno}`,
     })
     setShowExportModal(false)
   }
@@ -511,6 +592,13 @@ export default function CustosIAPage() {
           <SelectField value={selectedAno} onChange={v => setSelectedAno(Number(v))}>
             {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
           </SelectField>
+          <SelectField
+            value={selectedMes}
+            onChange={v => setSelectedMes(v === 'todos' ? 'todos' : Number(v))}
+          >
+            <option value="todos">Ano inteiro (consolidado)</option>
+            {MESES_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </SelectField>
           <SelectField value={selectedTenant} onChange={v => setSelectedTenant(v)}>
             <option value="todos">Todos os clientes</option>
             {tenants.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
@@ -528,9 +616,9 @@ export default function CustosIAPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        <KpiCard icon={<DollarSign size={18} />} label="Custo Total no Ano" value={fmtBRL(totalCusto)} accent="#10B981" />
-        <KpiCard icon={<MessageSquare size={18} />} label="Conversas no Ano" value={totalConversasAno.toLocaleString('pt-BR')} accent="#6366F1"
-          sub={totalConversasAno > 0 ? `~${fmtBRL(totalCusto / totalConversasAno)}/conversa` : undefined} />
+        <KpiCard icon={<DollarSign size={18} />} label={`Custo Total — ${periodoLabel}`} value={fmtBRL(totalCusto)} accent="#10B981" />
+        <KpiCard icon={<MessageSquare size={18} />} label={`Conversas — ${periodoLabel}`} value={totalConversasPeriodo.toLocaleString('pt-BR')} accent="#6366F1"
+          sub={totalConversasPeriodo > 0 ? `~${fmtBRL(totalCusto / totalConversasPeriodo)}/conversa` : undefined} />
         <KpiCard icon={<BarChart3 size={18} />} label="Tokens Consumidos" value={fmtTokens(totalTokens)} accent="#8B5CF6" />
         <KpiCard icon={<Bot size={18} />} label="Custo OpenAI" value={fmtBRL(totalOpenAI)} accent="#10A37F"
           sub={totalCusto > 0 ? `${((totalOpenAI / totalCusto) * 100).toFixed(0)}% do total` : undefined} />
@@ -579,13 +667,24 @@ export default function CustosIAPage() {
       <div className="rounded-xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <div>
-            <h2 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Balizador de cobrança</h2>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>Referência para fechamento mensal</p>
+            <h2 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+              Balizador de cobrança — {MESES_FULL[balizMes - 1]}/{selectedAno}
+            </h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+              {selectedMes === 'todos'
+                ? 'Referência para fechamento mensal — escolha o mês ao lado'
+                : 'Referência para fechamento mensal — segue o período selecionado acima'}
+            </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <SelectField value={exportMes} onChange={v => setExportMes(Number(v))}>
-              {MESES_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-            </SelectField>
+            {/* Só aparece na visão consolidada do ano. Com um mês escolhido no
+                seletor de período, o balizador segue aquele mês — dois seletores
+                de mês na mesma tela se contradiziam. */}
+            {selectedMes === 'todos' && (
+              <SelectField value={exportMes} onChange={v => setExportMes(Number(v))}>
+                {MESES_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+              </SelectField>
+            )}
             <div className="relative">
               <button
                 onClick={() => setShowExportModal(prev => !prev)}
@@ -651,7 +750,7 @@ export default function CustosIAPage() {
       {selectedTenant === 'todos' && (
         <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)' }}>
           <div className="px-5 py-4 flex items-center justify-between" style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
-            <h2 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Consumo por cliente — {selectedAno}</h2>
+            <h2 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Consumo por cliente — {periodoLabel}</h2>
             <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
               <Users size={13} />{clientes.length} cliente(s)
             </span>
@@ -758,7 +857,7 @@ export default function CustosIAPage() {
               <button onClick={() => setShowCustosModal(false)}><X size={18} style={{ color: 'var(--text-secondary)' }} /></button>
             </div>
             <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-              Valores de <strong>{MESES_FULL[exportMes - 1]}/{selectedAno}</strong>, em R$. Rateados pelo número de clientes ativos para calcular o custo por cliente.
+              Valores de <strong>{MESES_FULL[balizMes - 1]}/{selectedAno}</strong>, em R$. Rateados pelo número de clientes ativos para calcular o custo por cliente.
             </p>
 
             {custosHerdadosDe && (
