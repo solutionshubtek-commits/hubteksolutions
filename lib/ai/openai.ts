@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { registrarUso, type UsoCtx } from './uso'
 
 // Cliente único de toda a aplicação. Antes cada arquivo criava o seu com só a
 // apiKey, o que deixava todos com os padrões do SDK — inclusive o timeout de
@@ -127,16 +128,22 @@ export async function transcribeAudio(
   return transcription.text
 }
 
+export const MODELO_VISAO = 'gpt-4o'
+
+// `ctx` opcional registra o consumo em ai_usage. Interpretar imagem roda em
+// gpt-4o e a imagem em si pesa na entrada, então é a auxiliar mais cara por
+// chamada — e não aparecia em relatório nenhum.
 export async function interpretImage(
   base64: string,
   mimetype: string,
-  caption?: string
+  caption?: string,
+  ctx?: UsoCtx
 ): Promise<string> {
   const prompt = caption
     ? `Analise esta imagem. Legenda do usuário: "${caption}". Descreva o que vê e interprete a intenção da mensagem.`
     : 'Analise esta imagem e descreva o que vê, interpretando a intenção da mensagem.'
   const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: MODELO_VISAO,
     messages: [
       {
         role: 'user',
@@ -148,5 +155,11 @@ export async function interpretImage(
     ],
     max_tokens: 500,
   })
+  await registrarUso(
+    ctx,
+    MODELO_VISAO,
+    response.usage?.prompt_tokens ?? 0,
+    response.usage?.completion_tokens ?? 0
+  )
   return response.choices[0]?.message?.content ?? ''
 }

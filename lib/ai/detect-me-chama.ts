@@ -4,6 +4,9 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { openaiClient as openai } from './openai'
+import { registrarUso } from './uso'
+
+const MOTOR_DETECCAO = 'gpt-4o-mini'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,7 +45,7 @@ export async function detectarMeChama(params: {
   // Chama IA para extrair intenção e tempo
   const agora = new Date().toISOString()
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: MOTOR_DETECCAO,
     temperature: 0,
     max_tokens: 200,
     messages: [
@@ -71,6 +74,15 @@ Regras:
       },
     ],
   })
+
+  // Registrado antes de qualquer `return` de parse: o token foi gasto na
+  // OpenAI independentemente de a resposta ser aproveitável.
+  await registrarUso(
+    { supabase, tenantId, conversationId },
+    MOTOR_DETECCAO,
+    completion.usage?.prompt_tokens ?? 0,
+    completion.usage?.completion_tokens ?? 0
+  )
 
   let result: {
     detectado: boolean

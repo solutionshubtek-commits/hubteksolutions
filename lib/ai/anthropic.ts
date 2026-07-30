@@ -3,6 +3,10 @@ import type { ChatMessage, ChatConfig, ChatCompletionResult } from './openai'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
+// Exportado para a precificação em lib/ai/uso.ts poder casar o custo com o
+// modelo que realmente respondeu, em vez de assumir um preço por provedor.
+export const MODELO_ANTHROPIC = 'claude-sonnet-4-6'
+
 // Mesmo contrato de interface que openAIChatCompletion para failover transparente
 export async function anthropicChatCompletion(
   messages: ChatMessage[],
@@ -12,7 +16,7 @@ export async function anthropicChatCompletion(
   const chatMessages = messages.filter(m => m.role !== 'system')
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: MODELO_ANTHROPIC,
     max_tokens: config.maxTokens ?? 1000,
     temperature: config.temperature ?? 0.7,
     system: systemMessage?.content,

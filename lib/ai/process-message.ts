@@ -11,7 +11,8 @@ import {
   logAiUsage,
 } from '@/lib/supabase/queries/conversations'
 import { openAIChatCompletion, openAIChatCompletionWithTools, openaiClient } from './openai'
-import { anthropicChatCompletion } from './anthropic'
+import { registrarUso, calcularCusto, type UsoCtx } from './uso'
+import { anthropicChatCompletion, MODELO_ANTHROPIC } from './anthropic'
 import { transcribeAudio, interpretImage } from './openai'
 import { generateEmbedding } from './embeddings'
 import { sendTextMessage, sendPresence, downloadMediaAsBase64 } from '@/lib/evolution/client'
@@ -44,11 +45,12 @@ const DIAS_PT: Record<number, string> = {
   0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab',
 }
 
-const CUSTO_POR_1K: Record<string, { entrada: number; saida: number }> = {
-  openai:    { entrada: 0.025, saida: 0.1 },
-  anthropic: { entrada: 0.015, saida: 0.075 },
-}
+// Precificação por modelo e registro de consumo vivem em lib/ai/uso.ts — ver o
+// comentário lá sobre por que ficam em módulo separado (import circular).
 
+// Modelo do fluxo principal — é o padrão de openAIChatCompletion quando
+// `config.model` não é informado (ver lib/ai/openai.ts).
+const MOTOR_PRINCIPAL_OPENAI     = 'gpt-4o'
 const MOTOR_PERFIL               = 'gpt-4o-mini'
 // Modelo das chamadas auxiliares que não falam com o cliente (correção da
 // pergunta, resumo do histórico). Cota separada da do gpt-4o e ~16x mais barato.
@@ -188,10 +190,6 @@ CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em quali
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function calcularCusto(motor: string, tokensIn: number, tokensOut: number): number {
-  const tabela = CUSTO_POR_1K[motor] ?? CUSTO_POR_1K.openai
-  return (tokensIn / 1000) * tabela.entrada + (tokensOut / 1000) * tabela.saida
-}
 
 function isWithinOperatingHours(horarioInicio: string, horarioFim: string, diasFuncionamento: string[]): boolean {
   const agora = new Date()
@@ -622,7 +620,8 @@ async function salvarPerfilCliente(
 }
 
 async function extrairPerfilDaConversa(
-  mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>
+  mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>,
+  ctx?: UsoCtx
 ): Promise<PerfilExtraido | null> {
   if (mensagens.length === 0) return null
   const apenasCliente = mensagens
@@ -656,6 +655,12 @@ Não inclua informações sobre agendamentos, datas ou horários marcados no res
         { role: 'user', content: apenasCliente },
       ],
     })
+    await registrarUso(
+      ctx,
+      MOTOR_PERFIL,
+      response.usage?.prompt_tokens ?? 0,
+      response.usage?.completion_tokens ?? 0
+    )
     const raw = response.choices[0]?.message?.content?.trim() ?? ''
     if (!raw) return null
     return JSON.parse(raw) as PerfilExtraido
@@ -1107,17 +1112,24 @@ function normalizarTelefone(tel: string, dddPadrao = '51'): string {
 // Correção ortográfica: tarefa mecânica, sem ganho perceptível no modelo maior.
 // Roda no mini para sair do teto de tokens/minuto do gpt-4o, que é o gargalo do
 // fluxo principal (as cotas da OpenAI são por modelo).
-async function normalizarPergunta(pergunta: string): Promise<string> {
+async function normalizarPergunta(pergunta: string, ctx?: UsoCtx): Promise<string> {
   try {
     const resposta = await openAIChatCompletion([
       { role: 'system', content: 'Corrija erros ortográficos e expanda abreviações do texto abaixo. Retorne apenas o texto corrigido, sem explicações.' },
       { role: 'user', content: pergunta },
     ], { temperature: 0, maxTokens: 100, model: MOTOR_AUXILIAR })
+    await registrarUso(ctx, MOTOR_AUXILIAR, resposta.tokensIn, resposta.tokensOut)
     return resposta.content.trim() || pergunta
   } catch { return pergunta }
 }
 
-async function expandirPergunta(pergunta: string, contextoAnterior?: string): Promise<string> {
+// AJUSTE (revisão de custos 30/07): passou a rodar no MOTOR_AUXILIAR. Era a
+// única auxiliar que ainda caía no padrão do openAIChatCompletion — gpt-4o —
+// por omissão do campo `model`, não por decisão: gerar palavras-chave para o
+// RAG é a mesma classe de tarefa mecânica que a correção ortográfica acima.
+// Além do custo, consumia o teto de tokens/minuto do gpt-4o, que é o gargalo
+// de conversas simultâneas.
+async function expandirPergunta(pergunta: string, contextoAnterior?: string, ctx?: UsoCtx): Promise<string> {
   try {
     const contexto = contextoAnterior
       ? `Contexto da conversa anterior: "${contextoAnterior}"\nPergunta atual: "${pergunta}"`
@@ -1125,14 +1137,16 @@ async function expandirPergunta(pergunta: string, contextoAnterior?: string): Pr
     const resposta = await openAIChatCompletion([
       { role: 'system', content: 'Dado o texto abaixo, gere uma lista de 8 a 12 palavras-chave semânticas relacionadas ao tema. Retorne apenas as palavras separadas por espaço, sem pontuação.' },
       { role: 'user', content: contexto },
-    ], { temperature: 0, maxTokens: 60 })
+    ], { temperature: 0, maxTokens: 60, model: MOTOR_AUXILIAR })
+    await registrarUso(ctx, MOTOR_AUXILIAR, resposta.tokensIn, resposta.tokensOut)
     const palavras = resposta.content.trim()
     return palavras ? `${pergunta} ${palavras}` : pergunta
   } catch { return pergunta }
 }
 
 async function gerarResumoHistorico(
-  mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>
+  mensagens: Array<{ origem: string; conteudo: string | null; transcricao?: string | null }>,
+  ctx?: UsoCtx
 ): Promise<string> {
   if (mensagens.length <= 10) return ''
   try {
@@ -1146,6 +1160,7 @@ async function gerarResumoHistorico(
       // Resumo de histórico também roda no mini: é a chamada auxiliar mais cara
       // em tokens de entrada (~1.5k) e a que mais pesava no teto do gpt-4o.
     ], { temperature: 0, maxTokens: 200, model: MOTOR_AUXILIAR })
+    await registrarUso(ctx, MOTOR_AUXILIAR, resposta.tokensIn, resposta.tokensOut)
     return resposta.content.trim()
   } catch { return '' }
 }
@@ -1805,8 +1820,8 @@ async function classificarEtapaCRM({
   }
 
   try {
-    const { choices } = await openaiClient.chat.completions.create({
-      model: 'gpt-4o-mini',
+    const respostaCRM = await openaiClient.chat.completions.create({
+      model: MOTOR_AUXILIAR,
       temperature: 0,
       max_tokens: 30,
       messages: [
@@ -1834,7 +1849,14 @@ Regras:
       ],
     })
 
-    const novaEtapa = choices[0]?.message?.content?.trim().toLowerCase() ?? 'manter'
+    await registrarUso(
+      { supabase, tenantId, conversationId },
+      MOTOR_AUXILIAR,
+      respostaCRM.usage?.prompt_tokens ?? 0,
+      respostaCRM.usage?.completion_tokens ?? 0
+    )
+
+    const novaEtapa = respostaCRM.choices[0]?.message?.content?.trim().toLowerCase() ?? 'manter'
 
     if (
       novaEtapa === 'manter' ||
@@ -1901,6 +1923,11 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   const conversa = await reativarOuCriarConversa(
     supabase, payload.tenantId, payload.phone, payload.pushName, payload.instanceName
   )
+
+  // Contexto de custo: toda chamada de IA deste atendimento é atribuída a este
+  // tenant/conversa em ai_usage. Definido logo após `conversa` porque a
+  // interpretação de imagem, mais abaixo, já precisa dele.
+  const usoCtx: UsoCtx = { supabase, tenantId: payload.tenantId, conversationId: conversa.id }
 
   let tipoDb = 'texto'
   if (payload.messageType === 'audioMessage')         tipoDb = 'audio'
@@ -1980,7 +2007,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   if (payload.messageType === 'imageMessage') {
     try {
       const { base64, mimetype } = await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
-      const descricao = await interpretImage(base64, mimetype, payload.caption)
+      const descricao = await interpretImage(base64, mimetype, payload.caption, usoCtx)
       conteudoProcessado = payload.caption ? `${payload.caption}\n[Imagem: ${descricao}]` : `[Imagem: ${descricao}]`
       try {
         const ext = mimetype.includes('png') ? 'png' : mimetype.includes('webp') ? 'webp' : 'jpg'
@@ -2151,12 +2178,12 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   }
 
   const historico         = await getRecentMessages(supabase, conversa.id, 20)
-  const historicoResumido = await gerarResumoHistorico(historico)
+  const historicoResumido = await gerarResumoHistorico(historico, usoCtx)
   const historicoRecente  = historico.slice(-10)
 
   const totalMensagensCliente = historico.filter(m => m.origem === 'cliente').length
   if (deveExtrairPerfil(totalMensagensCliente)) {
-    extrairPerfilDaConversa(historico)
+    extrairPerfilDaConversa(historico, usoCtx)
       .then(async (extraido) => {
         if (!extraido) return
         const temDados = extraido.nome || extraido.cidade ||
@@ -2177,11 +2204,11 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (intencao !== 'saudacao') {
     try {
-      const perguntaNormalizada = await normalizarPergunta(conteudoProcessado)
+      const perguntaNormalizada = await normalizarPergunta(conteudoProcessado, usoCtx)
       const ultimaMsgAgente = historico.filter(m => m.origem === 'agente').slice(-1)[0]
       const contextoAnterior = ultimaMsgAgente?.conteudo ?? undefined
-      const textoParaEmbedding = await expandirPergunta(perguntaNormalizada, contextoAnterior)
-      const embedding = await generateEmbedding(textoParaEmbedding)
+      const textoParaEmbedding = await expandirPergunta(perguntaNormalizada, contextoAnterior, usoCtx)
+      const embedding = await generateEmbedding(textoParaEmbedding, usoCtx)
       const trechosDesejados = PERGUNTA_AMPLA_REGEX.test(conteudoProcessado)
         ? RAG_TRECHOS_PERGUNTA_AMPLA
         : RAG_TRECHOS_PADRAO
@@ -2616,13 +2643,18 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'solicitacao')
   }
 
+  // `motorUsado` é o PROVEDOR ('openai' | 'anthropic'); calcularCusto precisa do
+  // MODELO. Antes o provedor era passado direto e a tabela de preços tinha uma
+  // linha por provedor — o que cobrava qualquer chamada da OpenAI como gpt-4o.
+  const modeloUsado = motorUsado === 'anthropic' ? MODELO_ANTHROPIC : MOTOR_PRINCIPAL_OPENAI
+
   await logAiUsage(supabase, {
     tenantId:       payload.tenantId,
     conversationId: conversa.id,
     tokensIn:       resultado.tokensIn,
     tokensOut:      resultado.tokensOut,
     motor:          motorUsado,
-    custoReais:     calcularCusto(motorUsado, resultado.tokensIn, resultado.tokensOut),
+    custoReais:     calcularCusto(modeloUsado, resultado.tokensIn, resultado.tokensOut),
   })
 
   if (!recontotoCriadoPorTool) {
