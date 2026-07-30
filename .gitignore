@@ -5,4 +5,8 @@ out
 build
 dist
 
+# Cache incremental do TypeScript — artefato de build, muda a cada tsc e só
+# gerava ruído no diff. Padrão nos projetos Next.js.
+*.tsbuildinfo
+
 .claude/settings.local.json
