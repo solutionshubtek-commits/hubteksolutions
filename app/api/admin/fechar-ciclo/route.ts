@@ -1,93 +1,75 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import {
+  criarClienteServico,
+  fecharCicloDoTenant,
+  mesRefAtual,
+} from '@/lib/billing/fechar-ciclo'
 
+/**
+ * Fechamento manual, disparado pela tela admin/visao-geral.
+ *
+ * A lógica vive em lib/billing/fechar-ciclo.ts porque o cron mensal
+ * (/api/cron/fechar-ciclos) precisa exatamente do mesmo cálculo — fechar
+ * adiantado pela tela e deixar o automático rodar têm que produzir a mesma
+ * linha, senão o número depende de quem fechou.
+ */
 export async function POST(request: Request) {
   try {
-    const { tenant_id, usuario_id } = await request.json()
+    // Só admin_hubtek fecha ciclo. Antes a rota aceitava qualquer chamada com
+    // um tenant_id no corpo — sem verificar sequer se havia sessão.
+    const supabaseAuth = createClient()
+    const { data: { user } } = await supabaseAuth.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+    }
+    const { data: userData } = await supabaseAuth
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    if (userData?.role !== 'admin_hubtek') {
+      return NextResponse.json({ error: 'Acesso negado' }, { status: 403 })
+    }
 
-    if (!tenant_id) {
+    const body = await request.json().catch(() => ({}))
+    const tenantId: string | undefined = body.tenant_id
+    if (!tenantId) {
       return NextResponse.json({ error: 'tenant_id obrigatório.' }, { status: 400 })
     }
 
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
+    // `mes_ref` opcional (AAAA-MM) permite refazer um fechamento antigo. Sem
+    // ele, fecha o mês corrente — que é o caso do botão "fechar adiantado".
+    const mesRef: string = /^\d{4}-\d{2}$/.test(body.mes_ref ?? '')
+      ? body.mes_ref
+      : mesRefAtual()
+
+    const resultado = await fecharCicloDoTenant(
+      criarClienteServico(),
+      tenantId,
+      mesRef,
+      { usuarioId: user.id, automatico: false }
     )
-
-    const agora = new Date()
-    const mesRef = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`
-    const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).toISOString()
-
-    // Busca dados do tenant
-    const { data: tenant } = await supabaseAdmin
-      .from('tenants')
-      .select('nome')
-      .eq('id', tenant_id)
-      .single()
-
-    // Conta conversas do mês
-    const { count: conversas } = await supabaseAdmin
-      .from('conversations')
-      .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tenant_id)
-      .gte('criado_em', inicioMes)
-
-    // Soma tokens e custo do mês.
-    //
-    // Lia de `token_usage`, que foi criada na migration 003 e nunca recebeu um
-    // insert — o agente sempre registrou consumo em `ai_usage` (logAiUsage, em
-    // lib/supabase/queries/conversations.ts). Como a consulta voltava vazia,
-    // TODO ciclo fechado até aqui foi gravado com tokens 0, custo 0 e
-    // valor_cobrado 0. Ciclos já fechados precisam ser refeitos à mão.
-    //
-    // ai_usage não tem coluna tokens_total (é entrada + saída) e o custo já
-    // está em reais, então a conversão por 5,8 que existia aqui saiu: mantê-la
-    // inflaria o valor cobrado em 5,8x.
-    const { data: tokenData } = await supabaseAdmin
-      .from('ai_usage')
-      .select('tokens_entrada, tokens_saida, custo_estimado_reais')
-      .eq('tenant_id', tenant_id)
-      .gte('criado_em', inicioMes)
-
-    const tokens = (tokenData ?? []).reduce((s, r) => s + (r.tokens_entrada ?? 0) + (r.tokens_saida ?? 0), 0)
-    const custoBrl = (tokenData ?? []).reduce((s, r) => s + Number(r.custo_estimado_reais ?? 0), 0)
-    // A coluna custo_usd de ciclos_fechados é histórica; preenchida por
-    // conversão reversa para não ficar zerada nos ciclos novos.
-    const custoUsd = custoBrl / 5.8
-    const valorCobrado = custoBrl * 3
-
-    // Salva o ciclo fechado
-    const { error: cicloErr } = await supabaseAdmin
-      .from('ciclos_fechados')
-      .insert({
-        tenant_id,
-        tenant_nome: tenant?.nome ?? '',
-        mes_ref: mesRef,
-        conversas: conversas ?? 0,
-        tokens,
-        custo_usd: custoUsd,
-        custo_brl: custoBrl,
-        valor_cobrado: valorCobrado,
-        fechado_por: usuario_id ?? null,
-      })
-
-    if (cicloErr) {
-      return NextResponse.json({ error: cicloErr.message }, { status: 400 })
-    }
 
     return NextResponse.json({
       success: true,
       resumo: {
-        tenant_nome: tenant?.nome,
-        mes_ref: mesRef,
-        conversas: conversas ?? 0,
-        tokens,
-        custo_brl: custoBrl.toFixed(2),
-        valor_cobrado: valorCobrado.toFixed(2),
-      }
+        tenant_nome:   resultado.tenant_nome,
+        mes_ref:       resultado.mes_ref,
+        conversas:     resultado.conversas,
+        tokens:        resultado.tokens,
+        custo_brl:     resultado.custo_brl.toFixed(2),
+        valor_cobrado: resultado.valor_cobrado.toFixed(2),
+        margem:        resultado.margem.toFixed(2),
+      },
     })
-  } catch {
-    return NextResponse.json({ error: 'Erro interno.' }, { status: 500 })
+  } catch (err) {
+    console.error('[fechar-ciclo] falhou:', err)
+    // Devolve o motivo real: a rota é admin-only e a mensagem genérica anterior
+    // obrigava a caçar a causa no log da Vercel.
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Erro interno.' },
+      { status: 500 }
+    )
   }
 }

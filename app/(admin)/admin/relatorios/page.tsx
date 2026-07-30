@@ -29,9 +29,32 @@ interface CicloFechado {
   conversas: number
   tokens: number
   custo_usd: number
+  // Custo de API do mês (ai_usage). Já foi lido de token_usage, tabela que
+  // nunca recebeu insert — origem dos relatórios zerados.
   custo_brl: number
+  // O que o cliente paga. É o valor do plano; já guardou `custo_brl * 3`, uma
+  // marcação sobre o custo, enquanto esta tela sempre leu o campo como plano.
   valor_cobrado: number
   fechado_em: string
+  // Colunas da migration 008. Opcionais porque ciclos fechados antes dela não
+  // as têm — a tela cai no fallback em vez de mostrar NaN.
+  plano?: string | null
+  valor_plano?: number | null
+  instancias_extras?: number | null
+  receita_inst_extras?: number | null
+  custo_fixo_rateado?: number | null
+  fechado_automatico?: boolean | null
+}
+
+// Instâncias extras congeladas no fechamento; para ciclos antigos, cai na
+// contagem atual de instâncias. O valor do fechamento é o correto: contar hoje
+// dá o número de agora, não o do mês fechado.
+function instExtrasDoCiclo(c: CicloFechado, instanciasHoje: number): number {
+  return c.instancias_extras ?? Math.max(0, instanciasHoje - 1)
+}
+
+function receitaInstDoCiclo(c: CicloFechado, instanciasHoje: number): number {
+  return c.receita_inst_extras ?? instExtrasDoCiclo(c, instanciasHoje) * CUSTO_INSTANCIA_EXTRA
 }
 
 interface TenantOption {
@@ -139,13 +162,26 @@ export default function RelatoriosPage() {
   const totalCustoAPI  = ciclos.reduce((s, c) => s + Number(c.custo_brl), 0)
   const totalCobrado   = ciclos.reduce((s, c) => s + Number(c.valor_cobrado), 0)
 
+  // Somado POR CICLO, usando o que foi congelado em cada fechamento. Antes
+  // usava a contagem de instâncias de HOJE aplicada ao período inteiro: um
+  // cliente que ganhou a 2ª instância em julho aparecia com receita extra
+  // também em janeiro. E com vários meses no filtro, a receita de um mês era
+  // multiplicada por todos eles.
+  const totalReceitaInstExtras = ciclos.reduce(
+    (s, c) => s + receitaInstDoCiclo(c, instanciasPorTenant[c.tenant_id] ?? 0), 0
+  )
   const totalInstanciasExtras = selectedTenant !== 'todos'
     ? Math.max(0, (instanciasPorTenant[selectedTenant] ?? 0) - 1)
     : Object.values(instanciasPorTenant).reduce((s, v) => s + Math.max(0, v - 1), 0)
-  const totalReceitaInstExtras = totalInstanciasExtras * CUSTO_INSTANCIA_EXTRA
 
-  // Margem = valor_cobrado + receita_inst_extras - custo_api
-  const totalMargem = calcMargem(totalCobrado, totalCustoAPI, totalInstanciasExtras)
+  // Custo fixo rateado, somado dos fechamentos. Ciclos anteriores à migration
+  // 008 não têm o campo e entram como 0 — o custo fixo daquele mês não foi
+  // registrado e não há como reconstituí-lo.
+  const totalCustoFixo = ciclos.reduce((s, c) => s + Number(c.custo_fixo_rateado ?? 0), 0)
+
+  // Margem = receita (plano + instâncias extras) - custo de API - custo fixo.
+  // O custo fixo entrava zerado aqui porque não existia no fechamento.
+  const totalMargem = totalCobrado + totalReceitaInstExtras - totalCustoAPI - totalCustoFixo
 
   const porTenant: Record<string, { nome: string; plano: string; ciclos: CicloFechado[] }> = {}
   ciclos.forEach(c => {
@@ -175,7 +211,7 @@ export default function RelatoriosPage() {
     const linhas = [
       ['Cliente', 'Mês', 'Conversas', 'Tokens', 'Plano', 'Instâncias extras', 'Valor a pagar (R$)'],
       ...ciclos.map(c => {
-        const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+        const instExtras = instExtrasDoCiclo(c, instanciasPorTenant[c.tenant_id] ?? 0)
         const valorCliente = Number(c.valor_cobrado) + (instExtras * CUSTO_INSTANCIA_EXTRA)
         return [
           c.tenant_nome,
@@ -213,7 +249,7 @@ export default function RelatoriosPage() {
       `${pad('Mês', 15)} ${pad('Conversas', 12)} ${pad('Tokens', 12)} ${pad('Plano', 14)} ${pad('Inst. extras', 15)} ${'Valor a pagar'.padStart(14)}`,
       `─────────────────────────────────────────────────────────────`,
       ...ciclos.map(c => {
-        const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+        const instExtras = instExtrasDoCiclo(c, instanciasPorTenant[c.tenant_id] ?? 0)
         const valorCliente = Number(c.valor_cobrado) + (instExtras * CUSTO_INSTANCIA_EXTRA)
         const instLabel = instExtras > 0 ? `${instExtras}x ${fmtBRL(instExtras * CUSTO_INSTANCIA_EXTRA)}` : '—'
         return `${pad(mesRefShort(c.mes_ref), 15)} ${pad(String(c.conversas), 12)} ${pad(fmtTokens(Number(c.tokens)), 12)} ${pad(fmtBRL(Number(c.valor_cobrado)), 14)} ${pad(instLabel, 15)} ${fmtBRL(valorCliente).padStart(14)}`
@@ -252,7 +288,7 @@ export default function RelatoriosPage() {
         { label: 'Valor a pagar', key: 'valorTotal', align: 'right' },
       ],
       linhas: ciclos.map(c => {
-        const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+        const instExtras = instExtrasDoCiclo(c, instanciasPorTenant[c.tenant_id] ?? 0)
         const valorCliente = Number(c.valor_cobrado) + (instExtras * CUSTO_INSTANCIA_EXTRA)
         return {
           mes:        mesRefLabel(c.mes_ref),
@@ -295,7 +331,7 @@ export default function RelatoriosPage() {
 
       // Enriquece ciclos com valor_cliente para o email
       const ciclosEnriquecidos = ciclosParaEnviar.map(c => {
-        const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+        const instExtras = instExtrasDoCiclo(c, instanciasPorTenant[c.tenant_id] ?? 0)
         return {
           ...c,
           instancias_extras: instExtras,
@@ -482,7 +518,7 @@ export default function RelatoriosPage() {
               <tbody>
                 {ciclos.map((c, i) => {
                   const plano = PLANOS[tenants.find(t => t.id === c.tenant_id)?.plano ?? 'essencial'] ?? PLANOS.essencial
-                  const instExtras = Math.max(0, (instanciasPorTenant[c.tenant_id] ?? 0) - 1)
+                  const instExtras = instExtrasDoCiclo(c, instanciasPorTenant[c.tenant_id] ?? 0)
                   const receitaInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
                   const margem = calcMargem(Number(c.valor_cobrado), Number(c.custo_brl), instExtras)
                   const isEnviando = enviando === c.id
