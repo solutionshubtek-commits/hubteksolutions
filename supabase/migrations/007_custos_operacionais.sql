@@ -80,3 +80,9 @@ values
   (date_trunc('month', now())::date, 'creditos_anthropic',  0.00),
   (date_trunc('month', now())::date, 'num_clientes',        1.00)
 on conflict (competencia, chave) do nothing;
+
+-- Força o PostgREST a recarregar o cache de schema. Sem isto a API responde
+-- PGRST205 ("Could not find the table in the schema cache") mesmo com a tabela
+-- já criada. O Supabase normalmente recarrega sozinho após DDL, mas garantir
+-- custa nada e foi exatamente o erro visto na primeira tentativa.
+notify pgrst, 'reload schema';
