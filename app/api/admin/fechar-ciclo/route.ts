@@ -33,16 +33,28 @@ export async function POST(request: Request) {
       .eq('tenant_id', tenant_id)
       .gte('criado_em', inicioMes)
 
-    // Soma tokens e custo do mês
+    // Soma tokens e custo do mês.
+    //
+    // Lia de `token_usage`, que foi criada na migration 003 e nunca recebeu um
+    // insert — o agente sempre registrou consumo em `ai_usage` (logAiUsage, em
+    // lib/supabase/queries/conversations.ts). Como a consulta voltava vazia,
+    // TODO ciclo fechado até aqui foi gravado com tokens 0, custo 0 e
+    // valor_cobrado 0. Ciclos já fechados precisam ser refeitos à mão.
+    //
+    // ai_usage não tem coluna tokens_total (é entrada + saída) e o custo já
+    // está em reais, então a conversão por 5,8 que existia aqui saiu: mantê-la
+    // inflaria o valor cobrado em 5,8x.
     const { data: tokenData } = await supabaseAdmin
-      .from('token_usage')
-      .select('tokens_total, custo_usd')
+      .from('ai_usage')
+      .select('tokens_entrada, tokens_saida, custo_estimado_reais')
       .eq('tenant_id', tenant_id)
       .gte('criado_em', inicioMes)
 
-    const tokens = (tokenData ?? []).reduce((s, r) => s + (r.tokens_total ?? 0), 0)
-    const custoUsd = (tokenData ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
-    const custoBrl = custoUsd * 5.8
+    const tokens = (tokenData ?? []).reduce((s, r) => s + (r.tokens_entrada ?? 0) + (r.tokens_saida ?? 0), 0)
+    const custoBrl = (tokenData ?? []).reduce((s, r) => s + Number(r.custo_estimado_reais ?? 0), 0)
+    // A coluna custo_usd de ciclos_fechados é histórica; preenchida por
+    // conversão reversa para não ficar zerada nos ciclos novos.
+    const custoUsd = custoBrl / 5.8
     const valorCobrado = custoBrl * 3
 
     // Salva o ciclo fechado

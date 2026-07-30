@@ -27,11 +27,11 @@ function planoLabel(plano: string) {
 interface KpiData {
   clientesAtivos: number; clientesTotal: number; clientesBloqueados: number
   conversasMes: number; conversasAnterior: number
-  custoUsdMes: number; custoUsdAnterior: number; acessosExpirando: number
+  custoBrlMes: number; custoBrlAnterior: number; acessosExpirando: number
 }
 interface TenantRow {
   id: string; nome: string; slug: string; status: string; agente_status: string
-  expira_em: string | null; conversasMes: number; tokens: number; custoUsd: number; plano: string
+  expira_em: string | null; conversasMes: number; tokens: number; custoBrl: number; plano: string
 }
 interface ResumoCiclo {
   tenant_nome: string; mes_ref: string; conversas: number
@@ -48,7 +48,14 @@ function fmtCompact(n: number) {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
   return n.toString()
 }
-function fmtBRL(usd: number) { return `R$ ${(usd * 5.8).toFixed(2).replace('.', ',')}` }
+// `ai_usage.custo_estimado_reais` JÁ está em reais (calcularCusto grava BRL em
+// process-message.ts). A versão anterior lia de token_usage.custo_usd e
+// convertia por 5,8 — ao apontar para a fonte certa, manter a multiplicação
+// inflaria todo custo em 5,8x. Mesma convenção de admin/custos-ia e
+// admin/clientes, que já liam ai_usage e exibem o valor direto.
+function fmtBRL(brl: number) {
+  return brl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 })
+}
 function diasAteExpirar(expira_em: string | null) {
   if (!expira_em) return null
   return Math.ceil((new Date(expira_em).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
@@ -63,8 +70,8 @@ function expiryStatus(expira_em: string | null) {
 function exportarConsolidado(rows: TenantRow[]) {
   const header = 'Cliente,Slug,Plano,Status,Conversas,Tokens,Custo BRL,Valor a cobrar (3x),Expiração\n'
   const csv = rows.map(r => {
-    const custoBRL = (r.custoUsd * 5.8).toFixed(2)
-    const cobrar = (r.custoUsd * 5.8 * 3).toFixed(2)
+    const custoBRL = r.custoBrl.toFixed(2)
+    const cobrar = (r.custoBrl * 3).toFixed(2)
     const exp = r.expira_em ? new Date(r.expira_em).toLocaleDateString('pt-BR') : '—'
     return `"${r.nome}","${r.slug}","${planoLabel(r.plano)}","${r.status}","${r.conversasMes}","${r.tokens}","${custoBRL}","${cobrar}","${exp}"`
   }).join('\n')
@@ -200,7 +207,7 @@ function ModalFecharCiclo({ tenant, onClose, onFechado }: { tenant: TenantRow; o
               <div className="rounded-lg p-3" style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)' }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Resumo atual do mês</p>
                 <div className="flex gap-6">
-                  {[['Conversas', fmtBR(tenant.conversasMes)], ['Tokens', fmtCompact(tenant.tokens)], ['Custo API', tenant.custoUsd > 0 ? fmtBRL(tenant.custoUsd) : '—']].map(([l, v]) => (
+                  {[['Conversas', fmtBR(tenant.conversasMes)], ['Tokens', fmtCompact(tenant.tokens)], ['Custo API', tenant.custoBrl > 0 ? fmtBRL(tenant.custoBrl) : '—']].map(([l, v]) => (
                     <div key={l}>
                       <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{l}</p>
                       <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{v}</p>
@@ -256,36 +263,41 @@ export default function AdminVisaoGeralPage() {
       supabase.from('tenants').select('id, nome, slug, status, expira_em, agente_ativo, plano'),
       supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('criado_em', inicioMes),
       supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('criado_em', inicioMesAnt).lte('criado_em', fimMesAnt),
-      supabase.from('token_usage').select('custo_usd').gte('criado_em', inicioMes),
-      supabase.from('token_usage').select('custo_usd').gte('criado_em', inicioMesAnt).lte('criado_em', fimMesAnt),
+      // ai_usage, não token_usage: a tabela token_usage foi criada na migration
+      // 003 e NUNCA recebeu um insert — o agente sempre registrou consumo em
+      // ai_usage (logAiUsage, lib/supabase/queries/conversations.ts). Ler dela
+      // devolvia lista vazia, e por isso os blocos de custo viviam zerados.
+      supabase.from('ai_usage').select('custo_estimado_reais').gte('criado_em', inicioMes),
+      supabase.from('ai_usage').select('custo_estimado_reais').gte('criado_em', inicioMesAnt).lte('criado_em', fimMesAnt),
       supabase.from('tenants').select('id', { count: 'exact', head: true }).eq('status', 'ativo').lte('expira_em', em10Dias).gte('expira_em', agora.toISOString()),
     ])
 
     const tenants = tenantsRes.data ?? []
-    const custoMes = (custoMesRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
-    const custoAnt = (custoAntRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
+    const custoMes = (custoMesRes.data ?? []).reduce((s, r) => s + Number(r.custo_estimado_reais ?? 0), 0)
+    const custoAnt = (custoAntRes.data ?? []).reduce((s, r) => s + Number(r.custo_estimado_reais ?? 0), 0)
 
     setKpi({
       clientesAtivos: tenants.filter(t => t.status === 'ativo').length,
       clientesTotal: tenants.length,
       clientesBloqueados: tenants.filter(t => t.status === 'bloqueado').length,
       conversasMes: convMesRes.count ?? 0, conversasAnterior: convAntRes.count ?? 0,
-      custoUsdMes: custoMes, custoUsdAnterior: custoAnt,
+      custoBrlMes: custoMes, custoBrlAnterior: custoAnt,
       acessosExpirando: expirandoRes.count ?? 0,
     })
 
     const detalhe: TenantRow[] = await Promise.all(tenants.map(async (t) => {
       const [convRes, tokRes] = await Promise.all([
         supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('tenant_id', t.id).gte('criado_em', inicioMes),
-        supabase.from('token_usage').select('tokens_total, custo_usd').eq('tenant_id', t.id).gte('criado_em', inicioMes),
+        // ai_usage não tem coluna tokens_total: o total é entrada + saída.
+        supabase.from('ai_usage').select('tokens_entrada, tokens_saida, custo_estimado_reais').eq('tenant_id', t.id).gte('criado_em', inicioMes),
       ])
-      const tokens = (tokRes.data ?? []).reduce((s, r) => s + (r.tokens_total ?? 0), 0)
-      const custoUsd = (tokRes.data ?? []).reduce((s, r) => s + (r.custo_usd ?? 0), 0)
+      const tokens = (tokRes.data ?? []).reduce((s, r) => s + (r.tokens_entrada ?? 0) + (r.tokens_saida ?? 0), 0)
+      const custoBrl = (tokRes.data ?? []).reduce((s, r) => s + Number(r.custo_estimado_reais ?? 0), 0)
       return {
         id: t.id, nome: t.nome, slug: t.slug, status: t.status,
         agente_status: t.agente_ativo === false ? 'pausado' : 'ativo',
         expira_em: t.expira_em, conversasMes: convRes.count ?? 0,
-        tokens, custoUsd, plano: t.plano ?? 'essencial',
+        tokens, custoBrl, plano: t.plano ?? 'essencial',
       }
     }))
     setRows(detalhe)
@@ -315,7 +327,7 @@ export default function AdminVisaoGeralPage() {
         status:     r.status,
         conversas:  r.conversasMes,
         tokens:     fmtCompact(r.tokens),
-        custoBRL:   r.custoUsd > 0 ? fmtBRL(r.custoUsd) : '—',
+        custoBRL:   r.custoBrl > 0 ? fmtBRL(r.custoBrl) : '—',
         expiracao:  r.expira_em ? new Date(r.expira_em).toLocaleDateString('pt-BR') : '—',
       })),
       nomeArquivo: `consolidado_${new Date().toISOString().slice(0, 10)}`,
@@ -349,7 +361,7 @@ export default function AdminVisaoGeralPage() {
   }
 
   const deltaConversas = deltaPct(kpi!.conversasMes, kpi!.conversasAnterior)
-  const deltaCusto = deltaPct(kpi!.custoUsdMes, kpi!.custoUsdAnterior)
+  const deltaCusto = deltaPct(kpi!.custoBrlMes, kpi!.custoBrlAnterior)
   const mesAtual = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
 
   return (
@@ -401,7 +413,7 @@ export default function AdminVisaoGeralPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard label="Clientes ativos"            value={kpi!.clientesAtivos}                                       sub={`${kpi!.clientesBloqueados} bloqueado · ${kpi!.clientesTotal} cadastrados`} icon={Users} />
         <KpiCard label="Conversas no mês"            value={fmtCompact(kpi!.conversasMes)}                            sub="todos os clientes ativos" delta={deltaConversas}                           icon={MessageSquare} />
-        <KpiCard label={`Custo de IA · ${mesAtual}`} value={kpi!.custoUsdMes > 0 ? fmtBRL(kpi!.custoUsdMes) : '—'}  sub="ciclo atual" delta={deltaCusto}                                            icon={Wallet} accent={kpi!.custoUsdMes > 0} />
+        <KpiCard label={`Custo de IA · ${mesAtual}`} value={kpi!.custoBrlMes > 0 ? fmtBRL(kpi!.custoBrlMes) : '—'}  sub="ciclo atual" delta={deltaCusto}                                            icon={Wallet} accent={kpi!.custoBrlMes > 0} />
         <KpiCard label="Acessos a expirar"           value={kpi!.acessosExpirando}                                    sub="próximos 10 dias"                                                          icon={AlertTriangle} />
       </div>
 
@@ -481,8 +493,8 @@ export default function AdminVisaoGeralPage() {
                       <td className="px-6 py-4 text-right"><span className="text-sm font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{fmtBR(r.conversasMes)}</span></td>
                       <td className="px-6 py-4 text-right"><span className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>{r.tokens > 0 ? fmtCompact(r.tokens) : '—'}</span></td>
                       <td className="px-6 py-4 text-right">
-                        <span className="text-sm font-mono font-semibold" style={{ color: r.custoUsd > 0 ? '#10B981' : 'var(--text-label)' }}>
-                          {r.custoUsd > 0 ? fmtBRL(r.custoUsd) : '—'}
+                        <span className="text-sm font-mono font-semibold" style={{ color: r.custoBrl > 0 ? '#10B981' : 'var(--text-label)' }}>
+                          {r.custoBrl > 0 ? fmtBRL(r.custoBrl) : '—'}
                         </span>
                       </td>
                       <td className="px-6 py-4">
