@@ -90,8 +90,15 @@ async function alertarQueda(
     quedas.map(q => `${q.tenant_nome ?? '?'}/${q.instance_name}=${q.estado}`).join(' ')
   )
 
-  const destino = process.env.ALERTA_OPERACAO_EMAIL
-  if (!destino || !process.env.RESEND_API_KEY) return
+  // Aceita um e-mail ou vários separados por vírgula. Sem o split, "a@x,b@y"
+  // seria mandado ao Resend como um endereço só e recusado — o alerta morreria
+  // exatamente do jeito que este monitor existe para evitar.
+  const destino = (process.env.ALERTA_OPERACAO_EMAIL ?? '')
+    .split(',')
+    .map(e => e.trim())
+    .filter(Boolean)
+
+  if (destino.length === 0 || !process.env.RESEND_API_KEY) return
 
   try {
     const { Resend } = await import('resend')
