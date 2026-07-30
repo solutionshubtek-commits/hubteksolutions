@@ -8,12 +8,34 @@ import { exigirAdminHubtek } from '@/lib/auth/admin'
 // Admin da plataforma se cria no banco, não por formulário.
 const ROLES_PERMITIDOS = ['admin_tenant', 'self_managed', 'operador']
 
+// Mesmos funis de lib/crm.ts e do PROMPT_COMPLEMENTAR em process-message.ts.
+const FUNIS_VALIDOS = ['vendas', 'suporte', 'agendamentos', 'qualificacao']
+
+/**
+ * Prompt inicial do agente.
+ *
+ * Deliberadamente genérico e curto: serve para o agente atender de forma
+ * coerente desde a primeira mensagem, não para substituir o prompt real que o
+ * time escreve na tela de Treinamento. O texto diz isso ao próprio modelo — sem
+ * a base de conhecimento carregada ele deve admitir que não sabe, em vez de
+ * inventar detalhes sobre um negócio que ninguém descreveu ainda.
+ */
+function promptInicial(nomeEmpresa: string): string {
+  return `Você é o assistente virtual de ${nomeEmpresa}, atendendo clientes pelo WhatsApp.
+
+Atenda de forma cordial, objetiva e em português do Brasil. Use as informações da base de conhecimento para responder.
+
+Se a informação pedida não estiver na base de conhecimento, diga com naturalidade que vai confirmar esse detalhe com a equipe — nunca invente preços, prazos, endereços ou condições.
+
+Não prometa nada que você não possa confirmar pelas informações disponíveis.`
+}
+
 export async function POST(request: Request) {
   try {
     const guarda = await exigirAdminHubtek()
     if (guarda.erro) return guarda.erro
 
-    const { email, senha, tenant_id, role, nome, slug, instancias } = await request.json()
+    const { email, senha, tenant_id, role, nome, slug, funcao, instancias } = await request.json()
 
     if (!email || !senha || !tenant_id || !role) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes.' }, { status: 400 })
@@ -91,8 +113,14 @@ export async function POST(request: Request) {
         horario_fim: '18:00',
         dias_funcionamento: ['seg', 'ter', 'qua', 'qui', 'sex'],
         mensagem_ausencia: 'Olá! No momento estamos fora do horário de atendimento. Em breve retornaremos. 😊',
-        prompt_principal: '',
-        funcoes_ativas: [],
+        // Prompt inicial funcional em vez de string vazia. Com prompt vazio o
+        // agente respondia sem persona nem regra de negócio até alguém abrir a
+        // tela de treinamento — e nada avisava que isso estava pendente.
+        prompt_principal: promptInicial(nome ?? 'a empresa'),
+        // Funil escolhido no cadastro. Antes nascia vazio, o que desligava o
+        // prompt complementar E a classificação de CRM: a aba CRM não populava
+        // lead nenhum, porque classificarEtapaCRM exige um funil válido.
+        funcoes_ativas: FUNIS_VALIDOS.includes(funcao) ? [funcao] : ['vendas'],
       })
       if (configErr) {
         console.error('[criar-usuario] Falha ao criar agent_config (não crítico):', configErr.message)

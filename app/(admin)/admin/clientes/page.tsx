@@ -21,8 +21,19 @@ interface ExtratoMes {
 interface NovoTenant {
   nome: string; slug: string; email_admin: string
   senha_admin: string; expira_em: string; self_managed: boolean; plano: string
+  // Funil do agente. Antes o cliente nascia com `funcoes_ativas` vazio, o que
+  // desligava o prompt complementar e a classificação de CRM — a aba CRM não
+  // populava lead nenhum até alguém abrir a tela de treinamento e escolher.
+  funcao: string
   instancias: { apelido: string }[]
 }
+
+const FUNCOES = [
+  { value: 'vendas',       label: 'Vendas'      },
+  { value: 'suporte',      label: 'Suporte'     },
+  { value: 'agendamentos', label: 'Agendamentos'},
+  { value: 'qualificacao', label: 'Qualificação'},
+]
 
 const PLANOS = [
   { value: 'essencial',  label: 'Essencial',  limite: 50,   valor: 397  },
@@ -69,7 +80,7 @@ function fmtBRL(val: number) {
 function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: (t: Tenant) => void }) {
   const [form, setForm] = useState<NovoTenant>({
     nome: '', slug: '', email_admin: '', senha_admin: '',
-    expira_em: '', self_managed: false, plano: 'essencial',
+    expira_em: '', self_managed: false, plano: 'essencial', funcao: 'vendas',
     instancias: [{ apelido: 'Principal' }],
   })
   const [salvando, setSalvando] = useState(false)
@@ -122,7 +133,7 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
       body: JSON.stringify({
         email: form.email_admin, senha: form.senha_admin, tenant_id: tenant.id,
         role: form.self_managed ? 'self_managed' : 'admin_tenant', nome: form.nome,
-        slug: form.slug, instancias: form.instancias,
+        slug: form.slug, funcao: form.funcao, instancias: form.instancias,
       }),
     })
     const resData = await res.json()
@@ -195,6 +206,29 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
               ))}
             </div>
           </div>
+
+          {/* Função do agente — define o funil do CRM e o foco do prompt.
+              Sem isso o cliente nascia sem funil e a aba CRM ficava inerte. */}
+          <div>
+            <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Função principal do agente *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {FUNCOES.map(f => (
+                <button key={f.value} type="button"
+                  onClick={() => setForm(prev => ({ ...prev, funcao: f.value }))}
+                  className="rounded-lg px-3 py-2 text-left transition-all"
+                  style={{
+                    background: form.funcao === f.value ? '#10B98118' : 'var(--bg-surface-2)',
+                    border: form.funcao === f.value ? '1px solid #10B98160' : '1px solid var(--border)',
+                  }}>
+                  <p className="text-sm font-semibold" style={{ color: form.funcao === f.value ? '#10B981' : 'var(--text-primary)' }}>{f.label}</p>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
+              Define o funil do CRM e o foco do agente. Pode ser trocado depois em Treinamento.
+            </p>
+          </div>
+
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
