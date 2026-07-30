@@ -23,15 +23,15 @@ import { verificarInstancias } from '@/lib/evolution/saude'
  *     cada verificação, senão o alerta vira ruído e para de ser lido.
  */
 
-function autorizado(request: NextRequest): boolean {
-  const auth = request.headers.get('authorization')
-  if (auth === `Bearer ${process.env.CRON_SECRET}`) return true
-  // A Vercel assina as chamadas de cron com este header.
-  return request.headers.get('x-vercel-cron') !== null
-}
-
 export async function GET(request: NextRequest) {
-  if (!autorizado(request)) {
+  // Mesmo esquema dos outros crons do projeto: só o segredo autoriza. A Vercel
+  // manda `Authorization: Bearer $CRON_SECRET` sozinha quando a variável existe.
+  //
+  // Havia aqui um fallback que aceitava a mera presença do header
+  // `x-vercel-cron`. Header é texto que qualquer cliente escreve — bastava
+  // enviá-lo para disparar o monitor à vontade e ler de volta o nome das
+  // instâncias fora do ar.
+  if (request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
 
