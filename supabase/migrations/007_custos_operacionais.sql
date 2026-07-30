@@ -44,6 +44,12 @@ create table if not exists custos_operacionais (
 create index if not exists idx_custos_operacionais_competencia
   on custos_operacionais (competencia desc);
 
+-- GRANTs explícitos. As tabelas da 001 herdaram as permissões padrão do schema,
+-- mas uma tabela criada isoladamente no SQL Editor nem sempre herda — e sem
+-- isto o PostgREST responde 42501 (permission denied) mesmo com a política de
+-- RLS correta, porque grant e RLS são camadas independentes.
+grant select, insert, update, delete on custos_operacionais to authenticated;
+
 alter table custos_operacionais enable row level security;
 
 -- Mesma política de ai_usage: dado financeiro consolidado da Hubtek, não do
