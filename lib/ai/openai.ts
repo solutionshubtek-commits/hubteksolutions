@@ -1,6 +1,31 @@
 import OpenAI from 'openai'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+// Cliente único de toda a aplicação. Antes cada arquivo criava o seu com só a
+// apiKey, o que deixava todos com os padrões do SDK — inclusive o timeout de
+// 10 MINUTOS, que é o problema resolvido aqui.
+//
+// RETRY EM 429: o SDK já faz, e não precisamos implementar. Ele repete em 429
+// (além de 408/409/5xx) respeitando o header `retry-after` da OpenAI, com
+// backoff exponencial de 0,5s → 1s e jitter. O `catch` de failover em
+// process-message.ts só recebe o erro depois de as tentativas se esgotarem.
+//
+// O que faltava era caber no orçamento de tempo do process-webhook: a função
+// tem maxDuration de 60s (vercel.json) e o debounce já consome 10s fixos,
+// sobrando ~50s para TODO o fluxo. Com o timeout padrão de 10 minutos, uma
+// conexão presa consumia a função inteira e o failover para o Anthropic nunca
+// chegava a rodar — o cliente ficava sem resposta nenhuma.
+//
+// timeout de 15s POR TENTATIVA: uma chamada normal com prompt de ~7k responde
+// em 2-6s, então isso só dispara em requisição genuinamente travada. Note que
+// um 429 falha na hora e não consome o timeout — o custo do retry sob pressão
+// de TPM é só o backoff (~1,5s no total), não os 15s.
+export const openaiClient = new OpenAI({
+  apiKey:     process.env.OPENAI_API_KEY!,
+  timeout:    15_000,
+  maxRetries: 2,
+})
+
+const openai = openaiClient
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'

@@ -10,7 +10,7 @@ import {
   updateConversationTimestamp,
   logAiUsage,
 } from '@/lib/supabase/queries/conversations'
-import { openAIChatCompletion, openAIChatCompletionWithTools } from './openai'
+import { openAIChatCompletion, openAIChatCompletionWithTools, openaiClient } from './openai'
 import { anthropicChatCompletion } from './anthropic'
 import { transcribeAudio, interpretImage } from './openai'
 import { generateEmbedding } from './embeddings'
@@ -632,9 +632,7 @@ async function extrairPerfilDaConversa(
     .join('\n')
   if (!apenasCliente.trim()) return null
   try {
-    const OpenAI = (await import('openai')).default
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
-    const response = await openai.chat.completions.create({
+    const response = await openaiClient.chat.completions.create({
       model: MOTOR_PERFIL,
       temperature: 0,
       max_tokens: 300,
@@ -1631,6 +1629,36 @@ export interface ProcessMessagePayload {
 
 // ─── Envio com presença + múltiplos blocos ────────────────────────────────────
 
+// Erro de envio que sobreviveu às tentativas. Carrega quantos blocos chegaram
+// ao cliente para o chamador saber se a resposta foi parcial ou não saiu nada.
+export class ErroEnvioResposta extends Error {
+  constructor(
+    readonly blocosEnviados: number,
+    readonly blocosTotais: number,
+    readonly causa: unknown
+  ) {
+    super(
+      `Envio falhou no bloco ${blocosEnviados + 1}/${blocosTotais}: ${
+        causa instanceof Error ? causa.message : String(causa)
+      }`
+    )
+    this.name = 'ErroEnvioResposta'
+  }
+}
+
+// `sendTextMessage` lança em qualquer resposta não-OK da Evolution e não tem
+// retry próprio (ver lib/evolution/client.ts). Sem as tentativas abaixo, uma
+// instabilidade momentânea da Evolution — ou um 5xx isolado — fazia a resposta
+// do agente ser perdida: `saveMessage` roda ANTES do envio, então a dashboard
+// registrava a resposta e o cliente não recebia nada, sem erro em lugar algum.
+//
+// 3 tentativas com 1,5s e 3s de intervalo. Curto de propósito: o orçamento da
+// função é de ~50s (maxDuration 60 menos os 10s de debounce) e os delays de
+// digitação já consomem parte dele. Se a Evolution estiver realmente fora, o
+// caminho certo é falhar rápido e escalar para um humano, não insistir até o
+// timeout da função — que mataria o processo antes de qualquer escalonamento.
+const ENVIO_BACKOFF_MS = [1_500, 3_000]
+
 async function enviarResposta(instanceName: string, phone: string, texto: string): Promise<void> {
   const blocos = quebrarEmBlocos(texto)
   for (let i = 0; i < blocos.length; i++) {
@@ -1638,7 +1666,27 @@ async function enviarResposta(instanceName: string, phone: string, texto: string
     const delay = calcularDelayDigitacao(bloco)
     await sendPresence(instanceName, phone, delay)
     await new Promise(resolve => setTimeout(resolve, delay))
-    await sendTextMessage(instanceName, phone, bloco)
+
+    let ultimoErro: unknown
+    let enviado = false
+    for (let tentativa = 0; tentativa <= ENVIO_BACKOFF_MS.length; tentativa++) {
+      try {
+        await sendTextMessage(instanceName, phone, bloco)
+        enviado = true
+        break
+      } catch (err) {
+        ultimoErro = err
+        const espera = ENVIO_BACKOFF_MS[tentativa]
+        if (espera === undefined) break
+        console.warn(
+          `[envio] bloco ${i + 1}/${blocos.length} falhou (tentativa ${tentativa + 1}) — repetindo em ${espera}ms:`,
+          err
+        )
+        await new Promise(resolve => setTimeout(resolve, espera))
+      }
+    }
+
+    if (!enviado) throw new ErroEnvioResposta(i, blocos.length, ultimoErro)
     if (i < blocos.length - 1) await new Promise(resolve => setTimeout(resolve, 500))
   }
 }
@@ -1649,7 +1697,7 @@ async function escalarParaHumano(
   supabase: ReturnType<typeof createServiceClient>,
   conversationId: string,
   tenantId: string,
-  motivo: 'solicitacao' | 'nao_resolvido'
+  motivo: 'solicitacao' | 'nao_resolvido' | 'falha_envio'
 ): Promise<void> {
   try {
     await supabase
@@ -1683,9 +1731,15 @@ async function escalarParaHumano(
 
     if (!usuarios || usuarios.length === 0) return
 
-    const mensagem = motivo === 'solicitacao'
-      ? `${nomeContato} solicitou atendimento humano.`
-      : `${nomeContato} precisa de atendimento humano — o agente não conseguiu resolver.`
+    const MENSAGEM_POR_MOTIVO: Record<typeof motivo, string> = {
+      solicitacao:   `${nomeContato} solicitou atendimento humano.`,
+      nao_resolvido: `${nomeContato} precisa de atendimento humano — o agente não conseguiu resolver.`,
+      // O agente gerou a resposta mas o WhatsApp não a entregou. O cliente está
+      // sem retorno e NÃO sabe disso — por isso o aviso diz explicitamente para
+      // reenviar, já que a resposta aparece na dashboard como se tivesse saído.
+      falha_envio:   `${nomeContato} está sem resposta: o envio pelo WhatsApp falhou. Verifique a conexão da instância e reenvie a mensagem manualmente.`,
+    }
+    const mensagem = MENSAGEM_POR_MOTIVO[motivo]
 
     await supabase.from('notifications').insert(
       usuarios.map((u) => ({
@@ -1751,10 +1805,7 @@ async function classificarEtapaCRM({
   }
 
   try {
-    const OpenAI = (await import('openai')).default
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
-
-    const { choices } = await openai.chat.completions.create({
+    const { choices } = await openaiClient.chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0,
       max_tokens: 30,
@@ -2525,7 +2576,29 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     metadata:       { motor: motorUsado },
   })
 
-  await enviarResposta(payload.instanceName, payload.phone, resultado.content)
+  // O envio já tentou 3 vezes aqui dentro. Se ainda falhou, a Evolution está
+  // indisponível ou a instância caiu: o cliente ficou sem resposta e não tem
+  // como saber. Escalar é a única saída — não há a quem reenviar por WhatsApp
+  // justamente porque o WhatsApp é o canal que falhou.
+  //
+  // Antes isto propagava até o catch do process-webhook, que só fazia
+  // console.error: a resposta ficava salva na dashboard como enviada, o cliente
+  // no vácuo e ninguém era avisado. Era a falha silenciosa mais grave do fluxo.
+  try {
+    await enviarResposta(payload.instanceName, payload.phone, resultado.content)
+  } catch (errEnvio) {
+    if (errEnvio instanceof ErroEnvioResposta) {
+      console.error(
+        `[envio] resposta não entregue — conversa=${conversa.id} tenant=${payload.tenantId} ` +
+        `blocos=${errEnvio.blocosEnviados}/${errEnvio.blocosTotais}:`,
+        errEnvio.causa
+      )
+      await escalarParaHumano(supabase, conversa.id, payload.tenantId, 'falha_envio')
+      return
+    }
+    throw errEnvio
+  }
+
   await updateConversationTimestamp(supabase, conversa.id)
 
   // O agente prometeu uma transferência sem ter chamado a tool que a executa.

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { aguardarEObterMensagens, liberarLock, juntarMensagens } from '@/lib/ai/debounce'
+import {
+  aguardarEObterMensagens,
+  liberarLock,
+  juntarMensagens,
+  temMensagensPendentes,
+} from '@/lib/ai/debounce'
 import { processIncomingMessage } from '@/lib/ai/process-message'
 import { createServiceClient } from '@/lib/supabase/server'
 import { getTenantByInstanceName } from '@/lib/supabase/queries/conversations'
@@ -46,6 +51,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Parâmetros inválidos' }, { status: 400 })
   }
 
+  // Só quem realmente adquiriu o lock pode liberá-lo no final. Antes o
+  // `finally` rodava incondicionalmente: uma invocação que caiu no `skipped`
+  // (porque outra ganhou o lock) apagava os locks de QUEM ESTAVA PROCESSANDO,
+  // abrindo espaço para um disparo concorrente e uma resposta duplicada ao
+  // cliente no meio do ciclo alheio.
+  let lockAdquirido = false
+
   try {
     // Aguarda janela de debounce e tenta obter lock
     const mensagens = await aguardarEObterMensagens(tenantId, phone)
@@ -54,6 +66,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!mensagens || mensagens.length === 0) {
       return NextResponse.json({ skipped: true })
     }
+
+    lockAdquirido = true
 
     const mensagemUnificada = juntarMensagens(mensagens)
     const pushName = mensagens.find(m => m.pushName)?.pushName
@@ -98,6 +112,37 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     console.error('[process-webhook] Erro:', err)
     return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
   } finally {
-    await liberarLock(tenantId, phone)
+    // Sem `return` aqui: um return dentro do finally sobrescreveria a resposta
+    // de erro do catch acima e o 500 nunca chegaria a aparecer.
+    if (lockAdquirido) {
+      await liberarLock(tenantId, phone)
+
+      // Mensagens que o cliente mandou enquanto o agente processava ficaram na
+      // fila sem ninguém para disparar o próximo ciclo (o lock de disparo
+      // estava tomado). Agora que os locks caíram, refaz o disparo — senão
+      // essas mensagens só seriam respondidas se o cliente mandasse ainda
+      // outra, e morreriam na expiração da fila caso ele ficasse esperando.
+      //
+      // Sem risco de laço infinito: o novo ciclo CONSOME a fila
+      // (aguardarEObterMensagens faz DEL) e só re-dispara se houver mensagem
+      // nova de verdade. Fire-and-forget de propósito — esta função já está no
+      // fim do seu orçamento de 60s e não pode esperar o ciclo seguinte.
+      try {
+        if (await temMensagensPendentes(tenantId, phone)) {
+          const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.hubteksolutions.tech'
+          console.log(`[debounce] mensagens acumuladas durante o processamento de ${phone} — redisparando`)
+          await fetch(`${baseUrl}/api/agent/process-webhook`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-internal-secret': process.env.CRON_SECRET ?? '',
+            },
+            body: JSON.stringify({ tenantId, phone, instanceName }),
+          }).catch(err => console.error('[debounce] redisparo falhou:', err))
+        }
+      } catch (err) {
+        console.error('[debounce] verificação de pendências falhou:', err)
+      }
+    }
   }
 }

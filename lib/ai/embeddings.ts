@@ -1,6 +1,4 @@
-import OpenAI from 'openai'
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+import { openaiClient as openai } from './openai'
 
 // text-embedding-3-small → 1536 dimensões, compatível com vector(1536) no schema
 export async function generateEmbedding(text: string): Promise<number[]> {

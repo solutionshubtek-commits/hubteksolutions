@@ -36,8 +36,19 @@ export interface FilaMensagens {
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-const DEBOUNCE_TTL = 30        // segundos — TTL da chave no Redis
+// TTL da fila de mensagens. Subiu de 30s para 90s porque 30s era MENOR que um
+// ciclo de processamento completo (~40-60s): mensagens que o cliente mandava
+// enquanto o agente ainda estava respondendo acumulavam aqui e a chave expirava
+// antes de alguém consumi-las. Ver o comentário do lock de disparo abaixo.
+const DEBOUNCE_TTL = 90        // segundos — TTL da chave no Redis
 const DEBOUNCE_WINDOW_MS = 10000 // 10 segundos de espera após última mensagem
+
+// TTL dos locks. Caiu de 120s para 75s — um pouco acima do maxDuration de 60s
+// do process-webhook (vercel.json). Quando a Vercel mata a função pelo timeout,
+// o `finally` que chama liberarLock NÃO roda, e o lock órfão bloqueava novos
+// disparos por 2 minutos inteiros. 75s garante que o bloqueio nunca passe muito
+// do tempo em que a função poderia legitimamente estar rodando.
+const LOCK_TTL = 75
 
 function chaveDebounce(tenantId: string, phone: string): string {
   return `debounce:${tenantId}:${phone}`
@@ -80,8 +91,7 @@ export async function acumularMensagem(
     await client.set(chave, fila, { ex: DEBOUNCE_TTL })
 
     // Tenta adquirir lock de disparo — só quem conseguir dispara o process-webhook
-    // ex: 30s — tempo suficiente para o processamento completo
-    const lockDisparo = await client.set(chaveDisparo, '1', { ex: 120, nx: true })
+    const lockDisparo = await client.set(chaveDisparo, '1', { ex: LOCK_TTL, nx: true })
     const isFirst = !!lockDisparo
 
     return { timestamp: mensagem.timestamp, isFirst }
@@ -113,7 +123,7 @@ export async function aguardarEObterMensagens(
 
   try {
     // Tenta adquirir lock exclusivo
-    const lockObtido = await client.set(chave_lock, '1', { ex: 120, nx: true })
+    const lockObtido = await client.set(chave_lock, '1', { ex: LOCK_TTL, nx: true })
     if (!lockObtido) return null
 
     // Lê e remove a fila
@@ -127,6 +137,35 @@ export async function aguardarEObterMensagens(
   } catch (err) {
     console.error('[debounce] aguardarEObterMensagens falhou:', err)
     return null
+  }
+}
+
+// ─── Mensagens que chegaram durante o processamento ──────────────────────────
+
+/**
+ * Indica se sobraram mensagens na fila depois de um ciclo de processamento.
+ *
+ * Existe para fechar um buraco no fluxo de disparo: enquanto o agente processa
+ * (~40-60s), o lock de disparo está tomado, então `acumularMensagem` devolve
+ * isFirst=false para toda mensagem nova e NINGUÉM agenda um novo processamento.
+ * Ao terminar, `liberarLock` apenas soltava os locks — as mensagens acumuladas
+ * ficavam na fila esperando um próximo disparo que só aconteceria se o cliente
+ * mandasse ainda outra mensagem. Se ele parasse ali (o caso comum: manda um
+ * complemento e espera), a fila expirava e o agente simplesmente nunca
+ * respondia àquele complemento, sem erro nenhum.
+ *
+ * Chamada DEPOIS de liberarLock, no process-webhook, para decidir se um novo
+ * ciclo precisa ser disparado. Não consome a fila — só verifica.
+ */
+export async function temMensagensPendentes(tenantId: string, phone: string): Promise<boolean> {
+  const client = getRedis()
+  if (!client) return false
+  try {
+    const fila = await client.get<FilaMensagens>(chaveDebounce(tenantId, phone))
+    return !!fila && fila.mensagens.length > 0
+  } catch (err) {
+    console.error('[debounce] temMensagensPendentes falhou:', err)
+    return false
   }
 }
 

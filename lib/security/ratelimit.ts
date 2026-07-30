@@ -67,10 +67,24 @@ async function checkLimit(
 
 /**
  * Webhook da Evolution — limite por IP
- * 120 requisições por minuto
+ * 600 requisições por minuto
+ *
+ * O limite é por IP e a Evolution API roda em um único host: TODOS os tenants
+ * somam no mesmo balde. Com 120/min o teto era de ~40-60 conversas simultâneas
+ * (2-3 mensagens/min cada) — mais restritivo que a cota da OpenAI depois do
+ * upgrade para o tier 2 (450k TPM, ~56 mensagens/min no gpt-4o).
+ *
+ * Estourar aqui é pior que estourar na OpenAI: a Evolution não reenvia webhook
+ * recusado, então o 429 faz a mensagem do cliente ser PERDIDA em silêncio — sem
+ * erro na dashboard e sem resposta do agente. Não existe failover para isso,
+ * diferente do 429 da OpenAI (ver o comentário do cliente em lib/ai/openai.ts).
+ *
+ * 600 deixa a proteção anti-abuso de pé com folga sobre a capacidade real de
+ * processamento: acima de ~56 mensagens/min o gargalo volta a ser a cota da
+ * OpenAI, que degrada de forma controlada.
  */
 export async function rateLimitWebhook(ip: string): Promise<RateLimitResult> {
-  return checkLimit(`webhook:${ip}`, 120, 60)
+  return checkLimit(`webhook:${ip}`, 600, 60)
 }
 
 /**

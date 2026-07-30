@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { sanitizarNomeArquivo } from '@/lib/knowledge-storage'
-import OpenAI from 'openai'
+import { openaiClient as openai } from '@/lib/ai/openai'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -15,8 +15,6 @@ const LIMITE_IMAGEM = 4 * 1024 * 1024
 const LIMITE_DOCUMENTO = 4 * 1024 * 1024
 const CHUNK_PALAVRAS = 300
 const CHUNK_OVERLAP = 50
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 
 function chunkText(text: string): string[] {
   const palavras = text.split(/\s+/).filter((p) => p.length > 0)

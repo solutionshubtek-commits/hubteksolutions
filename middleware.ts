@@ -88,6 +88,23 @@ export async function middleware(request: NextRequest) {
       if (!result.allowed) return rateLimitResponse(result)
     }
 
+    // Disparo interno do agente — SEM limite por IP.
+    //
+    // Esta rota não é chamada por clientes: quem chama é /api/webhook/evolution,
+    // via fetch, e ela já exige o CRON_SECRET no header `x-internal-secret`. Um
+    // limite por IP aqui não agrega segurança — todas as chamadas saem do mesmo
+    // IP de egress da Vercel, então TODOS os tenants dividiam um único balde de
+    // 200/min do rateLimitGeral.
+    //
+    // E estourar aqui é uma falha silenciosa: o disparo no webhook é
+    // fire-and-forget com `.catch` que só loga, então um 429 fazia a mensagem
+    // do cliente ser descartada sem resposta e sem registro na dashboard.
+    // Também era incoerente com o teto de 600/min do próprio webhook — não faz
+    // sentido aceitar a mensagem na porta e derrubá-la no corredor.
+    else if (pathname === '/api/agent/process-webhook') {
+      // Sem rate limit — protegida por segredo interno.
+    }
+
     // Todas as outras rotas de API — limite geral por IP
     else {
       const result = await rateLimitGeral(ip)
