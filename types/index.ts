@@ -77,6 +77,15 @@ export interface AgentConfig {
   horario_inicio: string
   horario_fim: string
   dias_funcionamento: string[]
+  // Migration 009. Opcionais: null/ausente = horário contínuo e igual todos os
+  // dias, que é o comportamento de sempre. Interpretados em lib/horarios.ts.
+  horario_intervalo_inicio?: string | null
+  horario_intervalo_fim?: string | null
+  fds_horario_diferente?: boolean | null
+  horario_fds_inicio?: string | null
+  horario_fds_fim?: string | null
+  horario_fds_intervalo_inicio?: string | null
+  horario_fds_intervalo_fim?: string | null
   mensagem_ausencia: string
   temperatura: number
   max_tokens: number

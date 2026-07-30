@@ -11,6 +11,13 @@ import {
 } from '@/lib/supabase/queries/conversations'
 import { openAIChatCompletion, openAIChatCompletionWithTools, openaiClient } from './openai'
 import { registrarUso, type UsoCtx } from './uso'
+import {
+  dentroDoHorario,
+  slotsDoDia,
+  descreverHorarios,
+  janelasDoDia,
+  type ConfigHorarios,
+} from '@/lib/horarios'
 import { anthropicChatCompletion, MODELO_ANTHROPIC } from './anthropic'
 import { transcribeAudio, interpretImage } from './openai'
 import { generateEmbedding } from './embeddings'
@@ -190,15 +197,11 @@ CAPACIDADES DE SUPORTE (execute quando solicitado, depois retome o foco em quali
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
-function isWithinOperatingHours(horarioInicio: string, horarioFim: string, diasFuncionamento: string[]): boolean {
-  const agora = new Date()
-  const agoraBrasil = new Date(agora.getTime() - 3 * 60 * 60 * 1000)
-  const diaSemana = DIAS_PT[agoraBrasil.getUTCDay()]
-  if (!diasFuncionamento.includes(diaSemana)) return false
-  const [hI, mI] = horarioInicio.split(':').map(Number)
-  const [hF, mF] = horarioFim.split(':').map(Number)
-  const minutoAtual = agoraBrasil.getUTCHours() * 60 + agoraBrasil.getUTCMinutes()
-  return minutoAtual >= hI * 60 + mI && minutoAtual <= hF * 60 + mF
+// Delegado para lib/horarios.ts, que entende intervalo de almoço e horário de
+// fim de semana. Com os campos novos vazios o resultado é idêntico ao de antes.
+function isWithinOperatingHours(config: ConfigHorarios): boolean {
+  const agoraBrasil = new Date(Date.now() - 3 * 60 * 60 * 1000)
+  return dentroDoHorario(config, agoraBrasil)
 }
 
 function getSaudacao(): string {
@@ -690,9 +693,8 @@ function buildSystemPrompt(
   knowledgeDocs: Array<{ conteudo_texto: string; criado_em: string }>,
   temCalendar: boolean,
   temAgendamentosHubtek: boolean,
-  horarioInicio: string,
-  horarioFim: string,
-  diasFuncionamento: string[],
+  // Objeto de horários completo em vez de início/fim soltos — ver lib/horarios.ts.
+  configHorarios: ConfigHorarios,
   telefoneCliente: string,
   intencao: Intencao,
   perfilCliente: string,
@@ -723,13 +725,12 @@ function buildSystemPrompt(
   const saudacao = getSaudacao()
   prompt += `\n\nSAUDAÇÃO ATUAL: Use "${saudacao}" quando for a primeira mensagem ou quando fizer sentido cumprimentar.`
 
-  const DIAS_LABEL: Record<string, string> = {
-    dom: 'domingo', seg: 'segunda', ter: 'terça', qua: 'quarta',
-    qui: 'quinta', sex: 'sexta', sab: 'sábado',
-  }
-  const diasLabel = diasFuncionamento.map(d => DIAS_LABEL[d] ?? d).join(', ')
-  prompt += `\n\nHORÁRIO DE FUNCIONAMENTO OFICIAL: ${diasLabel}, das ${horarioInicio} às ${horarioFim} (horário de Brasília).`
-  prompt += `\nEsta é a fonte ÚNICA e DEFINITIVA do horário de atendimento. IGNORE qualquer horário diferente que apareça nos documentos da base de conhecimento — eles podem estar desatualizados.`
+  // descreverHorarios agrupa dias com o mesmo horário e já traz o intervalo de
+  // almoço e o horário próprio de fim de semana. Antes era uma faixa única
+  // "das X às Y", que não conseguia expressar pausa nem sábado diferente.
+  prompt += `\n\nHORÁRIO DE FUNCIONAMENTO OFICIAL (horário de Brasília):\n${descreverHorarios(configHorarios)}`
+  prompt += `\nEsta é a fonte ÚNICA e DEFINITIVA do horário de atendimento. Ela tem PRIORIDADE ABSOLUTA sobre qualquer outra informação: se um documento da base de conhecimento, um trecho recuperado ou qualquer instrução anterior deste prompt indicar horário diferente, o horário acima é o correto e os demais estão desatualizados.`
+  prompt += `\nNUNCA ofereça, confirme ou agende um horário fora das faixas acima — inclusive dentro do intervalo de almoço, quando houver. Se o cliente pedir um horário fora, diga que a empresa não atende naquele horário e ofereça a faixa válida mais próxima.`
   prompt += `\nSTATUS ATUAL: ESTAMOS ATENDENDO AGORA. Se o cliente perguntar se estão atendendo ou se está aberto, confirme que SIM.`
 
   prompt += `\n\nINTENÇÃO DETECTADA: ${intencao}.`
@@ -783,7 +784,7 @@ REGRAS DE COMPORTAMENTO:
   // pois ele passava a citar nomes de tools (ex: "criar_agendamento") que não
   // estavam disponíveis nesse fluxo (o fluxo Hubtek usa "criar_agendamento_hubtek").
   if (temCalendar && !temAgendamentosHubtek) {
-    prompt += `\n\nAGENDA: Você tem acesso à agenda da empresa. Horário: ${horarioInicio} às ${horarioFim}.`
+    prompt += `\n\nAGENDA: Você tem acesso à agenda da empresa. Só ofereça horários dentro das faixas oficiais acima.`
     prompt += '\nAgendamento: consulte slots disponíveis, confirme data/hora e crie o evento.'
     prompt += '\nReagendamento: localize pelo nome do cliente e reagende.'
     prompt += '\nCancelamento: localize, confirme com o cliente e delete.'
@@ -1180,15 +1181,21 @@ async function executarToolCall(
   toolName: string,
   args: Record<string, unknown>,
   calendarConfig: GoogleCalendarConfig,
-  horarioInicio: string,
-  horarioFim: string
+  // Mesmo motivo de executarAppointmentToolCall: com intervalo de almoço e
+  // horário de fim de semana, início/fim soltos não descrevem mais o dia.
+  configHorarios: ConfigHorarios
 ): Promise<string> {
   try {
     if (toolName === 'listar_horarios_disponiveis') {
       const dataRaw = String(args.data ?? 'hoje')
       const data = dataRaw.match(/^\d{4}-\d{2}-\d{2}$/) ? dataRaw : parseDateFromText(dataRaw)
       const duracao = Number(args.duracao_minutos ?? 60)
-      const slots = await listAvailableSlots(calendarConfig, data, horarioInicio, horarioFim, duracao)
+      const diaSemana = DIAS_PT[new Date(`${data}T12:00:00-03:00`).getUTCDay()]
+      const janelas = janelasDoDia(configHorarios, diaSemana)
+      if (janelas.length === 0) {
+        return `A empresa não atende em ${data} (fora dos dias de funcionamento cadastrados). Ofereça outra data ao cliente.`
+      }
+      const slots = await listAvailableSlots(calendarConfig, data, janelas, duracao)
       if (slots.length === 0) return `Não há horários disponíveis para ${data}.`
       const lista = slots.map(s => {
         const d = new Date(s.start)
@@ -1258,10 +1265,13 @@ async function executarAppointmentToolCall(
   instanceName: string,
   // AJUSTE (F6-17): horário de funcionamento cadastrado na dashboard —
   // usado como fonte da janela de atendimento na consulta de disponibilidade.
-  horarioInicio: string,
-  horarioFim: string,
-  diasFuncionamento: string[]
+  //
+  // Passa a receber o objeto de horários inteiro em vez de início/fim soltos:
+  // com intervalo de almoço e horário de fim de semana, dois campos não
+  // descrevem mais o dia. Ver lib/horarios.ts.
+  configHorarios: ConfigHorarios
 ): Promise<string> {
+  const diasFuncionamento = configHorarios.dias_funcionamento
   const supabase = createServiceClient()
 
   async function getCalConfig(): Promise<GoogleCalendarConfig | null> {
@@ -1311,16 +1321,10 @@ async function executarAppointmentToolCall(
         return `A empresa não atende em ${data} (fora dos dias de funcionamento cadastrados). Ofereça outra data ao cliente.`
       }
 
-      // 2. Gera os slots possíveis dentro do horário de funcionamento
-      const [hI, mI] = horarioInicio.split(':').map(Number)
-      const [hF, mF] = horarioFim.split(':').map(Number)
-      const inicioMin = hI * 60 + mI
-      const fimMin    = hF * 60 + mF
-
-      const slots: Array<{ inicio: number; fim: number }> = []
-      for (let t = inicioMin; t + duracao <= fimMin; t += duracao) {
-        slots.push({ inicio: t, fim: t + duracao })
-      }
+      // 2. Gera os slots dentro de CADA janela do dia. slotsDoDia respeita o
+      //    intervalo de almoço e o horário próprio de fim de semana; sem esses
+      //    campos preenchidos devolve a mesma janela única de sempre.
+      const slots = slotsDoDia(configHorarios, diaSemana, duracao)
       if (slots.length === 0) return `Não há janela de atendimento configurada para ${data}.`
 
       const minutosParaMs = (min: number): number =>
@@ -1981,8 +1985,8 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   }
   // ──────────────────────────────────────────────────────────────────────────
 
-  const dentroDoHorario = isWithinOperatingHours(config.horario_inicio, config.horario_fim, config.dias_funcionamento)
-  if (!dentroDoHorario) {
+  const estaDentroDoHorario = isWithinOperatingHours(config)
+  if (!estaDentroDoHorario) {
     await sendTextMessage(payload.instanceName, payload.phone, config.mensagem_ausencia)
     return
   }
@@ -2309,9 +2313,7 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
     knowledgeDocs,
     temCalendar,
     temAgendamentosHubtek,
-    config.horario_inicio,
-    config.horario_fim,
-    config.dias_funcionamento,
+    config,
     payload.phone,
     intencao,
     perfilTexto,
@@ -2546,10 +2548,9 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
             const toolResult = isAppointmentTool
               ? await executarAppointmentToolCall(
-                  tc.function.name, args, payload.tenantId, payload.instanceName,
-                  config.horario_inicio, config.horario_fim, config.dias_funcionamento
+                  tc.function.name, args, payload.tenantId, payload.instanceName, config
                 )
-              : await executarToolCall(tc.function.name, args, calendarConfig!, config.horario_inicio, config.horario_fim)
+              : await executarToolCall(tc.function.name, args, calendarConfig!, config)
 
             // AJUSTE: só marca como criado se a tool realmente confirmou sucesso
             // (retornos de CONFLITO ou erro não contam).

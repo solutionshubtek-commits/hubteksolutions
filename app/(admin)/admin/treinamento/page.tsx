@@ -20,6 +20,15 @@ interface Tenant {
 }
 interface HorarioFuncionamento {
   inicio: string; fim: string; dias: number[]; funcoes?: string[]
+  // Campos opcionais (migration 009). Ausentes = horário contínuo, mesmo
+  // horário todos os dias — o comportamento de sempre.
+  intervalo_inicio?: string | null
+  intervalo_fim?: string | null
+  fds_diferente?: boolean
+  fds_inicio?: string | null
+  fds_fim?: string | null
+  fds_intervalo_inicio?: string | null
+  fds_intervalo_fim?: string | null
 }
 interface GoogleCalendarConfig {
   client_email: string; private_key: string; calendar_id: string
@@ -80,6 +89,17 @@ export default function AdminTreinamentoPage() {
   const [funcaoPrincipal, setFuncaoPrincipal] = useState<string>('')
   const [horaInicio, setHoraInicio] = useState('08:00')
   const [horaFim, setHoraFim] = useState('18:00')
+  // Intervalo (almoço) e horário de fim de semana. Desligados por padrão: nesse
+  // estado a gravação manda null e o agente se comporta exatamente como antes.
+  const [temIntervalo, setTemIntervalo] = useState(false)
+  const [intervaloInicio, setIntervaloInicio] = useState('12:00')
+  const [intervaloFim, setIntervaloFim] = useState('13:00')
+  const [fdsDiferente, setFdsDiferente] = useState(false)
+  const [fdsInicio, setFdsInicio] = useState('09:00')
+  const [fdsFim, setFdsFim] = useState('13:00')
+  const [fdsTemIntervalo, setFdsTemIntervalo] = useState(false)
+  const [fdsIntervaloInicio, setFdsIntervaloInicio] = useState('12:00')
+  const [fdsIntervaloFim, setFdsIntervaloFim] = useState('13:00')
   const [dias, setDias] = useState<number[]>([1, 2, 3, 4, 5])
   const [agentOn, setAgentOn] = useState(true)
   const [adminUserId, setAdminUserId] = useState<string>('')
@@ -123,6 +143,18 @@ export default function AdminTreinamentoPage() {
     const h = t.horario_funcionamento
     setHoraInicio(h?.inicio ?? '08:00')
     setHoraFim(h?.fim ?? '18:00')
+    // Intervalo só é considerado ligado quando os DOIS campos existem — meio
+    // preenchido não descreve uma pausa e seria ignorado pelo agente.
+    const temInt = Boolean(h?.intervalo_inicio && h?.intervalo_fim)
+    setTemIntervalo(temInt)
+    setIntervaloInicio(h?.intervalo_inicio ?? '12:00')
+    setIntervaloFim(h?.intervalo_fim ?? '13:00')
+    setFdsDiferente(Boolean(h?.fds_diferente))
+    setFdsInicio(h?.fds_inicio ?? '09:00')
+    setFdsFim(h?.fds_fim ?? '13:00')
+    setFdsTemIntervalo(Boolean(h?.fds_intervalo_inicio && h?.fds_intervalo_fim))
+    setFdsIntervaloInicio(h?.fds_intervalo_inicio ?? '12:00')
+    setFdsIntervaloFim(h?.fds_intervalo_fim ?? '13:00')
     setDias(h?.dias ?? [1, 2, 3, 4, 5])
     setFuncaoPrincipal(h?.funcoes?.[0] ?? '')
     const gc = t.google_calendar_config
@@ -171,7 +203,6 @@ export default function AdminTreinamentoPage() {
       }),
     })
 
-    // Persiste a nova função no banco imediatamente
     const novaFuncao = bannerFunil.novaFuncao
     const diasStr = dias.map((d: number) => DIAS_NUM_TO_STR[d]).filter(Boolean)
     const gcConfig = gcClientEmail && gcPrivateKey && gcCalendarId
@@ -179,7 +210,7 @@ export default function AdminTreinamentoPage() {
       : null
 
     await supabase.from('tenants').update({
-      horario_funcionamento: { inicio: horaInicio, fim: horaFim, dias, funcoes: [novaFuncao] },
+      horario_funcionamento: { inicio: horaInicio, fim: horaFim, dias, funcoes: [novaFuncao], ...horariosExtras() },
     }).eq('id', selectedId)
 
     await supabase.from('agent_config').upsert({
@@ -187,6 +218,7 @@ export default function AdminTreinamentoPage() {
       prompt_principal:       prompt,
       horario_inicio:         horaInicio,
       horario_fim:            horaFim,
+      ...horariosExtrasAgentConfig(),
       dias_funcionamento:     diasStr,
       funcoes_ativas:         [novaFuncao],
       google_calendar_config: gcConfig,
@@ -238,6 +270,7 @@ export default function AdminTreinamentoPage() {
       horario_funcionamento: {
         inicio: horaInicio, fim: horaFim, dias,
         funcoes: funcaoPrincipal ? [funcaoPrincipal] : [],
+        ...horariosExtras(),
       },
       google_calendar_config: gcConfig,
     }).eq('id', tenant.id)
@@ -248,6 +281,7 @@ export default function AdminTreinamentoPage() {
       prompt_principal: prompt,
       horario_inicio: horaInicio,
       horario_fim: horaFim,
+      ...horariosExtrasAgentConfig(),
       dias_funcionamento: diasStr,
       funcoes_ativas: funcaoPrincipal ? [funcaoPrincipal] : [],
       google_calendar_config: gcConfig,
@@ -333,6 +367,44 @@ export default function AdminTreinamentoPage() {
   }
 
   const toggleDia = (d: number) => setDias((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d])
+
+  // ─── Horários: intervalo e fim de semana ────────────────────────────────────
+  //
+  // Um toggle desligado grava NULL, não uma string vazia. NULL é o que
+  // lib/horarios.ts interpreta como "sem pausa" / "fim de semana igual aos
+  // outros dias" — string vazia viraria um horário inválido.
+  //
+  // O fim de semana só é gravado quando sábado ou domingo estão marcados nos
+  // dias de funcionamento: sem isso o campo não teria efeito nenhum e ficaria
+  // como configuração fantasma no banco.
+  const fdsAplicavel = () => fdsDiferente && dias.some((d) => d === 0 || d === 6)
+
+  /** Campos extras para o JSON `tenants.horario_funcionamento` (usado pela tela). */
+  function horariosExtras() {
+    return {
+      intervalo_inicio:     temIntervalo ? intervaloInicio : null,
+      intervalo_fim:        temIntervalo ? intervaloFim : null,
+      fds_diferente:        fdsAplicavel(),
+      fds_inicio:           fdsAplicavel() ? fdsInicio : null,
+      fds_fim:              fdsAplicavel() ? fdsFim : null,
+      fds_intervalo_inicio: fdsAplicavel() && fdsTemIntervalo ? fdsIntervaloInicio : null,
+      fds_intervalo_fim:    fdsAplicavel() && fdsTemIntervalo ? fdsIntervaloFim : null,
+    }
+  }
+
+  /** Mesmos valores nas colunas de `agent_config` — é de lá que o agente lê. */
+  function horariosExtrasAgentConfig() {
+    const e = horariosExtras()
+    return {
+      horario_intervalo_inicio:     e.intervalo_inicio,
+      horario_intervalo_fim:        e.intervalo_fim,
+      fds_horario_diferente:        e.fds_diferente,
+      horario_fds_inicio:           e.fds_inicio,
+      horario_fds_fim:              e.fds_fim,
+      horario_fds_intervalo_inicio: e.fds_intervalo_inicio,
+      horario_fds_intervalo_fim:    e.fds_intervalo_fim,
+    }
+  }
   const agendamentosAtivo = funcaoPrincipal === 'agendamentos'
 
   if (loading) {
@@ -600,16 +672,48 @@ export default function AdminTreinamentoPage() {
           {/* Horário */}
           <div className="rounded-xl p-5" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
             <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Horário de funcionamento</p>
-            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>O agente só responde dentro deste intervalo.</p>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+              O agente só responde dentro destes horários e nunca oferece agendamento fora deles.
+            </p>
+
+            {/* Turno da manhã / turno único */}
+            <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+              {temIntervalo ? 'Manhã' : 'Atendimento'}
+            </p>
             <div className="flex items-center gap-2">
               <input type="time" value={horaInicio} onChange={(e) => setHoraInicio(e.target.value)}
                 className="flex-1 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none"
                 style={{ ...inputStyle, colorScheme: 'dark' }} />
               <span className="text-xs" style={{ color: 'var(--text-muted)' }}>até</span>
-              <input type="time" value={horaFim} onChange={(e) => setHoraFim(e.target.value)}
+              <input type="time" value={temIntervalo ? intervaloInicio : horaFim}
+                onChange={(e) => temIntervalo ? setIntervaloInicio(e.target.value) : setHoraFim(e.target.value)}
                 className="flex-1 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none"
                 style={{ ...inputStyle, colorScheme: 'dark' }} />
             </div>
+
+            {/* Intervalo (almoço) — dois campos a mais, só quando ligado */}
+            <label className="flex items-center gap-2 mt-3 cursor-pointer">
+              <input type="checkbox" checked={temIntervalo}
+                onChange={(e) => setTemIntervalo(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-[#10B981]" />
+              <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Fecha para intervalo (almoço)</span>
+            </label>
+
+            {temIntervalo && (
+              <div className="mt-3">
+                <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>Tarde</p>
+                <div className="flex items-center gap-2">
+                  <input type="time" value={intervaloFim} onChange={(e) => setIntervaloFim(e.target.value)}
+                    className="flex-1 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none"
+                    style={{ ...inputStyle, colorScheme: 'dark' }} />
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>até</span>
+                  <input type="time" value={horaFim} onChange={(e) => setHoraFim(e.target.value)}
+                    className="flex-1 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none"
+                    style={{ ...inputStyle, colorScheme: 'dark' }} />
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-1.5 flex-wrap mt-3">
               {DAYS_ORDER.map((d) => (
                 <button key={d} onClick={() => toggleDia(d)}
@@ -623,6 +727,63 @@ export default function AdminTreinamentoPage() {
                 </button>
               ))}
             </div>
+
+            {/* Fim de semana com horário próprio. Só aparece se sáb ou dom
+                estiverem marcados acima — sem isso o campo não teria efeito. */}
+            {dias.some((d) => d === 0 || d === 6) && (
+              <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={fdsDiferente}
+                    onChange={(e) => setFdsDiferente(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded accent-[#10B981]" />
+                  <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    Sábado e domingo têm horário diferente
+                  </span>
+                </label>
+
+                {fdsDiferente && (
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                        {fdsTemIntervalo ? 'Fim de semana — manhã' : 'Fim de semana'}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <input type="time" value={fdsInicio} onChange={(e) => setFdsInicio(e.target.value)}
+                          className="flex-1 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none"
+                          style={{ ...inputStyle, colorScheme: 'dark' }} />
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>até</span>
+                        <input type="time" value={fdsTemIntervalo ? fdsIntervaloInicio : fdsFim}
+                          onChange={(e) => fdsTemIntervalo ? setFdsIntervaloInicio(e.target.value) : setFdsFim(e.target.value)}
+                          className="flex-1 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none"
+                          style={{ ...inputStyle, colorScheme: 'dark' }} />
+                      </div>
+                    </div>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={fdsTemIntervalo}
+                        onChange={(e) => setFdsTemIntervalo(e.target.checked)}
+                        className="w-3.5 h-3.5 rounded accent-[#10B981]" />
+                      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Também fecha para intervalo</span>
+                    </label>
+
+                    {fdsTemIntervalo && (
+                      <div>
+                        <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>Fim de semana — tarde</p>
+                        <div className="flex items-center gap-2">
+                          <input type="time" value={fdsIntervaloFim} onChange={(e) => setFdsIntervaloFim(e.target.value)}
+                            className="flex-1 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none"
+                            style={{ ...inputStyle, colorScheme: 'dark' }} />
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>até</span>
+                          <input type="time" value={fdsFim} onChange={(e) => setFdsFim(e.target.value)}
+                            className="flex-1 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none"
+                            style={{ ...inputStyle, colorScheme: 'dark' }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Base de conhecimento */}

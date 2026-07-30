@@ -1,6 +1,8 @@
 // lib/google-calendar.ts
 // Integração Google Calendar via Service Account (por tenant)
 
+import type { JanelaHorario } from '@/lib/horarios'
+
 export interface GoogleCalendarConfig {
   client_email: string
   private_key: string
@@ -23,7 +25,8 @@ export interface CalendarEvent {
 
 // ─── JWT / Auth ───────────────────────────────────────────────────────────────
 
-export async function getAccessToken(config: GoogleCalendarConfig): Promise<string> {  const now = Math.floor(Date.now() / 1000)
+export async function getAccessToken(config: GoogleCalendarConfig): Promise<string> {
+  const now = Math.floor(Date.now() / 1000)
   const header = { alg: 'RS256', typ: 'JWT' }
   const payload = {
     iss: config.client_email,
@@ -143,16 +146,13 @@ export async function listEventsByDay(
 export async function listAvailableSlots(
   config: GoogleCalendarConfig,
   dateStr: string,
-  horarioInicio: string, // "08:00"
-  horarioFim: string,    // "18:00"
+  // Janelas de atendimento do dia — uma quando não há pausa, duas quando a
+  // empresa para para o almoço. Antes recebia início/fim soltos e assumia um
+  // bloco contínuo, o que oferecia horário no meio do almoço.
+  janelas: JanelaHorario[],
   duracaoMinutos = 60
 ): Promise<CalendarSlot[]> {
   const eventos = await listEventsByDay(config, dateStr)
-
-  const [hI, mI] = horarioInicio.split(':').map(Number)
-  const [hF, mF] = horarioFim.split(':').map(Number)
-  const inicioMinutos = hI * 60 + mI
-  const fimMinutos = hF * 60 + mF
 
   // Converte eventos para intervalos ocupados em minutos
   const ocupados = eventos.map(e => {
@@ -164,18 +164,26 @@ export async function listAvailableSlots(
   })
 
   const slots: CalendarSlot[] = []
-  for (let min = inicioMinutos; min + duracaoMinutos <= fimMinutos; min += duracaoMinutos) {
-    const slotEnd = min + duracaoMinutos
-    const livre = !ocupados.some(o => o.start < slotEnd && o.end > min)
-    if (livre) {
-      const startH = String(Math.floor(min / 60)).padStart(2, '0')
-      const startM = String(min % 60).padStart(2, '0')
-      const endH = String(Math.floor(slotEnd / 60)).padStart(2, '0')
-      const endM = String(slotEnd % 60).padStart(2, '0')
-      slots.push({
-        start: toISO(dateStr, `${startH}:${startM}`),
-        end: toISO(dateStr, `${endH}:${endM}`),
-      })
+  // Um laço por janela: nenhum slot atravessa a pausa do almoço.
+  for (const janela of janelas) {
+    const [hI, mI] = janela.inicio.split(':').map(Number)
+    const [hF, mF] = janela.fim.split(':').map(Number)
+    const inicioMinutos = hI * 60 + mI
+    const fimMinutos = hF * 60 + mF
+
+    for (let min = inicioMinutos; min + duracaoMinutos <= fimMinutos; min += duracaoMinutos) {
+      const slotEnd = min + duracaoMinutos
+      const livre = !ocupados.some(o => o.start < slotEnd && o.end > min)
+      if (livre) {
+        const startH = String(Math.floor(min / 60)).padStart(2, '0')
+        const startM = String(min % 60).padStart(2, '0')
+        const endH = String(Math.floor(slotEnd / 60)).padStart(2, '0')
+        const endM = String(slotEnd % 60).padStart(2, '0')
+        slots.push({
+          start: toISO(dateStr, `${startH}:${startM}`),
+          end: toISO(dateStr, `${endH}:${endM}`),
+        })
+      }
     }
   }
 
