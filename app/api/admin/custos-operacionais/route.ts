@@ -82,7 +82,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   if (error) {
     console.error('[custos-operacionais] GET falhou:', error)
-    return NextResponse.json({ error: 'Erro ao consultar custos' }, { status: 500 })
+    return NextResponse.json(
+      { error: `Erro ao consultar custos [${error.code ?? 'sem código'}]: ${error.message}` },
+      { status: 500 }
+    )
   }
 
   if (doMes && doMes.length > 0) {
@@ -176,7 +179,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   if (error) {
     console.error('[custos-operacionais] POST falhou:', error)
-    return NextResponse.json({ error: 'Erro ao salvar custos' }, { status: 500 })
+    // Devolve o erro do Postgres em vez de "Erro ao salvar custos". A rota já
+    // exige admin_hubtek, então não há exposição indevida — e a mensagem
+    // genérica obrigava a caçar o motivo no log da Vercel, transformando um
+    // "42501: permission denied" ou "42P01: relation does not exist" em
+    // adivinhação. O `code` é o que distingue tabela ausente de RLS bloqueando.
+    return NextResponse.json(
+      {
+        error: `Erro ao salvar custos [${error.code ?? 'sem código'}]: ${error.message}`,
+        detalhe: error.details ?? null,
+        dica: error.hint ?? null,
+      },
+      { status: 500 }
+    )
   }
 
   return NextResponse.json({ success: true, competencia, gravados: linhas.length })

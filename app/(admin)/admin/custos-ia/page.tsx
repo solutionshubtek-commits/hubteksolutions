@@ -288,8 +288,9 @@ export default function CustosIAPage() {
         body: JSON.stringify({ competencia, valores }),
       })
       if (!res.ok) {
-        const corpo = await res.json().catch(() => ({}))
-        throw new Error(corpo.error ?? `HTTP ${res.status}`)
+        const corpo: { error?: string; detalhe?: string | null } = await res.json().catch(() => ({}))
+        const base = corpo.error ?? `HTTP ${res.status}`
+        throw new Error(corpo.detalhe ? `${base} — ${corpo.detalhe}` : base)
       }
 
       // Gravou nesta competência: os valores deixam de ser herdados.
