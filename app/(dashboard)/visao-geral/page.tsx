@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   MessageSquare, Users, PauseCircle,
@@ -599,6 +600,7 @@ const ESTADOS_CONECTADOS = ['open', 'conectado']
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function VisaoGeralPage() {
+  const router = useRouter()
   const [metrics, setMetrics]               = useState<Metrics | null>(null)
   const [crmStats, setCrmStats]             = useState<CRMStats | null>(null)
   const [crmCarregando, setCrmCarregando]   = useState(false)
@@ -852,6 +854,11 @@ export default function VisaoGeralPage() {
       !estaEncerrada(c) && (filtroStatus === 'pausado' ? c.agente_pausado : !c.agente_pausado)
     ))
   }, [filtroStatus, conversas])
+
+  // Mesma navegação da tela de Histórico: a linha leva para a conversa.
+  function abrirConversa(id: string) {
+    router.push(`/conversas/${id}`)
+  }
 
   async function handlePausarRetomar(conversa: ConversaRecente) {
     setPausando(conversa.id)
@@ -1237,7 +1244,12 @@ export default function VisaoGeralPage() {
                 </thead>
                 <tbody>
                   {conversasFiltradas.map(c => (
-                    <tr key={c.id} className="transition-colors last:border-0" style={{ borderBottom:'1px solid var(--border)' }}
+                    <tr key={c.id} className="transition-colors last:border-0 cursor-pointer" style={{ borderBottom:'1px solid var(--border)' }}
+                      onClick={() => abrirConversa(c.id)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirConversa(c.id) } }}
+                      tabIndex={0}
+                      role="link"
+                      aria-label={`Abrir conversa com ${c.contato_nome || c.contato_telefone}`}
                       onMouseEnter={e=>(e.currentTarget as HTMLElement).style.background='var(--bg-hover)'}
                       onMouseLeave={e=>(e.currentTarget as HTMLElement).style.background='transparent'}>
                       <td className="px-6 py-4">
@@ -1279,7 +1291,10 @@ export default function VisaoGeralPage() {
                         {estaEncerrada(c) ? (
                           <span className="text-xs" style={{ color:'var(--text-label)' }}>—</span>
                         ) : (
-                          <button onClick={() => handlePausarRetomar(c)} disabled={pausando===c.id}
+                          // stopPropagation: a linha inteira navega para a
+                          // conversa, e pausar o agente não pode arrastar o
+                          // operador para outra tela junto.
+                          <button onClick={e => { e.stopPropagation(); handlePausarRetomar(c) }} disabled={pausando===c.id}
                             className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${c.agente_pausado?'bg-[#10B981]/10 text-[#10B981] hover:bg-[#10B981]/20 border border-[#10B981]/30':'bg-[#F59E0B]/10 text-[#F59E0B] hover:bg-[#F59E0B]/20 border border-[#F59E0B]/30'}`}>
                             {c.agente_pausado?<><Play size={11} /> Retomar</>:<><Pause size={11} /> Pausar</>}
                           </button>
@@ -1293,7 +1308,7 @@ export default function VisaoGeralPage() {
 
             <div className="md:hidden divide-y" style={{ borderColor:'var(--border)' }}>
               {conversasFiltradas.map(c => (
-                <div key={c.id} className="p-4 space-y-2">
+                <div key={c.id} className="p-4 space-y-2 cursor-pointer" onClick={() => abrirConversa(c.id)}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
@@ -1318,7 +1333,7 @@ export default function VisaoGeralPage() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs" style={{ color:'var(--text-muted)' }}>{tempoRelativo(c.ultima_mensagem_em)}</span>
                     {!estaEncerrada(c) && (
-                      <button onClick={() => handlePausarRetomar(c)} disabled={pausando===c.id}
+                      <button onClick={e => { e.stopPropagation(); handlePausarRetomar(c) }} disabled={pausando===c.id}
                         className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 ${c.agente_pausado?'bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30':'bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/30'}`}>
                         {c.agente_pausado?<><Play size={10} /> Retomar</>:<><Pause size={10} /> Pausar</>}
                       </button>

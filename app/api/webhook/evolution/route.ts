@@ -9,11 +9,89 @@ import {
 } from '@/lib/evolution/webhook'
 import { getTenantByInstanceName, HORAS_PAUSA_AUTOMATICA } from '@/lib/supabase/queries/conversations'
 import { acumularMensagem, type MensagemAcumulada } from '@/lib/ai/debounce'
+import { baixarEGuardarMidia, TIPO_POR_MESSAGE_TYPE } from '@/lib/evolution/midia'
+import type { EvolutionMessageKey } from '@/lib/evolution/webhook'
 
 const WHATSAPP_STATUS: Record<string, string> = {
   open: 'conectado',
   close: 'desconectado',
   connecting: 'desconectado',
+}
+
+// Janela para reconhecer o eco de uma mídia que a própria dashboard acabou de
+// enviar. A rota /api/whatsapp/enviar-midia-url grava a mensagem no banco na
+// hora do envio; o WhatsApp devolve o mesmo arquivo como `fromMe` segundos
+// depois. Sem esta checagem, cada anexo enviado pela dashboard apareceria duas
+// vezes na conversa.
+const MINUTOS_ECO_MIDIA = 3
+
+/**
+ * Registra na conversa uma mídia que o operador enviou pelo WhatsApp Web.
+ *
+ * Assumir o atendimento pelo celular é o caminho normal do time — e o que sai
+ * por lá faz parte do histórico tanto quanto o que sai pela dashboard.
+ */
+async function registrarMidiaDoOperador(
+  supabase: ReturnType<typeof createServiceClient>,
+  tenantId: string,
+  phone: string,
+  instanceName: string,
+  data: { key: EvolutionMessageKey; message?: { imageMessage?: { caption?: string }; videoMessage?: { caption?: string } } },
+  tipoMidia: string,
+): Promise<void> {
+  const { data: conversa } = await supabase
+    .from('conversations')
+    .select('id, status')
+    .eq('tenant_id', tenantId)
+    .eq('contato_telefone', phone)
+    .order('criado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!conversa) return
+
+  // Eco do que a dashboard acabou de mandar? Então já está registrado.
+  const limite = new Date(Date.now() - MINUTOS_ECO_MIDIA * 60 * 1000).toISOString()
+  const { data: recentes } = await supabase
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversa.id)
+    .eq('origem', 'operador')
+    .eq('tipo', tipoMidia)
+    .not('arquivo_url', 'is', null)
+    .gte('criado_em', limite)
+    .limit(1)
+
+  if (recentes && recentes.length > 0) return
+
+  const { url } = await baixarEGuardarMidia(supabase, instanceName, data.key, tenantId, tipoMidia)
+
+  const caption = data.message?.imageMessage?.caption ?? data.message?.videoMessage?.caption ?? ''
+  const agora = new Date().toISOString()
+
+  await supabase.from('messages').insert({
+    conversation_id: conversa.id,
+    tenant_id: tenantId,
+    origem: 'operador',
+    tipo: tipoMidia,
+    conteudo: caption,
+    arquivo_url: url,
+    from_me: true,
+    criado_em: agora,
+  })
+
+  // Mesma regra do texto do operador: quem mandou mídia assumiu a conversa, e o
+  // agente sai da frente pela janela padrão.
+  const encerrada = conversa.status === 'encerrada' || conversa.status === 'encerrado'
+  await supabase.from('conversations')
+    .update({
+      ...(encerrada ? { status: 'ativa' } : {}),
+      ultima_mensagem_em: agora,
+      agente_pausado: true,
+      pausado_em: agora,
+      pausa_expira_em: new Date(Date.now() + HORAS_PAUSA_AUTOMATICA * 60 * 60 * 1000).toISOString(),
+    })
+    .eq('id', conversa.id)
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -49,14 +127,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // ── Mensagens enviadas pelo operador via WhatsApp Web (fromMe) ─────────
     if (data.key.fromMe) {
-      const isMidia = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage'].includes(data.messageType)
-      if (isMidia) return response
+      const tipoMidia = TIPO_POR_MESSAGE_TYPE[data.messageType]
 
       const supabase = createServiceClient()
       const tenant = await getTenantByInstanceName(supabase, event.instance)
       if (!tenant) return response
 
       const phone = extractPhone(data.key.remoteJid)
+
+      // Mídia enviada pelo operador era simplesmente descartada aqui: a foto do
+      // produto que ele mandava pelo celular não existia na dashboard, e a
+      // conversa ficava com um buraco no meio. Agora o arquivo é baixado e
+      // registrado como qualquer outra mensagem do atendimento.
+      if (tipoMidia) {
+        await registrarMidiaDoOperador(supabase, tenant.id, phone, event.instance, data, tipoMidia)
+        return response
+      }
+
       const conteudo = extractTextContent(data)
       if (!conteudo) return response
 

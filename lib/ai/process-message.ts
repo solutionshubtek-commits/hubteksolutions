@@ -22,6 +22,7 @@ import { anthropicChatCompletion, MODELO_ANTHROPIC } from './anthropic'
 import { transcribeAudio, interpretImage } from './openai'
 import { generateEmbedding } from './embeddings'
 import { sendTextMessage, sendPresence, downloadMediaAsBase64 } from '@/lib/evolution/client'
+import { baixarEGuardarMidia, type MidiaBaixada } from '@/lib/evolution/midia'
 import type { EvolutionMessageKey, WhatsAppMessageType } from '@/lib/evolution/webhook'
 import type { ChatMessage } from './openai'
 import {
@@ -1894,6 +1895,39 @@ Regras:
   }
 }
 
+// ─── Persistência de mídia recebida ───────────────────────────────────────────
+
+/**
+ * Baixa a mídia da Evolution, guarda no storage e popula `arquivo_url`.
+ *
+ * Isto acontecia lá embaixo, junto da transcrição de áudio e da leitura de
+ * imagem — ou seja, depois dos returns de agente pausado, agente desligado e
+ * fora de horário. O efeito na dashboard: toda mídia de conversa assumida por
+ * um operador virava um ícone morto, sem player e sem link, porque ninguém
+ * chegou a baixar o arquivo. Quanto mais o time atendia à mão, mais buraco.
+ *
+ * Guardar o que o cliente mandou é registro do atendimento, não etapa do
+ * raciocínio da IA. Vídeo e documento, que nunca tiveram tratamento nenhum,
+ * entram aqui pelo mesmo motivo.
+ *
+ * Devolve o base64 quando baixou, para a transcrição e a leitura de imagem
+ * reaproveitarem em vez de pedir o arquivo de novo à Evolution.
+ */
+async function persistirMidia(
+  supabase: ReturnType<typeof createServiceClient>,
+  payload: ProcessMessagePayload,
+  mensagemId: string,
+  tipoDb: string,
+): Promise<MidiaBaixada | null> {
+  const { url, midia } = await baixarEGuardarMidia(
+    supabase, payload.instanceName, payload.messageKey, payload.tenantId, tipoDb
+  )
+  if (url) {
+    await supabase.from('messages').update({ arquivo_url: url }).eq('id', mensagemId)
+  }
+  return midia
+}
+
 // ─── Upsert lead no CRM ───────────────────────────────────────────────────────
 
 async function upsertCRMLead(
@@ -1959,6 +1993,12 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   await updateConversationTimestamp(supabase, conversa.id)
 
+  // Mídia é guardada aqui, antes de qualquer return: é registro do atendimento,
+  // e a dashboard precisa exibi-la mesmo quando o agente não vai responder.
+  const midiaBaixada = tipoDb !== 'texto'
+    ? await persistirMidia(supabase, payload, mensagemSalva.id, tipoDb)
+    : null
+
   // A configuração é lida aqui, antes dos returns de agente desligado/pausado,
   // porque o funil do CRM sai dela — e o lead precisa nascer mesmo quando o
   // agente não vai responder esta mensagem.
@@ -2002,24 +2042,16 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   let conteudoProcessado = payload.conteudo ?? ''
 
+  // O arquivo já foi baixado e guardado acima; aqui só se extrai o conteúdo que
+  // o modelo precisa ler. `midiaBaixada` evita uma segunda ida à Evolution pelo
+  // mesmo arquivo — se ela falhou, o download é refeito como último recurso.
   if (payload.messageType === 'audioMessage') {
     try {
-      const { base64, mimetype } = await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
+      const { base64, mimetype } =
+        midiaBaixada ?? await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
       const transcricao = await transcribeAudio(base64, mimetype)
       await updateMessageTranscription(supabase, mensagemSalva.id, transcricao)
       conteudoProcessado = transcricao
-      try {
-        const ext = mimetype.includes('ogg') ? 'ogg' : mimetype.includes('mp4') ? 'mp4' : 'webm'
-        const path = `${payload.tenantId}/${Date.now()}_audio.${ext}`
-        const buffer = Buffer.from(base64, 'base64')
-        const { error: uploadErr } = await supabase.storage.from('mensagens-midia').upload(path, buffer, { contentType: mimetype })
-        if (!uploadErr) {
-          const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
-          await supabase.from('messages').update({ arquivo_url: urlData.publicUrl }).eq('id', mensagemSalva.id)
-        }
-      } catch (uploadErr) {
-        console.warn('[process-message] Upload áudio falhou (não crítico):', uploadErr)
-      }
     } catch (err) {
       console.error('[process-message] Falha ao transcrever áudio:', err)
       conteudoProcessado = '[Áudio recebido — não foi possível transcrever]'
@@ -2028,21 +2060,10 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
 
   if (payload.messageType === 'imageMessage') {
     try {
-      const { base64, mimetype } = await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
+      const { base64, mimetype } =
+        midiaBaixada ?? await downloadMediaAsBase64(payload.instanceName, payload.messageKey)
       const descricao = await interpretImage(base64, mimetype, payload.caption, usoCtx)
       conteudoProcessado = payload.caption ? `${payload.caption}\n[Imagem: ${descricao}]` : `[Imagem: ${descricao}]`
-      try {
-        const ext = mimetype.includes('png') ? 'png' : mimetype.includes('webp') ? 'webp' : 'jpg'
-        const path = `${payload.tenantId}/${Date.now()}_img.${ext}`
-        const buffer = Buffer.from(base64, 'base64')
-        const { error: uploadErr } = await supabase.storage.from('mensagens-midia').upload(path, buffer, { contentType: mimetype })
-        if (!uploadErr) {
-          const { data: urlData } = supabase.storage.from('mensagens-midia').getPublicUrl(path)
-          await supabase.from('messages').update({ arquivo_url: urlData.publicUrl }).eq('id', mensagemSalva.id)
-        }
-      } catch (uploadErr) {
-        console.warn('[process-message] Upload imagem falhou (não crítico):', uploadErr)
-      }
     } catch (err) {
       console.error('[process-message] Falha ao interpretar imagem:', err)
       conteudoProcessado = payload.caption || '[Imagem recebida]'

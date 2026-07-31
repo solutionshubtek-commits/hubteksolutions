@@ -423,8 +423,13 @@ export default function ConversaDetalhePage({ params }: { params: { id: string }
   function renderConteudoMensagem(msg: Mensagem) {
     const tipo = msg.tipo?.toLowerCase() ?? ''
 
-    // Mídia recebida do cliente sem URL (processada pelo agente — mostra indicador)
-    if (!msg.arquivo_url && msg.origem === 'cliente') {
+    // Mídia sem arquivo guardado — mostra o indicador do tipo.
+    //
+    // Vale para qualquer origem, não só para o cliente: o operador também manda
+    // foto pelo celular, e se o download falhar a bolha não pode ficar vazia.
+    // Mensagens antigas, anteriores à correção que passou a guardar toda mídia,
+    // continuam caindo aqui — não há arquivo para recuperar.
+    if (!msg.arquivo_url && ['audio', 'imagem', 'video', 'documento'].includes(tipo)) {
       if (tipo === 'audio') return (
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"

@@ -587,15 +587,21 @@ export default function ConfiguracoesPage() {
           <GestaoOperadores tenantId={tenantId} />
         )}
 
-        {isGestao && (
+        {/* Profissionais: cadastro operacional da empresa, com persistência
+            própria via /api/profissionais. Fica fora do bloco abaixo porque não
+            é configuração do agente — quem gerencia a operação cuida disto. */}
+        {isGestao && agendamentosAtivo && <GestaoProfissionais />}
+
+        {/* Configuração do agente — comportamento, horário, integrações e base
+            de conhecimento. Fora do alcance de admin_tenant: neste modelo de
+            gestão quem define como o agente atende é a Hubtek. */}
+        {podeConfigurarAgente && (
           <>
             {/* Agente de atendimento */}
             <div className="rounded-xl p-6" style={cardStyle}>
               <h2 className="font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Agente de atendimento</h2>
               <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                {podeConfigurarAgente
-                  ? 'Descreva como o agente deve se comportar, qual o tom, quais informações usar.'
-                  : 'Escolha o funil que o agente segue nesta operação.'}
+                Descreva como o agente deve se comportar, qual o tom, quais informações usar.
               </p>
 
               {/* Função principal — seleção única (radio) */}
@@ -620,24 +626,15 @@ export default function ConfiguracoesPage() {
                 </div>
               </div>
 
-              {podeConfigurarAgente ? (
-                <>
-                  <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Prompt do agente</label>
-                  <textarea value={tenant?.prompt_agente || ''}
-                    onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
-                    rows={6} placeholder="Descreva como o agente deve se comportar..."
-                    className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none"
-                    style={inputStyle} />
-                  <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-                    {(tenant?.prompt_agente || '').length} caracteres · ~{Math.round((tenant?.prompt_agente || '').length / 4)} tokens
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs rounded-lg px-3 py-2.5" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-muted)' }}>
-                  O treinamento do agente — prompt e base de conhecimento — é mantido pela equipe Hubtek.
-                  Para ajustar o comportamento do atendimento, fale com o suporte.
-                </p>
-              )}
+              <label className="text-sm font-medium block mb-2" style={{ color: 'var(--text-secondary)' }}>Prompt do agente</label>
+              <textarea value={tenant?.prompt_agente || ''}
+                onChange={(e) => setTenant(prev => prev ? { ...prev, prompt_agente: e.target.value } : prev)}
+                rows={6} placeholder="Descreva como o agente deve se comportar..."
+                className="w-full rounded-lg px-4 py-3 text-sm focus:outline-none resize-none"
+                style={inputStyle} />
+              <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                {(tenant?.prompt_agente || '').length} caracteres · ~{Math.round((tenant?.prompt_agente || '').length / 4)} tokens
+              </p>
             </div>
 
             {/* Horário */}
@@ -688,11 +685,9 @@ export default function ConfiguracoesPage() {
               </div>
             </div>
 
-            {isGestao && agendamentosAtivo && <GestaoProfissionais />}
-
             {/* Google Calendar — credenciais de service account, mesma alçada
                 do prompt e da base de conhecimento. */}
-            {agendamentosAtivo && podeConfigurarAgente && (
+            {agendamentosAtivo && (
               <div className="rounded-xl p-6" style={cardStyle}>
                 <div className="flex items-center gap-2 mb-1">
                   <Calendar size={15} style={{ color: '#10B981' }} />
@@ -768,7 +763,6 @@ export default function ConfiguracoesPage() {
             )}
 
             {/* Base de conhecimento */}
-            {podeConfigurarAgente && (
             <div className="rounded-xl p-6" style={cardStyle}>
               <div className="flex items-center justify-between mb-1">
                 <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Base de conhecimento</h2>
@@ -828,7 +822,6 @@ export default function ConfiguracoesPage() {
                 </div>
               )}
             </div>
-            )}
           </>
         )}
 
@@ -845,7 +838,10 @@ export default function ConfiguracoesPage() {
           </div>
         )}
 
-        {isGestao && (
+        {/* Sem os blocos de agente e horário não sobra nada editável por este
+            botão: nome e slug são somente leitura, o avatar salva no upload e
+            operadores e profissionais têm persistência própria. */}
+        {podeConfigurarAgente && (
           <button onClick={handleSalvar} disabled={salvando}
             className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white font-semibold px-6 py-3 rounded-lg transition-all duration-200">
             <Save size={16} />
