@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AgentConfig, Conversation, Message } from '@/types'
+import { podeOperar } from '@/lib/ciclo-vida'
 
 export async function getTenantBySlug(
   supabase: SupabaseClient,
@@ -98,17 +99,50 @@ export async function isAgentPaused(
   return false
 }
 
+/**
+ * Gate global do agente para o tenant.
+ *
+ * Passou a considerar os dois eixos de estado, que antes ficavam de fora:
+ *
+ *  - `status_comercial` — cliente cancelado ou arquivado não atende mais.
+ *    Antes, "bloquear acesso" na tela admin não tinha nenhum efeito aqui e o
+ *    agente seguia respondendo normalmente.
+ *
+ *  - `expira_em` — plano vencido não atende. O cron `verificar-expiracao` roda
+ *    às 09h e é quem pausa de fato; esta checagem é a rede de segurança da
+ *    janela entre a virada do vencimento e a execução do cron (e do caso em que
+ *    o cron falha). Sem ela, um cliente vencido continuaria sendo atendido por
+ *    até um dia inteiro.
+ */
 export async function isTenantAgentActive(
   supabase: SupabaseClient,
   tenantId: string
 ): Promise<boolean> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('tenants')
-    .select('agente_ativo, pausado_por_admin')
+    .select('agente_ativo, pausado_por_admin, status_comercial, expira_em')
     .eq('id', tenantId)
     .single()
 
+  // Rede de proteção de ordem de deploy: se o código subir antes da migration
+  // 010, `status_comercial` não existe, o PostgREST devolve erro, `data` vem
+  // nulo e o retorno seria `false` — ou seja, agente derrubado para TODOS os
+  // tenants de uma vez. Nesse caso específico, recai na consulta antiga: o
+  // comportamento fica igual ao de hoje, nunca pior.
+  if (error) {
+    const { data: legado } = await supabase
+      .from('tenants')
+      .select('agente_ativo, pausado_por_admin')
+      .eq('id', tenantId)
+      .single()
+
+    if (!legado) return false
+    if (legado.pausado_por_admin) return false
+    return legado.agente_ativo ?? true
+  }
+
   if (!data) return false
+  if (!podeOperar(data)) return false
   if (data.pausado_por_admin) return false
   return data.agente_ativo ?? true
 }

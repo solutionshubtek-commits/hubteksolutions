@@ -3,14 +3,20 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Plus, Search, AlertTriangle, CheckCircle2, AlertCircle,
-  X, Save, Eye, EyeOff, Lock, Unlock, Key,
-  ChevronRight, RefreshCw, Trash2, Smartphone, LogOut, ShieldAlert, MessageCircle,
+  X, Save, Eye, EyeOff, Key,
+  ChevronRight, Trash2, Smartphone, LogOut, ShieldAlert, MessageCircle,
 } from 'lucide-react'
 import { GestaoOperadoresAdmin } from '@/components/admin/GestaoOperadoresAdmin'
+import { CicloVidaCliente } from '@/components/admin/CicloVidaCliente'
+import { estaExpirado, statusComercialDe } from '@/lib/ciclo-vida'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
   expira_em: string | null; criado_em: string; plano: string
+  // Eixo 1 — ciclo de vida comercial. Separado de `status`/`expira_em` de
+  // propósito: um cliente pode estar comercialmente ativo E com o plano vencido.
+  status_comercial: string | null
+  cancelado_em: string | null; arquivado_em: string | null; conta_demo: boolean | null
 }
 interface TenantInstance {
   id: string; instance_name: string; apelido: string; status: string
@@ -51,8 +57,21 @@ function statusConfig(status: string) {
     ativo:     { label: 'Ativo',     cor: '#10B981', bg: '#10B98118', border: '#10B98140' },
     inativo:   { label: 'Inativo',   cor: '#71717A', bg: '#71717A18', border: '#71717A40' },
     bloqueado: { label: 'Bloqueado', cor: '#EF4444', bg: '#EF444418', border: '#EF444440' },
+    cancelado: { label: 'Cancelado', cor: '#EF4444', bg: '#EF444418', border: '#EF444440' },
+    arquivado: { label: 'Arquivado', cor: '#71717A', bg: '#71717A18', border: '#71717A40' },
   }
   return map[status] ?? map['inativo']
+}
+
+/**
+ * O badge da lista passou a vir do EIXO COMERCIAL (`status_comercial`), não mais
+ * de `status`. Os dois eixos são exibidos separados: este selo diz se o cliente
+ * está ativo/cancelado/arquivado; a coluna "Expiração" diz se o plano venceu.
+ * Antes tudo se resolvia num "bloqueado" genérico que não refletia nem uma
+ * coisa nem outra.
+ */
+function badgeComercial(t: { status_comercial: string | null; status: string }) {
+  return statusConfig(statusComercialDe(t.status_comercial))
 }
 
 function diasRestantes(expira_em: string | null) {
@@ -301,8 +320,12 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
 
 // ─── SlideOver ────────────────────────────────────────────────────────────────
 
-function SlideOver({ tenant, onClose, onAtualizado }: {
+function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
   tenant: Tenant; onClose: () => void; onAtualizado: (t: Tenant) => void
+  // Transição de ciclo de vida mexe em vários campos de uma vez (e o expurgo
+  // faz o cliente deixar de existir), então recarrega a lista da fonte em vez
+  // de remendar o objeto em memória.
+  onRecarregar: () => void
 }) {
   const [aba, setAba] = useState<'detalhes' | 'instancias' | 'editar' | 'senha' | 'operadores' | 'extrato'>('detalhes')
   const [nomeEdit, setNomeEdit] = useState(tenant.nome)
@@ -316,7 +339,6 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
   const [salvandoSenha, setSalvandoSenha] = useState(false)
   const [erroSenha, setErroSenha] = useState('')
   const [sucessoSenha, setSucessoSenha] = useState('')
-  const [salvandoStatus, setSalvandoStatus] = useState(false)
   const [extrato, setExtrato] = useState<ExtratoMes[]>([])
   const [carregandoExtrato, setCarregandoExtrato] = useState(false)
   const [instancias, setInstancias] = useState<TenantInstance[]>([])
@@ -435,17 +457,67 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
     setCarregandoExtrato(false)
   }
 
+  /**
+   * Salvar a edição é também o ato de RENOVAR — é aqui que `expira_em` volta a
+   * ser uma data futura. Como o cron de expiração agora pausa o agente de fato,
+   * a renovação precisa desfazer essa pausa; senão o cliente pagaria e
+   * continuaria fora do ar até alguém religar na mão.
+   */
   async function handleSalvarEdicao() {
     setSalvandoEdit(true); setErroEdit(''); setSucessoEdit('')
     const supabase = createClient()
+
+    const novaExpiracao = expiraEdit || null
+    const voltouAValer = !estaExpirado(novaExpiracao)
+
     const { error } = await supabase.from('tenants')
-      .update({ nome: nomeEdit, expira_em: expiraEdit || null, plano: planoEdit })
+      .update({
+        nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit,
+        // Limpa a marca de processamento do cron, senão um vencimento futuro
+        // nunca mais seria aplicado neste tenant.
+        ...(voltouAValer ? { expirado_em: null } : {}),
+      })
       .eq('id', tenant.id)
+
+    if (error) { setSalvandoEdit(false); setErroEdit('Erro ao salvar: ' + error.message); return }
+
+    // Religa o agente APENAS se quem o desligou foi a expiração. O
+    // `.eq('pausa_por_expiracao', true)` faz esse filtro no próprio update, sem
+    // precisar reler o estado: uma pausa manual do admin (suporte, abuso) tem
+    // essa flag em false e sai intacta da renovação.
+    let religado = false
+    if (voltouAValer) {
+      const { data: religadoRow } = await supabase.from('tenants')
+        .update({
+          agente_ativo: true,
+          pausado_por_admin: false,
+          agente_pausado_em: null,
+          pausa_por_expiracao: false,
+        })
+        .eq('id', tenant.id)
+        .eq('pausa_por_expiracao', true)
+        .select('id')
+        .maybeSingle()
+      religado = !!religadoRow
+
+      if (religado) {
+        const { data: { user } } = await supabase.auth.getUser()
+        await supabase.from('admin_logs').insert({
+          admin_user_id: user?.id ?? null,
+          tenant_id: tenant.id,
+          tenant_nome: nomeEdit,
+          acao: 'renovacao',
+          de: 'expirado',
+          para: 'operante',
+          detalhes: { expira_em_anterior: tenant.expira_em, expira_em_novo: novaExpiracao },
+        })
+      }
+    }
+
     setSalvandoEdit(false)
-    if (error) { setErroEdit('Erro ao salvar: ' + error.message); return }
-    setSucessoEdit('Salvo com sucesso!')
-    onAtualizado({ ...tenant, nome: nomeEdit, expira_em: expiraEdit || null, plano: planoEdit })
-    setTimeout(() => setSucessoEdit(''), 2500)
+    setSucessoEdit(religado ? 'Salvo. Acesso renovado e agente religado.' : 'Salvo com sucesso!')
+    onAtualizado({ ...tenant, nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit })
+    setTimeout(() => setSucessoEdit(''), 3500)
   }
 
   async function handleResetarSenha() {
@@ -462,19 +534,18 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
     setTimeout(() => setSucessoSenha(''), 2500)
   }
 
-  async function handleToggleStatus() {
-    setSalvandoStatus(true)
-    const novoStatus = tenant.status === 'bloqueado' ? 'ativo' : 'bloqueado'
-    const supabase = createClient()
-    await supabase.from('tenants').update({ status: novoStatus }).eq('id', tenant.id)
-    setSalvandoStatus(false)
-    onAtualizado({ ...tenant, status: novoStatus })
-  }
+  // `handleToggleStatus` (o antigo "Bloquear acesso") foi substituído pelo
+  // componente CicloVidaCliente. Ele escrevia `status` direto do navegador, sem
+  // validar transição e sem registrar autoria — e, principalmente, não tirava o
+  // cliente da operação: o agente continuava atendendo e o cliente continuava
+  // entrando. As duas capacidades que ele tinha seguem existindo, agora com
+  // efeito real: bloquear virou "Cancelar cliente" e desbloquear virou
+  // "Reativar cliente", ambas por /api/admin/ciclo-vida-cliente.
 
   const dias = diasRestantes(tenant.expira_em)
   const expirando = dias !== null && dias <= 10 && dias >= 0
   const expirado = dias !== null && dias < 0
-  const cfg = statusConfig(tenant.status)
+  const cfg = badgeComercial(tenant)
   const plano = planoConfig(tenant.plano)
   const inputStyle = { background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
 
@@ -575,11 +646,7 @@ function SlideOver({ tenant, onClose, onAtualizado }: {
                   </p>
                 </div>
               )}
-              <button onClick={handleToggleStatus} disabled={salvandoStatus}
-                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold border transition-colors disabled:opacity-50 ${tenant.status === 'bloqueado' ? 'bg-[#10B981]/10 border-[#10B981]/30 text-[#10B981]' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
-                {salvandoStatus ? <RefreshCw size={14} className="animate-spin" /> : tenant.status === 'bloqueado' ? <Unlock size={14} /> : <Lock size={14} />}
-                {tenant.status === 'bloqueado' ? 'Desbloquear acesso' : 'Bloquear acesso'}
-              </button>
+              <CicloVidaCliente tenant={tenant} onAtualizado={onRecarregar} />
             </div>
           )}
 
@@ -851,6 +918,7 @@ export default function AdminClientesPage() {
   const [modalAberto, setModalAberto] = useState(false)
   const [clienteSelecionado, setClienteSelecionado] = useState<Tenant | null>(null)
   const [sucesso, setSucesso] = useState('')
+  const [abaCiclo, setAbaCiclo] = useState<'operacao' | 'arquivado'>('operacao')
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -864,7 +932,7 @@ export default function AdminClientesPage() {
   const fetchTenants = useCallback(async () => {
     const supabase = createClient()
     const { data } = await supabase.from('tenants')
-      .select('id, nome, slug, status, expira_em, criado_em, plano')
+      .select('id, nome, slug, status, expira_em, criado_em, plano, status_comercial, cancelado_em, arquivado_em, conta_demo')
       .order('criado_em', { ascending: false })
     setTenants((data ?? []) as Tenant[])
     setCarregando(false)
@@ -884,10 +952,35 @@ export default function AdminClientesPage() {
     setClienteSelecionado(tenant)
   }
 
-  const tenantsFiltrados = tenants.filter(t =>
-    t.nome.toLowerCase().includes(busca.toLowerCase()) ||
-    t.slug.toLowerCase().includes(busca.toLowerCase())
-  )
+  // Depois de uma transição de ciclo de vida, relê da fonte: vários campos
+  // mudam de uma vez e, no caso do expurgo, o cliente deixa de existir — não dá
+  // para remendar o objeto em memória. Fecha o painel pelo mesmo motivo.
+  const handleRecarregar = useCallback(async () => {
+    setClienteSelecionado(null)
+    await fetchTenants()
+  }, [fetchTenants])
+
+  // A visão principal mostra só quem está em operação. Cancelados aparecem por
+  // padrão junto dos ativos porque é neles que o fechamento de ciclo acontece —
+  // sumir da tela antes disso foi o que motivou a esteira. Arquivados só na aba.
+  const contagem = {
+    ativo:     tenants.filter(t => statusComercialDe(t.status_comercial) === 'ativo').length,
+    cancelado: tenants.filter(t => statusComercialDe(t.status_comercial) === 'cancelado').length,
+    arquivado: tenants.filter(t => statusComercialDe(t.status_comercial) === 'arquivado').length,
+  }
+
+  const ABAS_CICLO = [
+    { key: 'operacao',  label: 'Em operação', total: contagem.ativo + contagem.cancelado },
+    { key: 'arquivado', label: 'Arquivados',  total: contagem.arquivado },
+  ] as const
+
+  const tenantsFiltrados = tenants.filter(t => {
+    const estado = statusComercialDe(t.status_comercial)
+    const naAba = abaCiclo === 'arquivado' ? estado === 'arquivado' : estado !== 'arquivado'
+    if (!naAba) return false
+    return t.nome.toLowerCase().includes(busca.toLowerCase()) ||
+      t.slug.toLowerCase().includes(busca.toLowerCase())
+  })
 
   return (
     <div className="p-8">
@@ -895,7 +988,9 @@ export default function AdminClientesPage() {
         <div>
           <p className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Gestão</p>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Clientes</h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{tenants.length} contas cadastradas.</p>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+            {contagem.ativo} ativo(s) · {contagem.cancelado} cancelado(s) · {contagem.arquivado} arquivado(s)
+          </p>
         </div>
         <button onClick={() => setModalAberto(true)}
           className="flex items-center gap-2 bg-[#10B981] hover:bg-[#059669] text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors">
@@ -909,6 +1004,20 @@ export default function AdminClientesPage() {
           <p className="text-[#10B981] text-sm">{sucesso}</p>
         </div>
       )}
+
+      <div className="flex items-center gap-2 mb-4">
+        {ABAS_CICLO.map(a => (
+          <button key={a.key} onClick={() => setAbaCiclo(a.key)}
+            className="text-xs font-semibold px-3 py-2 rounded-lg border transition-colors"
+            style={{
+              background: abaCiclo === a.key ? 'rgba(16,185,129,0.1)' : 'var(--bg-surface)',
+              borderColor: abaCiclo === a.key ? 'rgba(16,185,129,0.3)' : 'var(--border)',
+              color: abaCiclo === a.key ? '#10B981' : 'var(--text-muted)',
+            }}>
+            {a.label} ({a.total})
+          </button>
+        ))}
+      </div>
 
       <div className="relative mb-4 max-w-sm">
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -934,7 +1043,7 @@ export default function AdminClientesPage() {
             </thead>
             <tbody>
               {tenantsFiltrados.map(t => {
-                const cfg = statusConfig(t.status)
+                const cfg = badgeComercial(t)
                 const dias = diasRestantes(t.expira_em)
                 const expirando = dias !== null && dias <= 10 && dias >= 0
                 const expirado = dias !== null && dias < 0
@@ -992,7 +1101,8 @@ export default function AdminClientesPage() {
 
       {modalAberto && <ModalNovoCliente onClose={() => setModalAberto(false)} onSalvo={handleSalvo} />}
       {clienteSelecionado && (
-        <SlideOver tenant={clienteSelecionado} onClose={() => setClienteSelecionado(null)} onAtualizado={handleAtualizado} />
+        <SlideOver tenant={clienteSelecionado} onClose={() => setClienteSelecionado(null)}
+          onAtualizado={handleAtualizado} onRecarregar={handleRecarregar} />
       )}
     </div>
   )

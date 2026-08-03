@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check, TrendingUp, Camera, Menu } from 'lucide-react'
 import { useSidebar } from '@/contexts/SidebarContext'
 import { StatusAtendimento } from './StatusAtendimento'
+import { diasAteExpirar } from '@/lib/ciclo-vida'
 
 interface HeaderProps {
   nomeUsuario: string | null
@@ -59,13 +60,16 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
     ? nomeUsuario.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
     : 'U'
 
+  // O ramo `expirado` faltava: quando a data passava, `diff` ficava negativo,
+  // caía no `return null` e o banner simplesmente sumia. O cliente vencido era
+  // o único que não recebia aviso nenhum — justamente quem mais precisa.
   const bannerExpiracao = (() => {
     if (!expiraEm) return null
-    const hoje  = new Date()
-    const expira = new Date(expiraEm)
-    const diff  = Math.round((expira.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24))
-    if (diff <= 1 && diff >= 0) return { dias: diff, urgente: true }
-    if (diff <= 7 && diff >= 0) return { dias: diff, urgente: false }
+    const dias = diasAteExpirar(expiraEm)
+    if (dias === null) return null
+    if (dias < 0)  return { dias, urgente: true,  expirado: true  }
+    if (dias <= 1) return { dias, urgente: true,  expirado: false }
+    if (dias <= 7) return { dias, urgente: false, expirado: false }
     return null
   })()
 
@@ -255,7 +259,9 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
         }`}>
           <AlertTriangle size={14} className="shrink-0" />
           <span>
-            {bannerExpiracao.dias === 0
+            {bannerExpiracao.expirado
+              ? 'Seu acesso expirou e o atendimento automático está pausado.'
+              : bannerExpiracao.dias === 0
               ? 'Seu acesso expira hoje!'
               : bannerExpiracao.dias === 1
               ? 'Seu acesso expira amanhã!'

@@ -1,3 +1,5 @@
+import type { StatusComercial } from '@/lib/ciclo-vida'
+
 export type UserRole = 'admin_hubtek' | 'admin_tenant' | 'operador' | 'self_managed'
 
 export type AgentStatus = 'ativo' | 'pausado' | 'inativo'
@@ -21,6 +23,25 @@ export interface Tenant {
   acesso_expira_em: string | null
   criado_em: string
   atualizado_em: string
+
+  // ─── Eixo 1: ciclo de vida comercial (manual) ───
+  status_comercial: StatusComercial
+  cancelado_em: string | null
+  arquivado_em: string | null
+  arquivado_por: string | null
+  motivo: string | null
+  conta_demo: boolean
+
+  // ─── Eixo 2: estado operacional por expiração (automático) ───
+  // Separados de propósito do eixo comercial: um cliente pode estar
+  // `status_comercial = 'ativo'` E expirado ao mesmo tempo — é a situação
+  // normal de quem está aguardando renovação.
+  expira_em: string | null
+  expirado_em: string | null
+  pausa_por_expiracao: boolean
+  agente_ativo: boolean
+  agente_pausado_em: string | null
+  pausado_por_admin: boolean
 }
 
 export interface User {

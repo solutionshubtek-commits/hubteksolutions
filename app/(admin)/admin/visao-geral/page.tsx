@@ -8,6 +8,7 @@ import {
   CheckCircle2, AlertCircle,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
+import { diasAteExpirar, estaExpirado, statusComercialDe } from '@/lib/ciclo-vida'
 
 // ─── Planos ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,8 @@ interface KpiData {
 }
 interface TenantRow {
   id: string; nome: string; slug: string; status: string; agente_status: string
+  // Eixo comercial, separado de `status` (legado) e de `expira_em` (operacional).
+  status_comercial: string | null
   expira_em: string | null; conversasMes: number; tokens: number; custoBrl: number; plano: string
 }
 interface ResumoCiclo {
@@ -56,10 +59,9 @@ function fmtCompact(n: number) {
 function fmtBRL(brl: number) {
   return brl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 })
 }
-function diasAteExpirar(expira_em: string | null) {
-  if (!expira_em) return null
-  return Math.ceil((new Date(expira_em).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-}
+// `diasAteExpirar` era definido aqui e, com a mesma conta, em admin/clientes e
+// no Header. Passou a vir de lib/ciclo-vida para que o cron, o middleware e as
+// telas não possam divergir sobre o que é "expirado". Cálculo idêntico.
 function expiryStatus(expira_em: string | null) {
   const d = diasAteExpirar(expira_em)
   if (d === null) return 'none'
@@ -81,10 +83,29 @@ function exportarConsolidado(rows: TenantRow[]) {
   URL.revokeObjectURL(url)
 }
 
+/**
+ * ERA O BUG RELATADO: esta coluna vinha de `agente_ativo` e nada mais, então um
+ * cliente bloqueado ou com o plano vencido aparecia como "Ativo". E estava
+ * mesmo — o agente seguia atendendo, porque nem o bloqueio nem a expiração
+ * chegavam ao gate. Agora o badge reflete os dois eixos, na mesma ordem de
+ * precedência que `podeOperar` aplica no backend.
+ */
+function derivarStatusAgente(t: {
+  agente_ativo: boolean | null
+  status_comercial?: string | null
+  expira_em: string | null
+}): string {
+  if (statusComercialDe(t.status_comercial) !== 'ativo') return 'cancelado'
+  if (estaExpirado(t.expira_em)) return 'expirado'
+  return t.agente_ativo === false ? 'pausado' : 'ativo'
+}
+
 function AgentBadge({ status }: { status: string }) {
   const cfg = {
     ativo:        { cor: '#10B981', bg: '#10B98118', border: '#10B98140', label: 'Ativo' },
     pausado:      { cor: '#F59E0B', bg: '#F59E0B18', border: '#F59E0B40', label: 'Pausado' },
+    expirado:     { cor: '#EF4444', bg: '#EF444418', border: '#EF444440', label: 'Expirado' },
+    cancelado:    { cor: '#EF4444', bg: '#EF444418', border: '#EF444440', label: 'Cancelado' },
     desconectado: { cor: '#EF4444', bg: '#EF444418', border: '#EF444440', label: 'Desconectado' },
   }[status] ?? { cor: '#71717A', bg: '#71717A18', border: '#71717A40', label: 'Inativo' }
   return (
@@ -246,7 +267,7 @@ export default function AdminVisaoGeralPage() {
   const [kpi, setKpi] = useState<KpiData | null>(null)
   const [rows, setRows] = useState<TenantRow[]>([])
   const [busca, setBusca] = useState('')
-  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'expirando' | 'bloqueado'>('todos')
+  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'expirando' | 'cancelado'>('todos')
   const [carregando, setCarregando] = useState(true)
   const [modalCiclo, setModalCiclo] = useState<TenantRow | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
@@ -260,7 +281,7 @@ export default function AdminVisaoGeralPage() {
     const em10Dias = new Date(agora.getTime() + 10 * 24 * 60 * 60 * 1000).toISOString()
 
     const [tenantsRes, convMesRes, convAntRes, custoMesRes, custoAntRes, expirandoRes] = await Promise.all([
-      supabase.from('tenants').select('id, nome, slug, status, expira_em, agente_ativo, plano'),
+      supabase.from('tenants').select('id, nome, slug, status, status_comercial, expira_em, agente_ativo, plano'),
       supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('criado_em', inicioMes),
       supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('criado_em', inicioMesAnt).lte('criado_em', fimMesAnt),
       // ai_usage, não token_usage: a tabela token_usage foi criada na migration
@@ -269,17 +290,26 @@ export default function AdminVisaoGeralPage() {
       // devolvia lista vazia, e por isso os blocos de custo viviam zerados.
       supabase.from('ai_usage').select('custo_estimado_reais').gte('criado_em', inicioMes),
       supabase.from('ai_usage').select('custo_estimado_reais').gte('criado_em', inicioMesAnt).lte('criado_em', fimMesAnt),
-      supabase.from('tenants').select('id', { count: 'exact', head: true }).eq('status', 'ativo').lte('expira_em', em10Dias).gte('expira_em', agora.toISOString()),
+      supabase.from('tenants').select('id', { count: 'exact', head: true }).eq('status_comercial', 'ativo').lte('expira_em', em10Dias).gte('expira_em', agora.toISOString()),
     ])
 
-    const tenants = tenantsRes.data ?? []
+    // Arquivado saiu da operação e não entra em contador nem em tabela — é o
+    // ponto da esteira em que o cliente para de poluir a visão principal. Os
+    // dados continuam no banco e na aba "Arquivados" de /admin/clientes.
+    const tenants = (tenantsRes.data ?? []).filter(
+      t => statusComercialDe(t.status_comercial) !== 'arquivado'
+    )
     const custoMes = (custoMesRes.data ?? []).reduce((s, r) => s + Number(r.custo_estimado_reais ?? 0), 0)
     const custoAnt = (custoAntRes.data ?? []).reduce((s, r) => s + Number(r.custo_estimado_reais ?? 0), 0)
 
     setKpi({
-      clientesAtivos: tenants.filter(t => t.status === 'ativo').length,
+      // Contadores vêm do eixo comercial, não mais de `status`. Um cliente com
+      // o plano vencido continua sendo cliente ativo — está esperando renovar,
+      // não foi cancelado. Misturar os dois eixos aqui era o que fazia o número
+      // de "Clientes ativos" não bater com a realidade.
+      clientesAtivos: tenants.filter(t => statusComercialDe(t.status_comercial) === 'ativo').length,
       clientesTotal: tenants.length,
-      clientesBloqueados: tenants.filter(t => t.status === 'bloqueado').length,
+      clientesBloqueados: tenants.filter(t => statusComercialDe(t.status_comercial) === 'cancelado').length,
       conversasMes: convMesRes.count ?? 0, conversasAnterior: convAntRes.count ?? 0,
       custoBrlMes: custoMes, custoBrlAnterior: custoAnt,
       acessosExpirando: expirandoRes.count ?? 0,
@@ -295,7 +325,8 @@ export default function AdminVisaoGeralPage() {
       const custoBrl = (tokRes.data ?? []).reduce((s, r) => s + Number(r.custo_estimado_reais ?? 0), 0)
       return {
         id: t.id, nome: t.nome, slug: t.slug, status: t.status,
-        agente_status: t.agente_ativo === false ? 'pausado' : 'ativo',
+        status_comercial: t.status_comercial,
+        agente_status: derivarStatusAgente(t),
         expira_em: t.expira_em, conversasMes: convRes.count ?? 0,
         tokens, custoBrl, plano: t.plano ?? 'essencial',
       }
@@ -339,8 +370,8 @@ export default function AdminVisaoGeralPage() {
     const matchBusca = r.nome.toLowerCase().includes(busca.toLowerCase()) || r.slug.toLowerCase().includes(busca.toLowerCase())
     if (!matchBusca) return false
     if (filtroStatus === 'todos') return true
-    if (filtroStatus === 'ativo') return r.status === 'ativo'
-    if (filtroStatus === 'bloqueado') return r.status === 'bloqueado'
+    if (filtroStatus === 'ativo') return statusComercialDe(r.status_comercial) === 'ativo'
+    if (filtroStatus === 'cancelado') return statusComercialDe(r.status_comercial) === 'cancelado'
     if (filtroStatus === 'expirando') return expiryStatus(r.expira_em) === 'expiring'
     return true
   })
@@ -411,7 +442,7 @@ export default function AdminVisaoGeralPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Clientes ativos"            value={kpi!.clientesAtivos}                                       sub={`${kpi!.clientesBloqueados} bloqueado · ${kpi!.clientesTotal} cadastrados`} icon={Users} />
+        <KpiCard label="Clientes ativos"            value={kpi!.clientesAtivos}                                       sub={`${kpi!.clientesBloqueados} cancelado · ${kpi!.clientesTotal} em operação`} icon={Users} />
         <KpiCard label="Conversas no mês"            value={fmtCompact(kpi!.conversasMes)}                            sub="todos os clientes ativos" delta={deltaConversas}                           icon={MessageSquare} />
         <KpiCard label={`Custo de IA · ${mesAtual}`} value={kpi!.custoBrlMes > 0 ? fmtBRL(kpi!.custoBrlMes) : '—'}  sub="ciclo atual" delta={deltaCusto}                                            icon={Wallet} accent={kpi!.custoBrlMes > 0} />
         <KpiCard label="Acessos a expirar"           value={kpi!.acessosExpirando}                                    sub="próximos 10 dias"                                                          icon={AlertTriangle} />
@@ -431,7 +462,7 @@ export default function AdminVisaoGeralPage() {
                 <option value="todos">Todos os planos</option>
                 <option value="ativo">Apenas ativos</option>
                 <option value="expirando">Expirando</option>
-                <option value="bloqueado">Bloqueados</option>
+                <option value="cancelado">Cancelados</option>
               </select>
               <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
             </div>

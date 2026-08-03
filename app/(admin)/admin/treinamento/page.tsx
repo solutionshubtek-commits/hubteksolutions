@@ -9,9 +9,10 @@ import { GoogleCalendarGuide } from '@/components/dashboard/GoogleCalendarGuide'
 import { GestaoProfissionais } from '@/components/dashboard/GestaoProfissionais'
 import { LABELS_FUNIL } from '@/lib/crm'
 import { encontrarObjetoDoDocumento } from '@/lib/knowledge-storage'
+import { podeOperar } from '@/lib/ciclo-vida'
 
 interface Tenant {
-  id: string; nome: string; slug: string; status: string
+  id: string; nome: string; slug: string; status: string; status_comercial: string | null
   expira_em: string | null; agente_ativo: boolean
   agente_pausado_em: string | null; prompt_agente: string | null
   horario_funcionamento: HorarioFuncionamento | null
@@ -123,8 +124,13 @@ export default function AdminTreinamentoPage() {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (user) setAdminUserId(user.id)
+      // Arquivado não é mais treinado — sai do seletor junto com o resto da
+      // visão principal. Cancelado continua listado: o agente fica travado
+      // (ver `setAgentOn` abaixo), mas o prompt segue consultável para análise
+      // durante o fechamento de ciclo.
       const { data } = await supabase.from('tenants')
-        .select('id, nome, slug, status, expira_em, agente_ativo, agente_pausado_em, prompt_agente, horario_funcionamento, mensagem_fora_horario, google_calendar_config')
+        .select('id, nome, slug, status, status_comercial, expira_em, agente_ativo, agente_pausado_em, prompt_agente, horario_funcionamento, mensagem_fora_horario, google_calendar_config')
+        .neq('status_comercial', 'arquivado')
         .order('nome')
       if (data && data.length > 0) { setTenants(data); setSelectedId(data[0].id) }
       setLoading(false)
@@ -139,7 +145,7 @@ export default function AdminTreinamentoPage() {
     if (!t) return
     setTenant(t)
     setPrompt(t.prompt_agente ?? '')
-    setAgentOn(t.agente_ativo && t.status !== 'bloqueado')
+    setAgentOn(t.agente_ativo && podeOperar(t))
     const h = t.horario_funcionamento
     setHoraInicio(h?.inicio ?? '08:00')
     setHoraFim(h?.fim ?? '18:00')
@@ -242,7 +248,7 @@ export default function AdminTreinamentoPage() {
   // ─── Toggle agente ────────────────────────────────────────────────────────
 
   const handleToggleAgent = async () => {
-    if (!tenant || tenant.status === 'bloqueado') return
+    if (!tenant || !podeOperar(tenant)) return
     const next = !agentOn
     setAgentOn(next)
     await supabase.from('tenants').update({
@@ -518,7 +524,7 @@ export default function AdminTreinamentoPage() {
                 {agentOn ? '● Ativo · respondendo' : '● Pausado'}
               </p>
             </div>
-            <button onClick={handleToggleAgent} disabled={tenant.status === 'bloqueado'}
+            <button onClick={handleToggleAgent} disabled={!podeOperar(tenant)}
               className="relative w-16 h-8 rounded-full transition-all duration-200 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ backgroundColor: agentOn ? '#10B981' : 'rgba(239,68,68,0.15)', border: agentOn ? 'none' : '1px solid rgba(239,68,68,0.4)' }}>
               <span className="absolute top-[3px] rounded-full transition-all duration-200"

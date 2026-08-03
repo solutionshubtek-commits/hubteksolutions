@@ -9,6 +9,7 @@ import {
   rateLimitGeral,
   rateLimitResponse,
 } from '@/lib/security/ratelimit'
+import { podeOperar } from '@/lib/ciclo-vida'
 
 // ─── Helper: IP real do cliente ───────────────────────────────────────────────
 
@@ -32,6 +33,10 @@ function getClientIp(request: NextRequest): string {
 // criam a sessão. Antes, o middleware interceptava e redirecionava para /login,
 // e o usuário nunca conseguia trocar a senha.
 const ROTAS_PUBLICAS = ['/trocar-senha', '/auth', '/nova-senha']
+
+// Destino do operador cujo cliente está com o plano vencido (ou cancelado).
+// Continua exigindo sessão — não é rota pública.
+const ROTA_ACESSO_EXPIRADO = '/acesso-expirado'
 
 // ─── Middleware principal ─────────────────────────────────────────────────────
 
@@ -170,7 +175,7 @@ export async function middleware(request: NextRequest) {
   // Buscar role
   const { data: userData } = await supabase
     .from('users')
-    .select('role, senha_provisoria')
+    .select('role, senha_provisoria, tenant_id')
     .eq('id', user.id)
     .single()
 
@@ -186,6 +191,39 @@ export async function middleware(request: NextRequest) {
     if (role !== 'admin_hubtek') {
       return NextResponse.redirect(new URL('/visao-geral', request.url))
     }
+  }
+
+  // ── EIXO 2: acesso do operador quando o plano vence ────────────────────────
+  //
+  // Regra do ciclo de vida: plano vencido (ou cliente cancelado/arquivado) tira
+  // o `operador` da operação, mas o gestor do cliente (`admin_tenant`) e o admin
+  // master continuam entrando — são eles que renovam e fecham o ciclo. Antes
+  // disso o middleware não lia estado nenhum do tenant: um operador de cliente
+  // vencido há meses entrava e operava igual.
+  //
+  // A consulta ao tenant só acontece para `operador`, de propósito: é o único
+  // papel afetado, e assim nenhum outro perfil paga a query extra por request
+  // nem corre risco de ficar preso caso ela falhe.
+  if (role === 'operador' && userData?.tenant_id) {
+    const { data: tenant } = await supabase
+      .from('tenants')
+      .select('expira_em, status_comercial')
+      .eq('id', userData.tenant_id)
+      .single()
+
+    const semAcesso = tenant ? !podeOperar(tenant) : false
+
+    if (semAcesso && pathname !== ROTA_ACESSO_EXPIRADO) {
+      return NextResponse.redirect(new URL(ROTA_ACESSO_EXPIRADO, request.url))
+    }
+    // Renovou no meio da sessão — devolve o operador à dashboard em vez de
+    // deixá-lo olhando um aviso que não vale mais.
+    if (!semAcesso && pathname === ROTA_ACESSO_EXPIRADO) {
+      return NextResponse.redirect(new URL('/visao-geral', request.url))
+    }
+  } else if (pathname === ROTA_ACESSO_EXPIRADO) {
+    // A tela é específica do operador bloqueado; ninguém mais tem o que fazer lá.
+    return NextResponse.redirect(new URL('/visao-geral', request.url))
   }
 
   // Rotas bloqueadas para operador
