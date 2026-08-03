@@ -323,16 +323,28 @@ function ConteudoExpurgo({ simulacao, carregando, slug, slugDigitado, setSlugDig
 
       {simulacao && (
         <>
-          {!simulacao.elegibilidade.elegivel && (
+          {/* O motivo aparecia aqui DUAS vezes (no aviso e de novo em cinza
+              logo abaixo) e nada dizia que era ele que travava o botão — dava
+              a entender que o problema estava no slug digitado. */}
+          {simulacao.elegibilidade.elegivel ? (
+            <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+              {simulacao.elegibilidade.motivo}
+            </p>
+          ) : (
             <div className="bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-lg p-3 mb-4 flex items-start gap-2">
               <AlertTriangle size={14} className="text-[#F59E0B] shrink-0 mt-0.5" />
-              <p className="text-xs text-[#F59E0B]">{simulacao.elegibilidade.motivo}</p>
+              <div>
+                <p className="text-xs font-semibold text-[#F59E0B] mb-1">
+                  Expurgo bloqueado — o botão permanece desabilitado
+                </p>
+                <p className="text-xs text-[#F59E0B] leading-relaxed">{simulacao.elegibilidade.motivo}</p>
+                <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  Contas de teste/demo não esperam a retenção. Para liberar, marque
+                  o cliente como conta demo (<span className="font-mono">conta_demo</span>).
+                </p>
+              </div>
             </div>
           )}
-
-          <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-            {simulacao.elegibilidade.motivo}
-          </p>
 
           <div className="rounded-lg overflow-hidden mb-4" style={{ border: '1px solid var(--border)' }}>
             <div className="px-3 py-2 flex justify-between text-xs font-semibold"
@@ -365,13 +377,19 @@ function ConteudoExpurgo({ simulacao, carregando, slug, slugDigitado, setSlugDig
             <p>· {simulacao.arquivos.reduce((s, a) => s + a.total, 0)} arquivo(s) no Storage</p>
           </div>
 
-          <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>
-            Para confirmar, digite o slug do cliente: <span className="font-mono text-red-400">{slug}</span>
-          </label>
-          <input type="text" value={slugDigitado} onChange={e => setSlugDigitado(e.target.value)}
-            placeholder={slug} autoComplete="off"
-            className="w-full rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
-            style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+          {/* Sem elegibilidade o campo nem aparece: digitar o slug certo e ver
+              o botão continuar apagado é exatamente o que confundiu no teste. */}
+          {simulacao.elegibilidade.elegivel && (
+            <>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                Para confirmar, digite o slug do cliente: <span className="font-mono text-red-400">{slug}</span>
+              </label>
+              <input type="text" value={slugDigitado} onChange={e => setSlugDigitado(e.target.value)}
+                placeholder={slug} autoComplete="off"
+                className="w-full rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
+                style={{ background: 'var(--bg-surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+            </>
+          )}
         </>
       )}
     </>
