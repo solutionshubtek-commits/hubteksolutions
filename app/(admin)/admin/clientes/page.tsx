@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { GestaoOperadoresAdmin } from '@/components/admin/GestaoOperadoresAdmin'
 import { CicloVidaCliente } from '@/components/admin/CicloVidaCliente'
-import { estaExpirado, statusComercialDe } from '@/lib/ciclo-vida'
+import { estaExpirado, statusComercialDe, RETENCAO_ANOS } from '@/lib/ciclo-vida'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
@@ -27,6 +27,8 @@ interface ExtratoMes {
 interface NovoTenant {
   nome: string; slug: string; email_admin: string
   senha_admin: string; expira_em: string; self_managed: boolean; plano: string
+  // Conta de teste/demo: dispensa a retenção legal no expurgo.
+  conta_demo: boolean
   // Funil do agente. Antes o cliente nascia com `funcoes_ativas` vazio, o que
   // desligava o prompt complementar e a classificação de CRM — a aba CRM não
   // populava lead nenhum até alguém abrir a tela de treinamento e escolher.
@@ -100,6 +102,7 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
   const [form, setForm] = useState<NovoTenant>({
     nome: '', slug: '', email_admin: '', senha_admin: '',
     expira_em: '', self_managed: false, plano: 'essencial', funcao: 'vendas',
+    conta_demo: false,
     instancias: [{ apelido: 'Principal' }],
   })
   const [salvando, setSalvando] = useState(false)
@@ -143,7 +146,13 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
     if (emailExiste) { setErro('Este e-mail já está cadastrado no sistema.'); setSalvando(false); return }
 
     const { data: tenant, error: tenantErr } = await supabase.from('tenants')
-      .insert({ nome: form.nome, slug: form.slug, status: 'ativo', expira_em: form.expira_em, plano: form.plano })
+      .insert({
+        nome: form.nome, slug: form.slug, status: 'ativo',
+        expira_em: form.expira_em, plano: form.plano,
+        // Classificar no cadastro é o momento certo: é agora que se sabe se a
+        // conta é teste. Depois, a informação vira arqueologia.
+        conta_demo: form.conta_demo,
+      })
       .select().single()
     if (tenantErr || !tenant) { setErro('Erro ao criar tenant: ' + (tenantErr?.message ?? 'desconhecido')); setSalvando(false); return }
 
@@ -207,6 +216,30 @@ function ModalNovoCliente({ onClose, onSalvo }: { onClose: () => void; onSalvo: 
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Data de expiração *</label>
             <input type="date" value={form.expira_em} onChange={(e) => setForm({ ...form, expira_em: e.target.value })}
               className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none [color-scheme:dark]" style={inputStyle} />
+          </div>
+          <div>
+            <button type="button" onClick={() => setForm({ ...form, conta_demo: !form.conta_demo })}
+              className="w-full rounded-lg px-4 py-3 flex items-start gap-3 text-left transition-all"
+              style={{
+                background: form.conta_demo ? '#F59E0B14' : 'var(--bg-surface-2)',
+                border: form.conta_demo ? '1px solid #F59E0B50' : '1px solid var(--border)',
+              }}>
+              <span className="w-4 h-4 rounded flex items-center justify-center shrink-0 mt-0.5"
+                style={{
+                  background: form.conta_demo ? '#F59E0B' : 'transparent',
+                  border: form.conta_demo ? 'none' : '1px solid var(--border)',
+                }}>
+                {form.conta_demo && <CheckCircle2 size={11} className="text-white" />}
+              </span>
+              <span>
+                <span className="text-sm font-medium block" style={{ color: form.conta_demo ? '#F59E0B' : 'var(--text-primary)' }}>
+                  Conta de teste / demonstração
+                </span>
+                <span className="text-xs block mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  Poderá ser expurgada sem esperar a retenção de {RETENCAO_ANOS} anos.
+                </span>
+              </span>
+            </button>
           </div>
           <div>
             <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Plano contratado *</label>
@@ -331,6 +364,7 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
   const [nomeEdit, setNomeEdit] = useState(tenant.nome)
   const [expiraEdit, setExpiraEdit] = useState(tenant.expira_em?.slice(0, 10) ?? '')
   const [planoEdit, setPlanoEdit] = useState(tenant.plano ?? 'essencial')
+  const [contaDemoEdit, setContaDemoEdit] = useState(tenant.conta_demo === true)
   const [salvandoEdit, setSalvandoEdit] = useState(false)
   const [erroEdit, setErroEdit] = useState('')
   const [sucessoEdit, setSucessoEdit] = useState('')
@@ -470,9 +504,12 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
     const novaExpiracao = expiraEdit || null
     const voltouAValer = !estaExpirado(novaExpiracao)
 
+    const demoMudou = contaDemoEdit !== (tenant.conta_demo === true)
+
     const { error } = await supabase.from('tenants')
       .update({
         nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit,
+        conta_demo: contaDemoEdit,
         // Limpa a marca de processamento do cron, senão um vencimento futuro
         // nunca mais seria aplicado neste tenant.
         ...(voltouAValer ? { expirado_em: null } : {}),
@@ -480,6 +517,21 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
       .eq('id', tenant.id)
 
     if (error) { setSalvandoEdit(false); setErroEdit('Erro ao salvar: ' + error.message); return }
+
+    // Marcar/desmarcar como demo muda quem pode ser apagado antes da retenção
+    // legal. É a única edição desta aba com consequência jurídica, então deixa
+    // rastro próprio — quem marcou, quando, e para qual valor.
+    if (demoMudou) {
+      const { data: { user } } = await supabase.auth.getUser()
+      await supabase.from('admin_logs').insert({
+        admin_user_id: user?.id ?? null,
+        tenant_id: tenant.id,
+        tenant_nome: nomeEdit,
+        acao: 'classificacao_conta_demo',
+        de: String(tenant.conta_demo === true),
+        para: String(contaDemoEdit),
+      })
+    }
 
     // Religa o agente APENAS se quem o desligou foi a expiração. O
     // `.eq('pausa_por_expiracao', true)` faz esse filtro no próprio update, sem
@@ -516,7 +568,7 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
 
     setSalvandoEdit(false)
     setSucessoEdit(religado ? 'Salvo. Acesso renovado e agente religado.' : 'Salvo com sucesso!')
-    onAtualizado({ ...tenant, nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit })
+    onAtualizado({ ...tenant, nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit, conta_demo: contaDemoEdit })
     setTimeout(() => setSucessoEdit(''), 3500)
   }
 
@@ -616,6 +668,8 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
   ['E-mail admin', emailAdmin ?? '—'],
   ['Cadastrado em', new Date(tenant.criado_em).toLocaleDateString('pt-BR')],
   ['Expira em', tenant.expira_em ? new Date(tenant.expira_em).toLocaleDateString('pt-BR') : '—'],
+  // Explícito na tela: é o que decide se o expurgo espera a retenção legal.
+  ['Classificação', tenant.conta_demo ? 'Conta de teste/demo' : 'Conta de cliente'],
 ] as [string, string][]).map(([label, value]) => (
                   <div key={label} className="flex justify-between items-center py-2" style={{ borderBottom: '1px solid var(--border)' }}>
                     <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</span>
@@ -826,6 +880,40 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
                     </button>
                   ))}
                 </div>
+              </div>
+              {/* Conta de teste/demo — fica AQUI, e não junto do botão de
+                  expurgo, de propósito. É a classificação da conta, decidida
+                  no cadastro; um atalho de "liberar exclusão" ao lado do botão
+                  vermelho seria exatamente o clique perigoso que a retenção
+                  existe para evitar. */}
+              <div>
+                <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  Classificação da conta
+                </label>
+                <button type="button" onClick={() => setContaDemoEdit(!contaDemoEdit)}
+                  className="w-full rounded-lg px-4 py-3 flex items-start gap-3 text-left transition-all"
+                  style={{
+                    background: contaDemoEdit ? '#F59E0B14' : 'var(--bg-surface-2)',
+                    border: contaDemoEdit ? '1px solid #F59E0B50' : '1px solid var(--border)',
+                  }}>
+                  <span className="w-4 h-4 rounded flex items-center justify-center shrink-0 mt-0.5"
+                    style={{
+                      background: contaDemoEdit ? '#F59E0B' : 'transparent',
+                      border: contaDemoEdit ? 'none' : '1px solid var(--border)',
+                    }}>
+                    {contaDemoEdit && <CheckCircle2 size={11} className="text-white" />}
+                  </span>
+                  <span>
+                    <span className="text-sm font-medium block" style={{ color: contaDemoEdit ? '#F59E0B' : 'var(--text-primary)' }}>
+                      Conta de teste / demonstração
+                    </span>
+                    <span className="text-xs block mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                      Dispensa a retenção de {RETENCAO_ANOS} anos e permite o expurgo definitivo
+                      a qualquer momento. Não marque contas de cliente real — os dados
+                      fiscais precisam ser preservados.
+                    </span>
+                  </span>
+                </button>
               </div>
               {erroEdit && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2"><AlertCircle size={13} className="text-red-400" /><p className="text-red-400 text-sm">{erroEdit}</p></div>}
               {sucessoEdit && <div className="bg-[#10B981]/10 border border-[#10B981]/30 rounded-lg p-3 flex items-center gap-2"><CheckCircle2 size={13} className="text-[#10B981]" /><p className="text-[#10B981] text-sm">{sucessoEdit}</p></div>}
