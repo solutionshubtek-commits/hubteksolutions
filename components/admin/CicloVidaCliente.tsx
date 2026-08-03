@@ -175,10 +175,15 @@ export function CicloVidaCliente({ tenant, onAtualizado }: {
         </>
       )}
 
-      {estado === 'arquivado' && (
+      {/* Conta demo pode ser expurgada em qualquer estado — é a mesma regra de
+          elegibilidade que a rota aplica. Exigir que ela percorresse
+          cancelado→arquivado (que ainda pede ciclo fechado) só para apagar uma
+          conta de teste seria burocracia sobre dado sem valor de auditoria. */}
+      {(estado === 'arquivado' || tenant.conta_demo) && (
         <button onClick={() => abrir('expurgo')}
           className={`${botao} bg-red-500/10 border-red-500/30 text-red-400`}>
           <Trash2 size={14} /> Expurgar definitivamente
+          {tenant.conta_demo && estado !== 'arquivado' && ' (demo)'}
         </button>
       )}
 
