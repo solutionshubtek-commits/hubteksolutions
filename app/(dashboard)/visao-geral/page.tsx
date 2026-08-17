@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 import { LABELS_FUNIL } from '@/lib/crm'
+import CardCreditos from '@/components/dashboard/CardCreditos'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -1141,6 +1142,11 @@ export default function VisaoGeralPage() {
         </div>
 
         <div className="space-y-4">
+          {/* Saldo de atendimentos + compra de créditos. Busca o próprio dado,
+              sem entrar no ciclo de recarga das métricas do período: o saldo é
+              do CICLO e não muda quando o usuário troca o filtro para 7d/30d. */}
+          <CardCreditos />
+
           {crmCarregando ? (
           <div className="rounded-xl p-4 md:p-5" style={{ background:'var(--bg-surface)', border:'1px solid var(--border)' }}>
             <div className="h-4 w-32 rounded animate-pulse mb-3" style={{ background:'var(--bg-surface-2)' }} />
