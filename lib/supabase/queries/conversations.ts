@@ -31,41 +31,6 @@ export async function getTenantByInstanceName(
   return { id: data.tenant_id }
 }
 
-export async function findOrCreateConversation(
-  supabase: SupabaseClient,
-  tenantId: string,
-  phone: string,
-  nome?: string,
-  instanceName?: string
-): Promise<Conversation> {
-  const { data: existing } = await supabase
-    .from('conversations')
-    .select('*')
-    .eq('tenant_id', tenantId)
-    .eq('contato_telefone', phone)
-    .eq('instance_name', instanceName ?? '')
-    .neq('status', 'encerrado')
-    .order('criado_em', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (existing) return existing as Conversation
-
-  const { data: created, error } = await supabase
-    .from('conversations')
-    .insert({
-      tenant_id: tenantId,
-      contato_telefone: phone,
-      contato_nome: nome ?? null,
-      instance_name: instanceName ?? null,
-    })
-    .select()
-    .single()
-
-  if (error) throw new Error(`Erro ao criar conversa: ${error.message}`)
-  return created as Conversation
-}
-
 // Janela padrão da pausa automática disparada quando um operador assume a
 // conversa pelo WhatsApp Web. Depois disso o agente volta sozinho, para que
 // uma conversa não fique órfã caso o atendente esqueça de retomá-la.
