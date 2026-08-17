@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { PLANOS_MAP } from '@/lib/planos'
+import { PLANOS_MAP, planoInstanciasInclusas } from '@/lib/planos'
 
 export const CUSTO_INSTANCIA_EXTRA = 67.0
 
@@ -109,7 +109,12 @@ export async function fecharCicloDoTenant(
     .select('id', { count: 'exact', head: true })
     .eq('tenant_id', tenantId)
 
-  const instanciasExtras = Math.max(0, (totalInstancias ?? 0) - 1)
+  // Instâncias inclusas variam por plano desde agosto/2026: Dominância traz 3
+  // e Elite traz 5, enquanto os demais seguem com 1. Antes o cálculo era fixo
+  // em "da 2ª em diante", o que cobraria R$ 67 por instância que o plano já
+  // inclui — Dominância pagaria 2 extras indevidas e Elite pagaria 4.
+  const inclusas = planoInstanciasInclusas(planoKey)
+  const instanciasExtras = Math.max(0, (totalInstancias ?? 0) - inclusas)
   const receitaInstExtras = instanciasExtras * CUSTO_INSTANCIA_EXTRA
 
   // Custo fixo rateado, congelado no fechamento. O rateio muda quando entra ou

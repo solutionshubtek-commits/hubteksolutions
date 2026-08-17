@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { planoOperadores, proximoPlano } from '@/lib/planos'
 
 function gerarSenhaProvisoria(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
@@ -75,7 +76,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'tenant_id inválido' }, { status: 400 })
     }
 
-    // Verificar limite de 3 operadores ativos
+    // Limite de operadores ativos — vem do PLANO, não é mais fixo em 3.
+    // Iniciante/Essencial/Acelerador: 1 · Dominância: 3 · Elite: 10.
+    const { data: tenantPlano } = await supabase
+      .from('tenants')
+      .select('plano')
+      .eq('id', tenantAlvo)
+      .single()
+
+    const planoAtual = (tenantPlano as { plano?: string } | null)?.plano ?? 'essencial'
+    const limiteOperadores = planoOperadores(planoAtual)
+
     const { count } = await supabase
       .from('users')
       .select('id', { count: 'exact', head: true })
@@ -83,8 +94,15 @@ export async function POST(req: NextRequest) {
       .eq('role', 'operador')
       .eq('ativo', true)
 
-    if ((count ?? 0) >= 3) {
-      return NextResponse.json({ error: 'Limite de 3 operadores atingido' }, { status: 400 })
+    if ((count ?? 0) >= limiteOperadores) {
+      const alvo = proximoPlano(planoAtual)
+      return NextResponse.json({
+        error: limiteOperadores === 1
+          ? `Seu plano inclui 1 operador.${alvo ? ` O plano ${alvo.label} libera ${planoOperadores(alvo.value)}.` : ''}`
+          : `Limite de ${limiteOperadores} operadores atingido.${alvo ? ` O plano ${alvo.label} libera ${planoOperadores(alvo.value)}.` : ''}`,
+        limite: limiteOperadores,
+        plano: planoAtual,
+      }, { status: 400 })
     }
 
     // Verificar se e-mail já existe neste tenant

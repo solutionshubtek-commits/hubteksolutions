@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { CheckCircle2, ExternalLink } from 'lucide-react'
-import { PLANOS } from '@/lib/planos'
+import { PLANOS, RESUMO_PLANO, WHATSAPP_HUBTEK } from '@/lib/planos'
 
 interface TenantInfo {
   nome: string
@@ -56,7 +56,7 @@ export default function RenovarPlanoPage() {
 
   function gerarLinkWhatsApp() {
     const msg = `Olá! Sou *${tenant?.nome}* e gostaria de renovar meu plano *${planoEscolhido.label}* com período *${periodoEscolhido.label}*. Podem me enviar o link de pagamento?`
-    return `https://wa.me/5551980104924?text=${encodeURIComponent(msg)}`
+    return `https://wa.me/${WHATSAPP_HUBTEK}?text=${encodeURIComponent(msg)}`
   }
 
   if (carregando) {
@@ -122,7 +122,12 @@ export default function RenovarPlanoPage() {
                       <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: '#10B98120', color: '#10B981' }}>atual</span>
                     )}
                   </div>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>até {p.limite} conv.</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{p.limite} atendimentos</p>
+                  {/* O que o nível libera. Sem isto o cliente compara só preço
+                      e volume, e o upgrade por recurso não se vende sozinho. */}
+                  <p className="text-[10px] mt-1 leading-snug" style={{ color: 'var(--text-label)' }}>
+                    {RESUMO_PLANO[p.value]}
+                  </p>
                   <p className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>
                     {fmtBRL(p.valor)}<span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>/mês</span>
                   </p>
