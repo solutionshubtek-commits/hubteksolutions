@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { CheckCircle2, ExternalLink } from 'lucide-react'
+import { PLANOS } from '@/lib/planos'
 
 interface TenantInfo {
   nome: string
@@ -9,12 +10,6 @@ interface TenantInfo {
   expira_em: string | null
 }
 
-const PLANOS = [
-  { value: 'essencial',  label: 'Essencial',  limite: 50,   valor: 397  },
-  { value: 'acelerador', label: 'Acelerador', limite: 100,  valor: 597  },
-  { value: 'dominancia', label: 'Dominância', limite: 500,  valor: 1997 },
-  { value: 'elite',      label: 'Elite',      limite: 1000, valor: 3500 },
-]
 
 const PERIODOS = [
   { value: 'trimestral', label: 'Trimestral', meses: 3,  desconto: 0    },

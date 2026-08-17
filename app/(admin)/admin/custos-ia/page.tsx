@@ -19,15 +19,10 @@ import {
   Users,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
+import { PLANOS_MAP as PLANOS } from '@/lib/planos'
 
 // ─── Planos ───────────────────────────────────────────────────────────────────
 
-const PLANOS: Record<string, { label: string; limite: number; valor: number }> = {
-  essencial:  { label: 'Essencial',  limite: 50,   valor: 397  },
-  acelerador: { label: 'Acelerador', limite: 100,  valor: 597  },
-  dominancia: { label: 'Dominância', limite: 500,  valor: 1997 },
-  elite:      { label: 'Elite',      limite: 1000, valor: 3500 },
-}
 
 const CUSTO_INSTANCIA_EXTRA = 67.00
 

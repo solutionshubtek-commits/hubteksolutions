@@ -37,7 +37,7 @@ const tenantVar = idxT !== -1 ? process.argv[idxT + 1] : null
 
 // Espelha PLANOS de lib/planos.ts. Script .mjs não importa o módulo TS, então
 // se um limite mudar lá, mude aqui também.
-const LIMITES = { essencial: 50, acelerador: 100, dominancia: 500, elite: 1000 }
+const LIMITES = { iniciante: 50, essencial: 120, acelerador: 200, dominancia: 700, elite: 1300 }
 const LIMITE_PADRAO = 50
 
 const env = {}

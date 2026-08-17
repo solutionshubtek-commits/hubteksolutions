@@ -18,6 +18,7 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
+import { PLANOS_MAP as PLANOS } from '@/lib/planos'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -71,12 +72,6 @@ type ToastType = 'success' | 'error'
 const MESES_FULL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 const MESES_LABEL = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 
-const PLANOS: Record<string, { label: string; valor: number; limite: number }> = {
-  essencial:  { label: 'Essencial',  valor: 397,  limite: 50   },
-  acelerador: { label: 'Acelerador', valor: 597,  limite: 100  },
-  dominancia: { label: 'Dominância', valor: 1997,  limite: 500  },
-  elite:      { label: 'Elite',      valor: 3500, limite: 1000 },
-}
 
 const CUSTO_INSTANCIA_EXTRA = 67.00
 

@@ -8,11 +8,20 @@ export interface Plano {
   valor: number    // R$ mensais
 }
 
+// Tabela vigente a partir de agosto/2026, junto com os créditos extras. Os
+// limites subiram bastante e entrou o Iniciante na base: com o fim do upgrade
+// automático, o cliente que estoura a franquia PARA de ser atendido até
+// decidir, então uma franquia apertada deixaria de ser um upsell e passaria a
+// ser interrupção de serviço.
+//
+// Limites anteriores, para leitura de dados históricos:
+//   essencial 50 · acelerador 100 · dominancia 500 · elite 1000
 export const PLANOS: Plano[] = [
-  { value: 'essencial',  label: 'Essencial',  limite: 50,   valor: 397   },
-  { value: 'acelerador', label: 'Acelerador', limite: 100,  valor: 597   },
-  { value: 'dominancia', label: 'Dominância', limite: 500,  valor: 1997  },
-  { value: 'elite',      label: 'Elite',      limite: 1000, valor: 3500  },
+  { value: 'iniciante',  label: 'Iniciante',  limite: 50,   valor: 197   },
+  { value: 'essencial',  label: 'Essencial',  limite: 120,  valor: 397   },
+  { value: 'acelerador', label: 'Acelerador', limite: 200,  valor: 597   },
+  { value: 'dominancia', label: 'Dominância', limite: 700,  valor: 1997  },
+  { value: 'elite',      label: 'Elite',      limite: 1300, valor: 3500  },
 ]
 
 // Record para lookup rápido por value
@@ -21,7 +30,7 @@ export const PLANOS_MAP: Record<string, Plano> = Object.fromEntries(
 )
 
 // Ordem dos planos (para upgrade)
-export const PLANOS_ORDER = ['essencial', 'acelerador', 'dominancia', 'elite']
+export const PLANOS_ORDER = ['iniciante', 'essencial', 'acelerador', 'dominancia', 'elite']
 
 export function planoLabel(value: string): string {
   return PLANOS_MAP[value]?.label ?? value

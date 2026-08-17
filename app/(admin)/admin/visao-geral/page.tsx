@@ -9,15 +9,10 @@ import {
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 import { diasAteExpirar, estaExpirado, statusComercialDe } from '@/lib/ciclo-vida'
+import { PLANOS } from '@/lib/planos'
 
 // ─── Planos ───────────────────────────────────────────────────────────────────
 
-const PLANOS = [
-  { value: 'essencial',  label: 'Essencial',  limite: 50,   valor: 397  },
-  { value: 'acelerador', label: 'Acelerador', limite: 100,  valor: 597  },
-  { value: 'dominancia', label: 'Dominância', limite: 500,  valor: 1997 },
-  { value: 'elite',      label: 'Elite',      limite: 1000, valor: 3500 },
-]
 
 function planoLabel(plano: string) {
   return PLANOS.find(p => p.value === plano)?.label ?? plano

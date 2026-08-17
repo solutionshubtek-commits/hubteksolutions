@@ -9,6 +9,7 @@ import {
 import { GestaoOperadoresAdmin } from '@/components/admin/GestaoOperadoresAdmin'
 import { CicloVidaCliente } from '@/components/admin/CicloVidaCliente'
 import { estaExpirado, statusComercialDe, RETENCAO_ANOS } from '@/lib/ciclo-vida'
+import { PLANOS } from '@/lib/planos'
 
 interface Tenant {
   id: string; nome: string; slug: string; status: string
@@ -43,12 +44,6 @@ const FUNCOES = [
   { value: 'qualificacao', label: 'Qualificação'},
 ]
 
-const PLANOS = [
-  { value: 'essencial',  label: 'Essencial',  limite: 50,   valor: 397  },
-  { value: 'acelerador', label: 'Acelerador', limite: 100,  valor: 597  },
-  { value: 'dominancia', label: 'Dominância', limite: 500,  valor: 1997 },
-  { value: 'elite',      label: 'Elite',      limite: 1000, valor: 3500 },
-]
 
 function planoConfig(plano: string) {
   return PLANOS.find(p => p.value === plano) ?? PLANOS[0]
