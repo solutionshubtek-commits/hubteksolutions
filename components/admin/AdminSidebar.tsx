@@ -4,11 +4,12 @@ import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { LayoutDashboard, Users, Wallet, Bot, FileText, Activity } from 'lucide-react'
+import { LayoutDashboard, Users, Wallet, Bot, FileText, Activity, Zap } from 'lucide-react'
 
 const itens = [
   { href: '/admin/visao-geral', label: 'Visão Geral', icone: LayoutDashboard },
   { href: '/admin/clientes',    label: 'Clientes',    icone: Users },
+  { href: '/admin/creditos',    label: 'Créditos',    icone: Zap },
   { href: '/admin/custos-ia',   label: 'Custos IA',   icone: Wallet },
   { href: '/admin/treinamento', label: 'Treinamento', icone: Bot },
   { href: '/admin/relatorios',  label: 'Relatórios',  icone: FileText },
