@@ -11,7 +11,7 @@ import {
 } from '@/lib/supabase/queries/conversations'
 import { openAIChatCompletion, openAIChatCompletionWithTools, openaiClient } from './openai'
 import { registrarUso, type UsoCtx } from './uso'
-import { registrarConsumoSombra } from '@/lib/creditos'
+import { consumirOuBloquear } from '@/lib/creditos'
 import {
   dentroDoHorario,
   slotsDoDia,
@@ -2027,19 +2027,25 @@ export async function processIncomingMessage(payload: ProcessMessagePayload): Pr
   }
   // ──────────────────────────────────────────────────────────────────────────
 
-  // ─── Créditos de atendimento — MODO SOMBRA (etapa 3) ──────────────────────
-  // Registra o consumo no ledger e compara com a contagem legada. NÃO bloqueia
-  // nada: neste momento é medição pura, e falha aqui é engolida lá dentro.
+  // ─── Créditos de atendimento — DECISÃO REAL ───────────────────────────────
+  // Consome 1 atendimento (franquia → crédito que expira primeiro) e diz se o
+  // agente pode responder.
   //
-  // O ponto é este de propósito, e é aqui que o bloqueio vai entrar na etapa 8:
-  // acima, a mensagem, a mídia e o lead do CRM já foram gravados — um cliente
-  // sem saldo continua tendo o atendimento REGISTRADO, ele só não é RESPONDIDO.
-  // Abaixo começam os returns que impedem o agente de falar.
+  // O ponto é este de propósito: acima, a mensagem, a mídia e o lead do CRM já
+  // foram gravados — o cliente sem saldo continua tendo o atendimento
+  // REGISTRADO na plataforma, ele só não é RESPONDIDO pelo agente. Nada se
+  // perde, e a equipe dele pode assumir a conversa pela dashboard.
   //
   // Fica antes dos guards de agente desligado/pausado porque a franquia é
-  // consumida pelo atendimento existir, não por quem responde — é o mesmo
-  // critério da contagem atual, que conta a conversa independente disso.
-  await registrarConsumoSombra(supabase, payload.tenantId, conversa.id)
+  // consumida pelo atendimento existir, não por quem responde.
+  //
+  // NÃO existe atalho por flag do tenant aqui, e não pode existir: a chamada é
+  // idempotente por (conversa, ciclo), então uma conversa que JÁ consumiu
+  // segue sendo atendida mesmo com o tenant bloqueado — ela já foi paga. Só a
+  // RPC sabe disso. Um short-circuit por `atendimento_bloqueado` calaria o
+  // agente no meio de conversas em andamento.
+  const { permitido } = await consumirOuBloquear(supabase, payload.tenantId, conversa.id)
+  if (!permitido) return
 
   const tenantAtivoGlobal = await isTenantAgentActive(supabase, payload.tenantId)
   if (!tenantAtivoGlobal) return

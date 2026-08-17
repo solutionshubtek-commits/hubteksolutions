@@ -1,7 +1,7 @@
 // app/api/upgrade-plano/route.ts
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { PLANOS_MAP, proximoPlano } from '@/lib/planos'
+import { PLANOS_MAP, proximoPlano, AUTO_UPGRADE_ATIVO } from '@/lib/planos'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -11,6 +11,19 @@ const supabaseAdmin = createClient(
 
 export async function POST(request: Request) {
   try {
+    // Trava real do upgrade automático. O gatilho em process-webhook também
+    // checa a flag, mas esta rota é chamável por conta própria — deixar só o
+    // gatilho gateado permitiria subir o plano de um cliente sem querer.
+    //
+    // Nada aqui foi apagado: com a flag em `true` o comportamento antigo volta
+    // por inteiro, o que mantém o rollback a uma linha de distância.
+    if (!AUTO_UPGRADE_ATIVO) {
+      return NextResponse.json({
+        upgraded: false,
+        motivo: 'auto_upgrade_desativado',
+      })
+    }
+
     const { tenant_id } = await request.json()
     if (!tenant_id) {
       return NextResponse.json({ error: 'tenant_id obrigatório' }, { status: 400 })

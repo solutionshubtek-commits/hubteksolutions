@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { exigirAdminHubtek } from '@/lib/auth/admin'
 import { CREDITO_EXTRA } from '@/lib/planos'
+import { limparBloqueio } from '@/lib/creditos'
 
 /**
  * POST /api/admin/creditos/aprovar
@@ -106,9 +107,10 @@ export async function POST(request: Request) {
       .update({ pacote_id: pacote.id })
       .eq('id', reservada.id)
 
-    // PENDENTE (etapa 8): quando o bloqueio por falta de saldo existir, é aqui
-    // que ele precisa ser limpo — o cliente acabou de comprar a saída. Hoje não
-    // há o que limpar, porque nada bloqueia ainda.
+    // O cliente acabou de comprar a saída: libera na hora, sem esperar a
+    // próxima mensagem chegar para o bloqueio cair sozinho. Sem isto o banner
+    // continuaria na dashboard logo depois de ele pagar.
+    await limparBloqueio(supabase, reservada.tenant_id)
 
     await notificarCliente(
       supabase, reservada.tenant_id,

@@ -214,5 +214,8 @@ export function valorCreditosPersonalizado(quantidade: number): number {
 // consultam a flag: o gatilho em app/api/agent/process-webhook/route.ts e o
 // executor em app/api/upgrade-plano/route.ts.
 //
-// Segue `true` até o modo sombra provar que o ledger conta certo (etapa 3).
-export const AUTO_UPGRADE_ATIVO = true
+// DESLIGADO desde a etapa 8 (agosto/2026): estourar a franquia agora bloqueia
+// novas conversas e a escolha — créditos ou upgrade — passa a ser do cliente.
+// Voltar a `true` restaura o comportamento anterior por inteiro, sem revert e
+// sem perder dado: o ledger continua registrando de qualquer forma.
+export const AUTO_UPGRADE_ATIVO = false

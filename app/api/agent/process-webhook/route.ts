@@ -8,7 +8,7 @@ import {
 import { processIncomingMessage } from '@/lib/ai/process-message'
 import { createServiceClient } from '@/lib/supabase/server'
 import { getTenantByInstanceName } from '@/lib/supabase/queries/conversations'
-import { PLANOS_MAP } from '@/lib/planos'
+import { PLANOS_MAP, AUTO_UPGRADE_ATIVO } from '@/lib/planos'
 
 // Segredo interno para garantir que só o webhook chama esta rota
 const INTERNAL_SECRET = process.env.CRON_SECRET
@@ -86,9 +86,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       caption: mensagemUnificada.caption,
     })
 
-    // Verifica upgrade de plano
+    // Verifica upgrade de plano — só enquanto o upgrade automático existir.
+    // Com a flag desligada, estourar a franquia bloqueia o atendimento e a
+    // escolha passa a ser do cliente (créditos ou upgrade), decidida na RPC
+    // de consumo dentro de process-message. Sem este gate, a contagem abaixo
+    // rodaria a cada mensagem só para chamar uma rota que responde "desativado".
     const supabase = createServiceClient()
-    const tenant = await getTenantByInstanceName(supabase, instanceName)
+    const tenant = AUTO_UPGRADE_ATIVO
+      ? await getTenantByInstanceName(supabase, instanceName)
+      : null
     if (tenant) {
       const planoAtual = (tenant as { plano?: string }).plano ?? 'essencial'
       if (planoAtual !== 'elite') {
