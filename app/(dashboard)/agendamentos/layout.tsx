@@ -1,5 +1,5 @@
-import { planoDoUsuarioLogado } from '@/lib/auth/plano-servidor'
-import { planoTemRecurso } from '@/lib/planos'
+import { acessoDoUsuarioLogado } from '@/lib/auth/plano-servidor'
+import { temRecursoOuCortesia } from '@/lib/planos'
 import RecursoBloqueado from '@/components/dashboard/RecursoBloqueado'
 
 /**
@@ -14,9 +14,9 @@ import RecursoBloqueado from '@/components/dashboard/RecursoBloqueado'
  * o cliente final sem a confirmação que foi prometida a ele.
  */
 export default async function AgendamentosLayout({ children }: { children: React.ReactNode }) {
-  const plano = await planoDoUsuarioLogado()
+  const { plano, cortesiaAte } = await acessoDoUsuarioLogado()
 
-  if (!plano || !planoTemRecurso(plano, 'agendamentos')) {
+  if (!plano || !temRecursoOuCortesia(plano, 'agendamentos', cortesiaAte)) {
     return (
       <RecursoBloqueado
         recurso="agendamentos"

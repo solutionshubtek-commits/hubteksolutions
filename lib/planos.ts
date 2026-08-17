@@ -107,6 +107,25 @@ export function planoTemRecurso(value: string, recurso: RecursoPlano): boolean {
   return PLANOS_MAP[value]?.recursos.includes(recurso) ?? false
 }
 
+/**
+ * O recurso está liberado, considerando cortesia temporária?
+ *
+ * A cortesia (`tenants.cortesia_recursos_ate`) existe para não tirar no mesmo
+ * dia um recurso que o cliente já usa quando o gating entra. Enquanto a data
+ * está no futuro, tudo é liberado; vencida, a regra do plano volta a valer
+ * sozinha, sem deploy nem cron.
+ *
+ * Cobre apenas recursos — operadores e instâncias seguem o plano sempre.
+ */
+export function temRecursoOuCortesia(
+  value: string,
+  recurso: RecursoPlano,
+  cortesiaAte?: string | null
+): boolean {
+  if (cortesiaAte && new Date(cortesiaAte).getTime() > Date.now()) return true
+  return planoTemRecurso(value, recurso)
+}
+
 /** Operadores ativos permitidos, além do dono da conta. */
 export function planoOperadores(value: string): number {
   return PLANOS_MAP[value]?.operadores ?? 1

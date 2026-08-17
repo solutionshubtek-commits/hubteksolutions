@@ -1,5 +1,5 @@
-import { planoDoUsuarioLogado } from '@/lib/auth/plano-servidor'
-import { planoTemRecurso } from '@/lib/planos'
+import { acessoDoUsuarioLogado } from '@/lib/auth/plano-servidor'
+import { temRecursoOuCortesia } from '@/lib/planos'
 import RecursoBloqueado from '@/components/dashboard/RecursoBloqueado'
 
 /**
@@ -16,9 +16,9 @@ import RecursoBloqueado from '@/components/dashboard/RecursoBloqueado'
  * uma tela vazia justo no momento em que ele acabou de pagar mais.
  */
 export default async function CRMLayout({ children }: { children: React.ReactNode }) {
-  const plano = await planoDoUsuarioLogado()
+  const { plano, cortesiaAte } = await acessoDoUsuarioLogado()
 
-  if (!plano || !planoTemRecurso(plano, 'crm')) {
+  if (!plano || !temRecursoOuCortesia(plano, 'crm', cortesiaAte)) {
     return (
       <RecursoBloqueado
         recurso="crm"
