@@ -45,6 +45,12 @@ interface CicloFechado {
   receita_inst_extras?: number | null
   custo_fixo_rateado?: number | null
   fechado_automatico?: boolean | null
+  // Colunas da migration 014. Também opcionais: ciclos fechados antes dela
+  // não têm receita de crédito, e nesse caso o valor é 0 mesmo.
+  atendimentos_credito?: number | null
+  receita_creditos?: number | null
+  creditos_vendidos_qtd?: number | null
+  creditos_vendidos_valor?: number | null
 }
 
 // Instâncias extras congeladas no fechamento; para ciclos antigos, cai na
@@ -95,9 +101,28 @@ function mesRefShort(mesRef: string) {
   return `${MESES_LABEL[parseInt(mes) - 1]}/${String(ano).slice(2)}`
 }
 
-// Margem real: valor_cobrado + receita_inst_extras - custo_api
-function calcMargem(valorCobrado: number, custoAPI: number, instExtras: number) {
-  return valorCobrado + (instExtras * CUSTO_INSTANCIA_EXTRA) - custoAPI
+/**
+ * Margem real do ciclo, na mesma conta que `fecharCicloDoTenant` grava:
+ *
+ *   plano + instâncias extras + créditos consumidos − custo de IA − custo fixo rateado
+ *
+ * Antes esta função deixava de fora DUAS parcelas que o fechamento considera:
+ * o custo fixo rateado (que existe desde a migration 007 e deprimia o
+ * resultado real) e a receita de crédito extra (migration 014). A tela e o
+ * banco mostravam margens diferentes para o mesmo ciclo.
+ *
+ * A receita de crédito entra pela competência — o que foi CONSUMIDO no mês —
+ * porque é isso que casa com o custo de IA do período. O quanto foi vendido
+ * aparece em coluna própria, sem afetar a margem.
+ */
+function calcMargem(c: CicloFechado, instExtras: number) {
+  const receitaPlano   = Number(c.valor_cobrado ?? 0)
+  const receitaInst    = instExtras * CUSTO_INSTANCIA_EXTRA
+  const receitaCredito = Number(c.receita_creditos ?? 0)
+  const custoAPI       = Number(c.custo_brl ?? 0)
+  const custoFixo      = Number(c.custo_fixo_rateado ?? 0)
+
+  return receitaPlano + receitaInst + receitaCredito - custoAPI - custoFixo
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -515,7 +540,7 @@ export default function RelatoriosPage() {
                   const plano = PLANOS[tenants.find(t => t.id === c.tenant_id)?.plano ?? 'essencial'] ?? PLANOS.essencial
                   const instExtras = instExtrasDoCiclo(c, instanciasPorTenant[c.tenant_id] ?? 0)
                   const receitaInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
-                  const margem = calcMargem(Number(c.valor_cobrado), Number(c.custo_brl), instExtras)
+                  const margem = calcMargem(c, instExtras)
                   const isEnviando = enviando === c.id
                   return (
                     <tr key={c.id} style={{ background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-secondary)', borderTop: '1px solid var(--border)' }}>
@@ -604,7 +629,12 @@ export default function RelatoriosPage() {
                   const cobrado = t.ciclos.reduce((s, c) => s + Number(c.valor_cobrado), 0)
                   const instExtras = Math.max(0, (instanciasPorTenant[tid] ?? 0) - 1)
                   const receita = instExtras * CUSTO_INSTANCIA_EXTRA
-                  const margem = calcMargem(cobrado, custo, instExtras)
+                  // Soma a margem CICLO A CICLO em vez de agregar as parcelas e
+                  // calcular uma vez: cada ciclo tem seu próprio rateio e sua
+                  // própria receita de crédito, congelados no fechamento.
+                  const margem = t.ciclos.reduce(
+                    (s, c) => s + calcMargem(c, instExtrasDoCiclo(c, instanciasPorTenant[tid] ?? 0)), 0
+                  )
                   return (
                     <tr key={tid} style={{ background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-secondary)', borderTop: '1px solid var(--border)' }}>
                       <td className="px-5 py-3 font-medium" style={{ color: 'var(--text-primary)' }}>{t.nome}</td>

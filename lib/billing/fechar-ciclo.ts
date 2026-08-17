@@ -14,8 +14,73 @@ export interface ResultadoFechamento {
   valor_plano: number
   instancias_extras: number
   receita_inst_extras: number
+  /** Atendimentos do ciclo que saíram de crédito extra, não da franquia. */
+  atendimentos_credito: number
+  /** Competência: receita dos créditos consumidos no mês. Entra na margem. */
+  receita_creditos: number
+  /** Caixa: valor dos lotes ativados no mês. Não entra na margem. */
+  creditos_vendidos_valor: number
   valor_cobrado: number
   margem: number
+}
+
+/**
+ * Receita de créditos extras do mês, nas duas visões.
+ *
+ * Competência (`consumida`) sai do ledger: cada linha com origem 'credito'
+ * vale o `valor_unitario` do lote de onde foi debitada — e não o preço de
+ * tabela, porque um lote personalizado ou uma condição comercial diferente
+ * mudam esse valor, e o fechamento tem que refletir o que foi de fato cobrado.
+ *
+ * Caixa (`vendida`) sai dos lotes ativados no período.
+ */
+async function receitaCreditos(
+  supabase: SupabaseClient,
+  tenantId: string,
+  mesRef: string,
+  inicio: string,
+  fim: string
+): Promise<{ consumida: number; atendimentos: number; vendidaValor: number; vendidaQtd: number }> {
+  const { data: consumos } = await supabase
+    .from('atendimento_consumo')
+    .select('pacote_id')
+    .eq('tenant_id', tenantId)
+    .eq('ciclo_ref', mesRef)
+    .eq('origem', 'credito')
+
+  const atendimentos = consumos?.length ?? 0
+  let consumida = 0
+
+  if (atendimentos > 0) {
+    const ids = Array.from(new Set(
+      (consumos ?? []).map(c => (c as { pacote_id: string | null }).pacote_id).filter(Boolean)
+    )) as string[]
+
+    const { data: lotes } = await supabase
+      .from('credito_pacotes')
+      .select('id, valor_unitario')
+      .in('id', ids)
+
+    const preco: Record<string, number> = {}
+    for (const l of lotes ?? []) preco[l.id] = Number(l.valor_unitario ?? 0)
+
+    for (const c of consumos ?? []) {
+      const id = (c as { pacote_id: string | null }).pacote_id
+      consumida += id ? (preco[id] ?? 0) : 0
+    }
+  }
+
+  const { data: vendidos } = await supabase
+    .from('credito_pacotes')
+    .select('quantidade_total, valor_pago')
+    .eq('tenant_id', tenantId)
+    .gte('ativado_em', inicio)
+    .lt('ativado_em', fim)
+
+  const vendidaValor = (vendidos ?? []).reduce((s, p) => s + Number(p.valor_pago ?? 0), 0)
+  const vendidaQtd   = (vendidos ?? []).reduce((s, p) => s + (p.quantidade_total ?? 0), 0)
+
+  return { consumida: Number(consumida.toFixed(2)), atendimentos, vendidaValor, vendidaQtd }
 }
 
 export function criarClienteServico(): SupabaseClient {
@@ -121,7 +186,14 @@ export async function fecharCicloDoTenant(
   // sai cliente; recalcular depois daria um número diferente do que valia aqui.
   const custoFixoRateado = await calcularCustoFixoRateado(supabase, mesRef)
 
-  const margem = valorPlano + receitaInstExtras - custoBrl - custoFixoRateado
+  const creditos = await receitaCreditos(supabase, tenantId, mesRef, inicio, fim)
+
+  // A receita de crédito entra pela COMPETÊNCIA (consumo), não pela venda: o
+  // custo de IA de um atendimento pago com crédito cai no mês em que ele
+  // acontece, e usar o valor da venda faria o mês da compra parecer ótimo e o
+  // mês do uso parecer prejuízo, sem nada ter mudado na operação.
+  const margem = valorPlano + receitaInstExtras + creditos.consumida
+    - custoBrl - custoFixoRateado
 
   const linha = {
     tenant_id:            tenantId,
@@ -137,6 +209,10 @@ export async function fecharCicloDoTenant(
     valor_plano:          valorPlano,
     instancias_extras:    instanciasExtras,
     receita_inst_extras:  receitaInstExtras,
+    atendimentos_credito:    creditos.atendimentos,
+    receita_creditos:        creditos.consumida,
+    creditos_vendidos_qtd:   creditos.vendidaQtd,
+    creditos_vendidos_valor: creditos.vendidaValor,
     valor_cobrado:        valorPlano,
     fechado_por:          opcoes.usuarioId ?? null,
     fechado_automatico:   opcoes.automatico ?? false,
@@ -162,6 +238,9 @@ export async function fecharCicloDoTenant(
     valor_plano: valorPlano,
     instancias_extras: instanciasExtras,
     receita_inst_extras: receitaInstExtras,
+    atendimentos_credito: creditos.atendimentos,
+    receita_creditos: creditos.consumida,
+    creditos_vendidos_valor: creditos.vendidaValor,
     valor_cobrado: valorPlano,
     margem,
   }
