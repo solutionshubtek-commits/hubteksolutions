@@ -97,13 +97,24 @@ export default function CardCreditos() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs md:text-sm" style={{ color: 'var(--text-secondary)' }}>
-              Atendimentos do plano
+              Seus créditos de atendimentos
             </p>
+            {/* O número grande é o que o cliente ainda pode atender AGORA
+                (franquia + créditos extras), com o contratado do plano logo
+                abaixo como referência. Antes mostrava só a franquia restante,
+                então quem tinha comprado créditos via "0" e achava que havia
+                parado de atender. */}
             <p className="text-2xl md:text-3xl font-bold mt-1" style={{ color: esgotada || atencao ? cor : 'var(--text-primary)' }}>
-              {saldo.franquiaRestante}
+              {saldo.totalDisponivel}
               <span className="text-base font-normal ml-1.5" style={{ color: 'var(--text-muted)' }}>
-                de {saldo.franquiaTotal} restantes
+                disponíveis
               </span>
+            </p>
+            <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              {saldo.franquiaTotal} atendimentos contratados no plano
+              {saldo.creditosRestantes > 0 && (
+                <> · {saldo.franquiaRestante} do plano + {saldo.creditosRestantes} extra(s)</>
+              )}
             </p>
           </div>
           <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${cor}18` }}>
@@ -116,7 +127,7 @@ export default function CardCreditos() {
             <div className="h-full transition-all" style={{ width: `${pct}%`, background: cor }} />
           </div>
           <p className="text-[11px] mt-1.5" style={{ color: 'var(--text-label)' }}>
-            {saldo.franquiaUsada} usados neste ciclo · {pct}%
+            {saldo.franquiaUsada} de {saldo.franquiaTotal} atendimentos do plano usados neste ciclo · {pct}%
           </p>
         </div>
 

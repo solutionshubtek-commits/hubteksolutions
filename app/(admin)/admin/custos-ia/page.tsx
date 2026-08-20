@@ -501,7 +501,7 @@ export default function CustosIAPage() {
       `Gerado em: ${new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
       ``,
       `Cliente: ${nomeCliente} — ${mesNome}`,
-      `Plano: ${plano.label} (até ${plano.limite} conversas/mês)`,
+      `Plano: ${plano.label} (${plano.limite} atendimentos/mês)`,
       `─────────────────────────────────────`,
       `${pad('Conversas iniciadas:', 25)} ${conversas}`,
       `${pad('Total de tokens:', 25)} ${tokens.toLocaleString('pt-BR')}`,

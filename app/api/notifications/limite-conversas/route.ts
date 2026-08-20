@@ -66,8 +66,8 @@ export async function POST() {
         tenant_id: tenantId,
         user_id: user.id,
         tipo: 'limite_conversas',
-        titulo: '⚠️ Limite de conversas próximo',
-        mensagem: `Você usou ${totalConversas} de ${plano.limite} conversas do plano ${plano.label} este mês. Restam ${restantes} conversa${restantes !== 1 ? 's' : ''}.`,
+        titulo: '⚠️ Limite de atendimentos próximo',
+        mensagem: `Você usou ${totalConversas} de ${plano.limite} atendimentos do plano ${plano.label} este mês. Restam ${restantes} atendimento${restantes !== 1 ? 's' : ''}.`,
         lida: false,
       })
     }

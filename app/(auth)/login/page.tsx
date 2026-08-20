@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import { Eye, EyeOff } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
 export default function LoginPage() {
@@ -12,6 +13,9 @@ export default function LoginPage() {
   const [carregando, setCarregando] = useState(false)
   const [esqueceuSenha, setEsqueceuSenha] = useState(false)
   const [emailEnviado, setEmailEnviado] = useState(false)
+  // Revelar a senha evita a sequência de tentativas erradas que termina em
+  // "esqueci minha senha": o erro quase sempre é de digitação, não de memória.
+  const [mostrarSenha, setMostrarSenha] = useState(false)
   const router = useRouter()
 
   // AJUSTE (F7 — recuperação de senha): o callback redireciona para cá com
@@ -111,16 +115,29 @@ export default function LoginPage() {
               </div>
               <div>
                 <label className="text-[#A3A3A3] text-sm font-medium block mb-2">Senha</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="w-full bg-[#0A0A0A] border border-[#262626] text-white
-                    placeholder-[#A3A3A3] rounded-lg px-4 py-3 focus:outline-none
-                    focus:border-[#10B981] transition-all duration-200"
-                />
+                <div className="relative">
+                  <input
+                    type={mostrarSenha ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    className="w-full bg-[#0A0A0A] border border-[#262626] text-white
+                      placeholder-[#A3A3A3] rounded-lg pl-4 pr-12 py-3 focus:outline-none
+                      focus:border-[#10B981] transition-all duration-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMostrarSenha(v => !v)}
+                    aria-label={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                    title={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                    tabIndex={-1}
+                    className="absolute right-0 top-0 h-full px-3 flex items-center
+                      text-[#A3A3A3] hover:text-white transition-colors"
+                  >
+                    {mostrarSenha ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => { setEsqueceuSenha(true); setErro('') }}

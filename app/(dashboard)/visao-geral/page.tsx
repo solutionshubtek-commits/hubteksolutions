@@ -224,10 +224,12 @@ function exportarConversasPDF(conversas: ConversaRecente[]) {
   })
 }
 
-function exportarGraficoPDF(dados: DiaDado[], titulo: string, porHora: boolean) {
+function exportarGraficoPDF(dados: DiaDado[], titulo: string, porHora: boolean, totalUnico: number | null) {
   exportPDF({
     titulo: `Volume de Conversas — ${titulo}`,
-    subtitulo: `Exportado em ${new Date().toLocaleString('pt-BR')}`,
+    subtitulo: totalUnico != null
+      ? `${totalUnico} conversa(s) distinta(s) no período · exportado em ${new Date().toLocaleString('pt-BR')}`
+      : `Exportado em ${new Date().toLocaleString('pt-BR')}`,
     colunas: [{label:porHora?'Hora':'Data',key:'data',align:'left'},{label:'Conversas',key:'total',align:'right'}],
     linhas: dados.map(d => ({
       data: porHora
@@ -235,7 +237,7 @@ function exportarGraficoPDF(dados: DiaDado[], titulo: string, porHora: boolean) 
         : new Date(d.dia+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}),
       total: d.total,
     })),
-    totais: {data:'Total',total:dados.reduce((s,d)=>s+d.total,0)},
+    totais: {data:'Soma diária',total:dados.reduce((s,d)=>s+d.total,0)},
     nomeArquivo: `grafico_conversas_${new Date().toISOString().slice(0,10)}`,
   })
 }
@@ -270,16 +272,23 @@ function KpiCard({ label, valor, d, icon: Icon, cor, alt }: {
   )
 }
 
-// Card CRM — sem destaque de cor nas etapas finais (visual padrão para todos)
+// Card CRM — sem destaque de cor nas etapas finais (visual padrão para todos).
+//
+// No mobile o rótulo pode ocupar duas linhas: com `truncate` e o funil espremido
+// em 5-6 colunas, "Em negociação" virava "Em n…" e o card não dizia mais nada.
+// A altura mínima mantém os cards alinhados quando um rótulo quebra e o outro não.
 function CRMEtapaCard({ label, valor, cor }: { label: string; valor: number; cor: string }) {
   return (
-    <div className="rounded-xl p-3 md:p-4 flex flex-col gap-1.5"
+    <div className="rounded-xl p-2.5 md:p-4 flex flex-col gap-1"
       style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-      <div className="flex items-center gap-1.5 mb-0.5">
-        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: cor }} />
-        <p className="text-[11px] font-medium truncate" style={{ color: 'var(--text-secondary)' }}>{label}</p>
+      <div className="flex items-start gap-1.5">
+        <span className="w-2 h-2 rounded-full flex-shrink-0 mt-[3px]" style={{ background: cor }} />
+        <p className="text-[10px] md:text-[11px] font-medium leading-tight line-clamp-2 min-h-[1.9em]"
+          style={{ color: 'var(--text-secondary)' }} title={label}>
+          {label}
+        </p>
       </div>
-      <p className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+      <p className="text-xl md:text-2xl font-bold leading-none" style={{ color: 'var(--text-primary)' }}>
         {valor.toLocaleString('pt-BR')}
       </p>
     </div>
@@ -362,10 +371,12 @@ function InsightsCRM({ stats, titulo, frase }: { stats: CRMStats; titulo: string
 }
 
 // Gráfico de barras — conversas por dia + gráfico de barras lado a lado por etapa CRM
-function GraficoBarras({ dados, crmStats, granularidade, onExport }: {
+function GraficoBarras({ dados, crmStats, granularidade, totalUnico, onExport }: {
   dados: DiaDado[]
   crmStats: CRMStats | null
   granularidade: 'dia' | 'hora'
+  /** Conversas DISTINTAS na janela — o mesmo número do KPI "Conversas no período". */
+  totalUnico: number | null
   onExport: () => void
 }) {
   const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
@@ -379,8 +390,14 @@ function GraficoBarras({ dados, crmStats, granularidade, onExport }: {
     return () => obs.disconnect()
   }, [])
 
-  const total = dados.reduce((s, d) => s + d.total, 0)
-  const media = +(total / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
+  // O "Total" aqui NÃO pode ser a soma das barras: cada barra conta as conversas
+  // com mensagem naquele dia, então uma conversa que se estende por três dias
+  // aparece nas três — a soma inflava e nunca batia com o KPI "Conversas no
+  // período", que conta conversa distinta. O total agora é o de conversas
+  // distintas na mesma janela do KPI; a soma das barras vira "soma diária".
+  const somaDiaria = dados.reduce((s, d) => s + d.total, 0)
+  const total = totalUnico ?? somaDiaria
+  const media = +(somaDiaria / (dados.filter(d => d.total > 0).length || 1)).toFixed(1)
   const pico  = Math.max(...dados.map(d => d.total), 0)
   const yMax  = Math.max(pico + 1, 5)
 
@@ -434,8 +451,14 @@ function GraficoBarras({ dados, crmStats, granularidade, onExport }: {
       {/* Stats + botão PDF */}
       <div className="flex items-center gap-6 md:gap-10 mb-4 flex-wrap">
         <div>
-          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Total</p>
+          <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Conversas no período</p>
           <p className="text-lg font-bold text-[#10B981]">{total.toLocaleString('pt-BR')}</p>
+          {totalUnico != null && somaDiaria !== totalUnico && (
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-label)' }}
+              title="Uma conversa que segue por vários dias aparece em cada um deles, por isso a soma das barras é maior.">
+              soma das barras: {somaDiaria.toLocaleString('pt-BR')}
+            </p>
+          )}
         </div>
         <div>
           <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>Média/{granularidade === 'hora' ? 'hora ativa' : 'dia ativo'}</p>
@@ -608,6 +631,9 @@ export default function VisaoGeralPage() {
   const [conversas, setConversas]           = useState<ConversaRecente[]>([])
   const [conversasFiltradas, setConversasFiltradas] = useState<ConversaRecente[]>([])
   const [grafico, setGrafico]               = useState<DiaDado[]>([])
+  // Conversas distintas na janela do gráfico. Fica separado das barras porque
+  // não é a soma delas — ver o comentário em GraficoBarras.
+  const [graficoUnicos, setGraficoUnicos]   = useState<number | null>(null)
   const [periodo, setPeriodo]               = useState<Periodo>('30')
   // Intervalo customizado (snapshot, sem realtime). Quando definido, tem
   // precedência sobre o preset. `custom` guarda o intervalo aplicado; os
@@ -629,7 +655,7 @@ export default function VisaoGeralPage() {
   const [confirmDesconectar, setConfirmDesconectar] = useState<string | null>(null)
   const [atividades, setAtividades]         = useState<AtividadeItem[]>([])
   const exportRef = useRef<HTMLDivElement>(null)
-  const graficoCache = useRef<Record<string, DiaDado[]>>({})
+  const graficoCache = useRef<Record<string, { dados: DiaDado[]; unicos: number }>>({})
 
   useEffect(() => {
     function h(e: MouseEvent) {
@@ -752,7 +778,8 @@ export default function VisaoGeralPage() {
     // cache (é tempo real do dia vigente).
     const cacheKey = sel.custom ? `c:${sel.custom.inicio}:${sel.custom.fim}` : p
     const usaCache = !(!sel.custom && p === '1')
-    if (usaCache && graficoCache.current[cacheKey]) { setGrafico(graficoCache.current[cacheKey]); return }
+    const emCache = graficoCache.current[cacheKey]
+    if (usaCache && emCache) { setGrafico(emCache.dados); setGraficoUnicos(emCache.unicos); return }
     const supabase = createClient()
     const { data:{ user } } = await supabase.auth.getUser()
     if (!user) return
@@ -760,45 +787,53 @@ export default function VisaoGeralPage() {
     if (!userData?.tenant_id) return
     const tid = userData.tenant_id
 
+    // A janela é EXATAMENTE a mesma dos KPIs (janelaDaSelecao). Antes o gráfico
+    // usava a meia-noite de N dias atrás até o fim do dia de hoje, enquanto o KPI
+    // usava uma janela móvel de N×24h — o gráfico via até dois dias a mais de
+    // dados e o total nunca fechava com o card "Conversas no período".
+    const { inicioAtual, fimAtual } = janelaDaSelecao(sel)
+
     // Hoje (preset): buckets por hora (00h → hora atual), leitura em tempo real.
     if (!sel.custom && p === '1') {
-      const hoje0 = new Date(); hoje0.setHours(0,0,0,0)
-      const msgs = await buscarMensagensPeriodo(supabase, tid, hoje0.toISOString(), new Date().toISOString())
+      const hoje0 = new Date(inicioAtual)
+      const msgs = await buscarMensagensPeriodo(supabase, tid, inicioAtual, fimAtual)
       const y = hoje0.getFullYear(), m = String(hoje0.getMonth()+1).padStart(2,'0'), d = String(hoje0.getDate()).padStart(2,'0')
       const horaAtual = new Date().getHours()
       const chaveHora = (h: number) => `${y}-${m}-${d}T${String(h).padStart(2,'0')}:00:00`
       const porHora: Record<string, Set<string>> = {}
       for (let h = 0; h <= horaAtual; h++) porHora[chaveHora(h)] = new Set()
+      const distintas = new Set<string>()
       msgs.forEach(msg => {
         const dt = new Date(msg.criado_em)
         if (isNaN(dt.getTime())) return
         porHora[chaveHora(dt.getHours())]?.add(msg.conversation_id)
+        distintas.add(msg.conversation_id)
       })
       setGrafico(Object.entries(porHora).map(([dia, convs]) => ({ dia, total: convs.size })))
+      setGraficoUnicos(distintas.size)
       return
     }
 
     // Janela em dias: preset (N dias móveis) ou custom (intervalo escolhido).
-    let inicio: Date, fim: Date
-    if (sel.custom) {
-      inicio = new Date(`${sel.custom.inicio}T00:00:00`)
-      fim    = new Date(`${sel.custom.fim}T23:59:59.999`)
-    } else {
-      inicio = new Date(); inicio.setDate(inicio.getDate()-parseInt(p)); inicio.setHours(0,0,0,0)
-      fim = new Date(); fim.setHours(23,59,59,999)
-    }
-    const msgs = await buscarMensagensPeriodo(supabase, tid, inicio.toISOString(), fim.toISOString())
+    const inicio = new Date(inicioAtual)
+    const fim    = new Date(fimAtual)
+    const msgs = await buscarMensagensPeriodo(supabase, tid, inicioAtual, fimAtual)
     const porDia: Record<string, Set<string>> = {}
-    const curr = new Date(inicio)
+    // Os buckets vão do DIA de início ao DIA de fim, mesmo que a janela comece
+    // no meio do primeiro dia — assim nenhuma mensagem lida fica sem barra.
+    const curr = new Date(inicio); curr.setHours(0,0,0,0)
     while (curr<=fim) { porDia[toDiaLocal(curr)] = new Set(); curr.setDate(curr.getDate()+1) }
+    const distintas = new Set<string>()
     msgs.forEach(msg => {
       const dt = new Date(msg.criado_em)
       if (isNaN(dt.getTime())) return
       porDia[toDiaLocal(dt)]?.add(msg.conversation_id)
+      distintas.add(msg.conversation_id)
     })
     const resultado = Object.entries(porDia).map(([dia, convs]) => ({ dia, total: convs.size }))
-    graficoCache.current[cacheKey] = resultado
+    graficoCache.current[cacheKey] = { dados: resultado, unicos: distintas.size }
     setGrafico(resultado)
+    setGraficoUnicos(distintas.size)
   }, [])
 
   useEffect(() => { fetchGrafico({ custom, periodo }) }, [custom, periodo, fetchGrafico])
@@ -915,7 +950,7 @@ export default function VisaoGeralPage() {
       <div className="p-4 md:p-8">
         <div className="h-8 rounded w-48 mb-2 animate-pulse" style={{ background:'var(--bg-surface)' }} />
         <div className="h-4 rounded w-72 mb-6 animate-pulse" style={{ background:'var(--bg-surface)' }} />
-        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
           {[...Array(6)].map((_,i)=>(<div key={i} className="h-20 rounded-xl animate-pulse" style={{background:'var(--bg-surface)',border:'1px solid var(--border)'}} />))}
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
@@ -1085,7 +1120,12 @@ export default function VisaoGeralPage() {
             <div className="flex-1 h-px" style={{ background:'var(--border)' }} />
             {crmCarregando && <span className="text-[10px]" style={{ color:'var(--text-label)' }}>atualizando...</span>}
           </div>
-          <div className="grid gap-2" style={{ gridTemplateColumns:`repeat(${crmStats.etapas.length},minmax(0,1fr))` }}>
+          {/* Mobile: 2 colunas (3 a partir do sm). Só a partir do lg o funil
+              inteiro cabe numa linha só — antes ele forçava N colunas em
+              qualquer largura e no celular cada card virava uma tira ilegível. */}
+          <div
+            className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:[grid-template-columns:repeat(var(--crm-cols),minmax(0,1fr))]"
+            style={{ '--crm-cols': crmStats.etapas.length } as React.CSSProperties}>
             {crmStats.etapas.map((etapa, idx) => (
               <CRMEtapaCard
                 key={etapa}
@@ -1098,7 +1138,7 @@ export default function VisaoGeralPage() {
         </div>
       )}
       {!crmStats && crmCarregando && (
-        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           {[...Array(5)].map((_,i)=>(<div key={i} className="h-20 rounded-xl animate-pulse" style={{background:'var(--bg-surface)',border:'1px solid var(--border)'}} />))}
         </div>
       )}
@@ -1134,11 +1174,13 @@ export default function VisaoGeralPage() {
             </h2>
             <p className="text-xs mt-0.5" style={{ color:'var(--text-muted)' }}>
               {graficoPorHora
-                ? 'Conversas com mensagem em cada hora do dia vigente.'
-                : 'Conversas com mensagem em cada dia — uma conversa que segue no dia seguinte conta nos dois.'}
+                ? 'Conversas com mensagem em cada hora do dia vigente. O total conta cada conversa uma vez.'
+                : 'Cada barra mostra as conversas com mensagem naquele dia — uma conversa que segue no dia seguinte aparece nos dois. O total conta cada conversa uma única vez, igual ao card "Conversas no período".'}
             </p>
           </div>
-          <GraficoBarras dados={grafico} crmStats={crmStats} granularidade={graficoPorHora ? 'hora' : 'dia'} onExport={() => exportarGraficoPDF(grafico, selTitulo, graficoPorHora)} />
+          <GraficoBarras dados={grafico} crmStats={crmStats} granularidade={graficoPorHora ? 'hora' : 'dia'}
+            totalUnico={graficoUnicos}
+            onExport={() => exportarGraficoPDF(grafico, selTitulo, graficoPorHora, graficoUnicos)} />
         </div>
 
         <div className="space-y-4">

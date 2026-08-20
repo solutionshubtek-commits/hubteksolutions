@@ -88,7 +88,13 @@ export default function RenovarPlanoPage() {
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div>
               <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{planoAtual.label}</p>
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>até {planoAtual.limite} conversas · {fmtBRL(planoAtual.valor)}/mês</p>
+              {/* "conversas" aqui e "atendimentos" nos cards abaixo davam a
+                  entender que eram contagens diferentes. É o mesmo número:
+                  planoAtual.limite. Vocabulário único — atendimentos. */}
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                <strong style={{ color: 'var(--text-primary)' }}>{planoAtual.limite} atendimentos</strong> por mês
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-label)' }}>{fmtBRL(planoAtual.valor)}/mês</p>
             </div>
             <div className="text-right">
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Expira em</p>
@@ -122,14 +128,21 @@ export default function RenovarPlanoPage() {
                       <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: '#10B98120', color: '#10B981' }}>atual</span>
                     )}
                   </div>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{p.limite} atendimentos</p>
+                  {/* A hierarquia do card é volume → recursos → preço. Com o
+                      preço em destaque, o cliente batia no número grande antes
+                      de saber o que estava comprando e o card assustava em vez
+                      de vender. */}
+                  <p className="text-xl md:text-2xl font-bold leading-none mt-1" style={{ color: ativo ? '#10B981' : 'var(--text-primary)' }}>
+                    {p.limite}
+                    <span className="text-[11px] font-medium ml-1" style={{ color: 'var(--text-secondary)' }}>atendimentos/mês</span>
+                  </p>
                   {/* O que o nível libera. Sem isto o cliente compara só preço
                       e volume, e o upgrade por recurso não se vende sozinho. */}
-                  <p className="text-[10px] mt-1 leading-snug" style={{ color: 'var(--text-label)' }}>
+                  <p className="text-[11px] mt-1.5 leading-snug" style={{ color: 'var(--text-secondary)' }}>
                     {RESUMO_PLANO[p.value]}
                   </p>
-                  <p className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>
-                    {fmtBRL(p.valor)}<span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>/mês</span>
+                  <p className="text-xs font-normal mt-2 pt-2" style={{ color: 'var(--text-label)', borderTop: '1px solid var(--border)' }}>
+                    {fmtBRL(p.valor)}/mês
                   </p>
                 </button>
               )
@@ -172,6 +185,7 @@ export default function RenovarPlanoPage() {
           <div className="space-y-2">
             {([
               ['Plano', planoEscolhido.label],
+              ['Atendimentos', `${planoEscolhido.limite}/mês`],
               ['Período', periodoEscolhido.label],
               ['Duração', `${periodoEscolhido.meses} meses`],
               periodoEscolhido.desconto > 0 ? ['Desconto', `-${Math.round(periodoEscolhido.desconto * 100)}%`] : null,

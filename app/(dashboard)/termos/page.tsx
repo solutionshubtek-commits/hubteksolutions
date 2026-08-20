@@ -49,7 +49,7 @@ export default function TermosDeUsoPage() {
         <section className="space-y-3">
           <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>4. Dos Planos e Pagamentos</h2>
           <div className="space-y-2 text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            <p>4.1. A plataforma é oferecida em planos mensais com limites de conversas conforme descrito no momento da contratação.</p>
+            <p>4.1. A plataforma é oferecida em planos mensais com limites de atendimentos conforme descrito no momento da contratação.</p>
             <p>4.2. O não pagamento na data de vencimento poderá resultar na suspensão do acesso até a regularização.</p>
             <p>4.3. Não há reembolso proporcional em caso de cancelamento antecipado dentro do ciclo vigente.</p>
             <p>4.4. A Hubtek Solutions reserva-se o direito de reajustar os valores dos planos mediante aviso prévio de 30 (trinta) dias.</p>
