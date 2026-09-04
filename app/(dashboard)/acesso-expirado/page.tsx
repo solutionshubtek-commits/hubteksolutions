@@ -76,8 +76,10 @@ export default function AcessoExpiradoPage() {
           </p>
         </div>
 
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          Fale com o gestor da conta para regularizar.
+        <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          Solicite à gestão da sua empresa que entre em contato com a
+          <strong style={{ color: 'var(--text-secondary)' }}> Hubtek Solutions</strong> para
+          regularizar o acesso.
         </p>
       </div>
     </div>

@@ -488,9 +488,12 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
 
   /**
    * Salvar a edição é também o ato de RENOVAR — é aqui que `expira_em` volta a
-   * ser uma data futura. Como o cron de expiração agora pausa o agente de fato,
-   * a renovação precisa desfazer essa pausa; senão o cliente pagaria e
-   * continuaria fora do ar até alguém religar na mão.
+   * ser uma data futura.
+   *
+   * Empurrar a data já é suficiente para o cliente voltar a operar: o bloqueio
+   * (agente, dashboard e API) é derivado de `expira_em` a cada consulta, não
+   * gravado em coluna. O trabalho extra abaixo é só reconciliação do estado
+   * antigo, de quando o cron desligava o agente escrevendo `agente_ativo`.
    */
   async function handleSalvarEdicao() {
     setSalvandoEdit(true); setErroEdit(''); setSucessoEdit('')
@@ -528,10 +531,11 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
       })
     }
 
-    // Religa o agente APENAS se quem o desligou foi a expiração. O
-    // `.eq('pausa_por_expiracao', true)` faz esse filtro no próprio update, sem
-    // precisar reler o estado: uma pausa manual do admin (suporte, abuso) tem
-    // essa flag em false e sai intacta da renovação.
+    // Reconciliação do modelo antigo: quem foi pausado PELO CRON carrega
+    // `pausa_por_expiracao = true` e teve `agente_ativo` zerado no banco — a
+    // data futura sozinha não desfaz essa escrita. O `.eq(...)` faz o filtro no
+    // próprio update: pausa manual do admin (suporte, abuso) tem a flag em
+    // false e sai intacta da renovação.
     let religado = false
     if (voltouAValer) {
       const { data: religadoRow } = await supabase.from('tenants')
@@ -546,23 +550,35 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
         .select('id')
         .maybeSingle()
       religado = !!religadoRow
+    }
 
-      if (religado) {
-        const { data: { user } } = await supabase.auth.getUser()
-        await supabase.from('admin_logs').insert({
-          admin_user_id: user?.id ?? null,
-          tenant_id: tenant.id,
-          tenant_nome: nomeEdit,
-          acao: 'renovacao',
-          de: 'expirado',
-          para: 'operante',
-          detalhes: { expira_em_anterior: tenant.expira_em, expira_em_novo: novaExpiracao },
-        })
-      }
+    // O log de renovação não pode depender do religamento: agora a renovação
+    // costuma NÃO ter nada para religar (nada foi desligado no banco), e antes
+    // disso o registro simplesmente não era gravado nesses casos. O que importa
+    // no histórico é a passagem de vencido para em dia.
+    if (voltouAValer && estaExpirado(tenant.expira_em)) {
+      const { data: { user } } = await supabase.auth.getUser()
+      await supabase.from('admin_logs').insert({
+        admin_user_id: user?.id ?? null,
+        tenant_id: tenant.id,
+        tenant_nome: nomeEdit,
+        acao: 'renovacao',
+        de: 'expirado',
+        para: 'operante',
+        detalhes: {
+          expira_em_anterior: tenant.expira_em,
+          expira_em_novo: novaExpiracao,
+          pausa_legada_revertida: religado,
+        },
+      })
     }
 
     setSalvandoEdit(false)
-    setSucessoEdit(religado ? 'Salvo. Acesso renovado e agente religado.' : 'Salvo com sucesso!')
+    setSucessoEdit(
+      voltouAValer && estaExpirado(tenant.expira_em)
+        ? 'Salvo. Acesso renovado — atendimento e movimentações liberados.'
+        : 'Salvo com sucesso!'
+    )
     onAtualizado({ ...tenant, nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit, conta_demo: contaDemoEdit })
     setTimeout(() => setSucessoEdit(''), 3500)
   }
@@ -1119,7 +1135,7 @@ export default function AdminClientesPage() {
           <table className="w-full">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Cliente', 'Plano', 'Status', 'Expiração', 'Cadastro', ''].map(h => (
+                {['Cliente', 'Plano', 'Status comercial', 'Expiração', 'Cadastro', ''].map(h => (
                   <th key={h} className="text-left text-xs font-medium px-5 py-3 uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{h}</th>
                 ))}
               </tr>

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AgentConfig, Conversation, Message } from '@/types'
-import { podeOperar } from '@/lib/ciclo-vida'
+import { agenteOperando } from '@/lib/ciclo-vida'
 
 export async function getTenantBySlug(
   supabase: SupabaseClient,
@@ -73,11 +73,10 @@ export async function isAgentPaused(
  *    Antes, "bloquear acesso" na tela admin não tinha nenhum efeito aqui e o
  *    agente seguia respondendo normalmente.
  *
- *  - `expira_em` — plano vencido não atende. O cron `verificar-expiracao` roda
- *    às 09h e é quem pausa de fato; esta checagem é a rede de segurança da
- *    janela entre a virada do vencimento e a execução do cron (e do caso em que
- *    o cron falha). Sem ela, um cliente vencido continuaria sendo atendido por
- *    até um dia inteiro.
+ *  - `expira_em` — plano vencido não atende. Esta checagem é quem PAUSA de
+ *    fato: o cron das 09h só marca `expirado_em` e avisa, sem escrever em
+ *    `agente_ativo`. Assim o corte acontece na virada do vencimento, não no
+ *    horário do cron, e sobrevive a uma execução que falhe.
  */
 export async function isTenantAgentActive(
   supabase: SupabaseClient,
@@ -107,9 +106,12 @@ export async function isTenantAgentActive(
   }
 
   if (!data) return false
-  if (!podeOperar(data)) return false
-  if (data.pausado_por_admin) return false
-  return data.agente_ativo ?? true
+
+  // Uma única regra, compartilhada com a dashboard e com o painel admin: plano
+  // em dia + sem pausa administrativa + o cliente não desligou o agente. Como
+  // o vencimento não é mais gravado em `agente_ativo`, renovar volta a atender
+  // na próxima mensagem, sem nenhum passo manual.
+  return agenteOperando(data)
 }
 
 export async function getAgentConfig(

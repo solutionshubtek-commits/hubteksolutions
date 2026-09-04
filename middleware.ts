@@ -9,7 +9,7 @@ import {
   rateLimitGeral,
   rateLimitResponse,
 } from '@/lib/security/ratelimit'
-import { podeOperar } from '@/lib/ciclo-vida'
+import { motivoBloqueio, podeOperar } from '@/lib/ciclo-vida'
 
 // ─── Helper: IP real do cliente ───────────────────────────────────────────────
 
@@ -37,6 +37,123 @@ const ROTAS_PUBLICAS = ['/trocar-senha', '/auth', '/nova-senha']
 // Destino do operador cujo cliente está com o plano vencido (ou cancelado).
 // Continua exigindo sessão — não é rota pública.
 const ROTA_ACESSO_EXPIRADO = '/acesso-expirado'
+
+// ─── Helper: cliente Supabase com propagação de cookies ───────────────────────
+// Extraído porque agora existem DOIS pontos que precisam de sessão: o controle
+// de acesso das páginas e o gate de escrita das rotas de API.
+
+function criarSupabase(request: NextRequest) {
+  let response = NextResponse.next({ request })
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          )
+          response = NextResponse.next({ request })
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          )
+        },
+      },
+    }
+  )
+
+  return { supabase, getResponse: () => response }
+}
+
+// ─── Gate de escrita: cliente vencido ou cancelado não movimenta nada ─────────
+//
+// O bloqueio precisa morar no BACKEND, não em botões desabilitados: a dashboard
+// roda no browser e esconder o botão não impede a requisição. Até aqui nenhuma
+// rota de API checava o ciclo de vida — o gestor de um cliente vencido seguia
+// enviando mensagem no WhatsApp, movendo lead no CRM e criando agendamento
+// normalmente. Só o agente automático parava.
+//
+// Fica no middleware, e não espalhado por ~30 rotas, porque é regra do produto
+// inteiro: assim uma rota nova já nasce protegida.
+
+const METODOS_DE_ESCRITA = ['POST', 'PUT', 'PATCH', 'DELETE']
+
+// Escritas que continuam liberadas mesmo com o acesso bloqueado. O critério é
+// estreito: só passa o que o usuário precisa para cuidar da PRÓPRIA CONTA —
+// nada que mexa em operação, cliente final ou dado de negócio.
+const ESCRITAS_SEMPRE_LIBERADAS = [
+  '/api/conta',           // trocar a própria senha, presença
+  '/api/notifications',   // marcar aviso como lido
+  '/api/creditos/saldo',  // leitura exposta como POST
+  '/api/admin',           // painel da Hubtek (também liberado por papel, abaixo)
+  '/api/cron',            // execuções internas, autenticadas por CRON_SECRET
+  '/api/webhook',         // Evolution
+  '/api/agent/process-webhook',
+  '/api/billing',
+]
+
+/**
+ * Decide se uma escrita de API pode seguir. `bloqueio` preenchido = barrada.
+ *
+ * Quando libera, devolve a `resposta` que o middleware deve retornar: ler a
+ * sessão pode ROTACIONAR o refresh token, e engolir esses cookies deslogaria o
+ * usuário no meio do uso.
+ *
+ * Só age quando existe sessão de usuário com tenant. Chamadas internas (cron,
+ * webhook, disparo do agente) não carregam cookie de sessão e seguem
+ * autenticadas pelo segredo de cada rota — este gate não as toca.
+ */
+async function bloqueioDeEscrita(
+  request: NextRequest,
+  pathname: string
+): Promise<{ bloqueio: NextResponse | null; resposta: NextResponse | null }> {
+  const liberado = { bloqueio: null, resposta: null }
+
+  if (!METODOS_DE_ESCRITA.includes(request.method)) return liberado
+  if (ESCRITAS_SEMPRE_LIBERADAS.some(r => pathname === r || pathname.startsWith(r + '/'))) return liberado
+
+  const { supabase, getResponse } = criarSupabase(request)
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { bloqueio: null, resposta: getResponse() }
+
+  const { data: userData } = await supabase
+    .from('users')
+    .select('role, tenant_id')
+    .eq('id', user.id)
+    .single()
+
+  // A Hubtek precisa poder operar sobre cliente vencido — é justamente quem
+  // renova, cancela e arquiva.
+  if (!userData?.tenant_id || userData.role === 'admin_hubtek') return { bloqueio: null, resposta: getResponse() }
+
+  const { data: tenant } = await supabase
+    .from('tenants')
+    .select('expira_em, status_comercial')
+    .eq('id', userData.tenant_id)
+    .single()
+
+  // Falha de leitura não bloqueia: derrubar a operação de todos os clientes por
+  // causa de uma consulta instável seria pior do que o furo que isso abre.
+  if (!tenant || podeOperar(tenant)) return { bloqueio: null, resposta: getResponse() }
+
+  const motivo = motivoBloqueio(tenant)
+  const bloqueio = NextResponse.json(
+    {
+      error: motivo === 'expirado'
+        ? 'Sua assinatura está vencida. Renove o plano para voltar a usar a ferramenta.'
+        : 'O acesso desta conta está suspenso. Fale com a Hubtek Solutions.',
+      motivo,
+      bloqueio: 'ciclo_de_vida',
+    },
+    { status: 403 }
+  )
+
+  return { bloqueio, resposta: null }
+}
 
 // ─── Middleware principal ─────────────────────────────────────────────────────
 
@@ -116,8 +233,12 @@ export async function middleware(request: NextRequest) {
       if (!result.allowed) return rateLimitResponse(result)
     }
 
-    // Rotas de API não precisam de verificação de sessão — retorna aqui
-    return NextResponse.next()
+    // Ciclo de vida: cliente vencido ou cancelado não escreve nada.
+    const { bloqueio, resposta } = await bloqueioDeEscrita(request, pathname)
+    if (bloqueio) return bloqueio
+
+    // Leitura de API não exige verificação de sessão aqui — cada rota faz a sua.
+    return resposta ?? NextResponse.next()
   }
 
   // ── 2. Rate limit no login ──────────────────────────────────────────────────
@@ -129,34 +250,13 @@ export async function middleware(request: NextRequest) {
 
   // ── 3. Autenticação e controle de acesso (lógica original preservada) ───────
 
-  let supabaseResponse = NextResponse.next({ request })
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
+  const { supabase, getResponse } = criarSupabase(request)
 
   const { data: { user } } = await supabase.auth.getUser()
 
   // Rotas públicas — checadas ANTES de qualquer redirecionamento por sessão
   if (ROTAS_PUBLICAS.some(r => pathname === r || pathname.startsWith(r + '/'))) {
-    return supabaseResponse
+    return getResponse()
   }
 
   // Login — redireciona se já autenticado
@@ -164,7 +264,7 @@ export async function middleware(request: NextRequest) {
     if (user) {
       return NextResponse.redirect(new URL('/visao-geral', request.url))
     }
-    return supabaseResponse
+    return getResponse()
   }
 
   // Sem sessão → login
@@ -233,7 +333,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/visao-geral', request.url))
   }
 
-  return supabaseResponse
+  return getResponse()
 }
 
 export const config = {

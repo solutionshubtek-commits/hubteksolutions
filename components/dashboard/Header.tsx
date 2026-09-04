@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { LogOut, Sun, Moon, Bell, Pause, Play, AlertTriangle, X, Check, TrendingUp, Camera, Menu } from 'lucide-react'
 import { useSidebar } from '@/contexts/SidebarContext'
 import { StatusAtendimento } from './StatusAtendimento'
-import { diasAteExpirar } from '@/lib/ciclo-vida'
+import { diasAteExpirar, motivoBloqueio } from '@/lib/ciclo-vida'
 
 interface HeaderProps {
   nomeUsuario: string | null
@@ -47,6 +47,7 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
   const [notifications, setNotifications]     = useState<Notification[]>([])
   const [showDropdown, setShowDropdown]       = useState(false)
   const [expiraEm, setExpiraEm]               = useState<string | null>(null)
+  const [statusComercial, setStatusComercial] = useState<string | null>(null)
   const [limiteInfo, setLimiteInfo]           = useState<LimiteInfo | null>(null)
   const [avatarUrl, setAvatarUrl]             = useState<string | null>(avatarUrlProp)
   const [showAvatarMenu, setShowAvatarMenu]   = useState(false)
@@ -59,6 +60,12 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
   const initials = nomeUsuario
     ? nomeUsuario.split(' ').slice(0, 2).map(s => s[0]).join('').toUpperCase()
     : 'U'
+
+  // Estado derivado, a mesma conta que o backend faz. O vencimento não é mais
+  // gravado em `agente_ativo`, então o selo do agente precisa combinar o plano
+  // com a preferência do cliente — senão a tela mostraria "Ativo" para um
+  // agente que o gate já está recusando.
+  const bloqueio = motivoBloqueio({ status_comercial: statusComercial, expira_em: expiraEm })
 
   // O ramo `expirado` faltava: quando a data passava, `diff` ficava negativo,
   // caía no `return null` e o banner simplesmente sumia. O cliente vencido era
@@ -83,11 +90,12 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
       if (!userData?.tenant_id) return
       setTenantId(userData.tenant_id)
       const { data: tenantData } = await supabase.from('tenants')
-        .select('agente_ativo, pausado_por_admin, expira_em').eq('id', userData.tenant_id).single()
+        .select('agente_ativo, pausado_por_admin, expira_em, status_comercial').eq('id', userData.tenant_id).single()
       if (tenantData) {
         setAgentAtivo(tenantData.agente_ativo ?? true)
         setPausadoPorAdmin(tenantData.pausado_por_admin ?? false)
         setExpiraEm(tenantData.expira_em ?? null)
+        setStatusComercial(tenantData.status_comercial ?? null)
       }
       try {
         const res = await fetch('/api/notifications/limite-conversas', { method: 'POST' })
@@ -164,7 +172,7 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
   }
 
   async function handleToggleAgent() {
-    if (pausadoPorAdmin || !tenantId || toggling) return
+    if (bloqueio || pausadoPorAdmin || !tenantId || toggling) return
     setToggling(true)
     const novoEstado = !agentAtivo
     try {
@@ -315,14 +323,21 @@ export function Header({ nomeUsuario, avatarUrl: avatarUrlProp }: HeaderProps) {
         {/* ── Lado direito ── */}
         <div className="flex items-center gap-2 md:gap-3">
 
-          {pausadoPorAdmin && (
+          {bloqueio && (
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-500/10 border border-red-500/40 text-red-400">
+              <AlertTriangle size={11} />
+              <span>{bloqueio === 'expirado' ? 'Agente parado — plano vencido' : 'Agente parado — acesso suspenso'}</span>
+            </div>
+          )}
+
+          {!bloqueio && pausadoPorAdmin && (
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-500/10 border border-red-500/40 text-red-400">
               <AlertTriangle size={11} />
               <span>Agente suspenso</span>
             </div>
           )}
 
-          {!pausadoPorAdmin && (
+          {!bloqueio && !pausadoPorAdmin && (
             <button
               onClick={handleToggleAgent}
               disabled={toggling}

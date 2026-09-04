@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { Resend } from 'resend'
-import { estaExpirado, statusComercialDe } from '@/lib/ciclo-vida'
+import { estaExpirado, podeOperar, statusComercialDe } from '@/lib/ciclo-vida'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -27,14 +27,35 @@ const emailBase = (titulo: string, mensagem: string, cta: string) => `
 /**
  * EIXO 2 — aplica de fato o vencimento do plano.
  *
- * Até aqui este cron só avisava (D-7 e D-1) e não fazia nada no dia D: o plano
- * vencia, o banner do Header sumia (ele só cobre diff entre 0 e 7) e o agente
- * seguia atendendo normalmente, porque `isTenantAgentActive` nunca leu
- * `expira_em`. Na prática não existia expiração — existia aviso de expiração.
+ * Até certo ponto este cron só avisava (D-7 e D-1) e não fazia nada no dia D: o
+ * plano vencia, o banner do Header sumia (ele só cobria diff entre 0 e 7) e o
+ * agente seguia atendendo, porque `isTenantAgentActive` nunca lia `expira_em`.
+ * Na prática não existia expiração — existia aviso de expiração.
  *
- * A pausa é reversível e a renovação a desfaz (ver handleSalvarEdicao em
- * admin/clientes). Expirado NÃO é cancelado: `status_comercial` não é tocado
- * aqui, o cliente continua visível e o gestor continua com acesso.
+ * O que este cron NÃO faz mais: pausar o agente escrevendo `agente_ativo`.
+ *
+ * Isso parecia certo e criou o bug que o cliente "Renovar Camas" expôs. A pausa
+ * comercial e a preferência do cliente disputavam a mesma coluna, então:
+ *
+ *  - quem já estava com o agente desligado por escolha própria não recebia
+ *    `pausa_por_expiracao = true` (para não roubar a autoria da pausa), e a
+ *    renovação — que só religa quem tem essa marca — devolvia o cliente
+ *    renovado com o agente mudo;
+ *  - quem recebia a marca dependia de um segundo evento (o admin salvar a
+ *    renovação) para voltar a atender. Se a renovação fosse feita por outro
+ *    caminho, o agente ficava desligado com o plano em dia.
+ *
+ * Agora o desligamento é DERIVADO, não persistido: `agenteOperando` combina o
+ * plano com a preferência do cliente a cada consulta, e o gate do agente
+ * (`isTenantAgentActive`) já aplica `podeOperar`. Vencer desliga na hora;
+ * renovar religa na hora, sem depender de ninguém lembrar de reverter nada.
+ *
+ * O cron ficou com o que só ele pode fazer: marcar `expirado_em`, avisar o
+ * cliente e a Hubtek, registrar no log — e reconciliar as pausas gravadas pelo
+ * comportamento antigo (ver `reconciliarPausasLegadas`).
+ *
+ * Expirado NÃO é cancelado: `status_comercial` não é tocado aqui, o cliente
+ * continua visível e o gestor continua com acesso para renovar.
  *
  * Idempotência: `expirado_em` funciona como marca de processamento. O update
  * carrega `.is('expirado_em', null)` para que duas execuções simultâneas não
@@ -43,7 +64,7 @@ const emailBase = (titulo: string, mensagem: string, cta: string) => `
 async function processarExpirados(hoje: Date): Promise<number> {
   const { data: candidatos } = await supabase
     .from('tenants')
-    .select('id, nome, expira_em, status_comercial, agente_ativo, pausado_por_admin')
+    .select('id, nome, expira_em, status_comercial, agente_ativo')
     .not('expira_em', 'is', null)
     .lt('expira_em', hoje.toISOString())
     .is('expirado_em', null)
@@ -63,21 +84,12 @@ async function processarExpirados(hoje: Date): Promise<number> {
     // por expiração só poluiria o log e o sininho.
     if (statusComercialDe(tenant.status_comercial) !== 'ativo') continue
 
-    // Se o agente JÁ estava desligado por outro motivo, não assumimos a autoria
-    // da pausa — senão a renovação religaria por cima de uma decisão manual.
-    const jaEstavaPausado = tenant.agente_ativo === false || tenant.pausado_por_admin === true
-
+    // `agente_ativo` NÃO é tocado: o agente já para por `podeOperar`, e escrever
+    // aqui destruiria a preferência do cliente (ver docstring acima). A única
+    // coisa gravada é a marca de processamento.
     const { data: atualizado } = await supabase
       .from('tenants')
-      .update({
-        expirado_em: agora,
-        ...(jaEstavaPausado ? {} : {
-          agente_ativo: false,
-          pausado_por_admin: true,
-          agente_pausado_em: agora,
-          pausa_por_expiracao: true,
-        }),
-      })
+      .update({ expirado_em: agora })
       .eq('id', tenant.id)
       .is('expirado_em', null)
       .select('id')
@@ -121,7 +133,7 @@ async function processarExpirados(hoje: Date): Promise<number> {
         user_id: ADMIN_USER_ID,
         tipo: 'expiracao_vencida',
         titulo: `Acesso expirado — ${tenant.nome}`,
-        mensagem: `O plano de ${tenant.nome} venceu${jaEstavaPausado ? '' : ' e o agente foi pausado automaticamente'}.`,
+        mensagem: `O plano de ${tenant.nome} venceu. O atendimento automático e as movimentações na dashboard estão bloqueados até a renovação.`,
       })
     }
 
@@ -134,8 +146,8 @@ async function processarExpirados(hoje: Date): Promise<number> {
       automatico: true,
       detalhes: {
         expira_em: tenant.expira_em,
-        agente_pausado_agora: !jaEstavaPausado,
-        ja_estava_pausado: jaEstavaPausado,
+        // O agente para por estado derivado; nada foi gravado em `agente_ativo`.
+        agente_preferencia_cliente: tenant.agente_ativo ?? true,
       },
     })
 
@@ -143,6 +155,71 @@ async function processarExpirados(hoje: Date): Promise<number> {
   }
 
   return expirados
+}
+
+/**
+ * Caminho de VOLTA: quem renovou volta a operar sem depender de ninguém.
+ *
+ * Duas coisas são desfeitas aqui, para todo tenant que estava marcado como
+ * expirado e hoje pode operar de novo:
+ *
+ *  1. `expirado_em` — é a marca de idempotência de `processarExpirados`.
+ *     Enquanto ela ficar preenchida, um vencimento FUTURO daquele tenant
+ *     nunca mais seria processado: o cliente venceria de novo em silêncio,
+ *     sem e-mail e sem aviso. A tela admin já limpa a marca ao renovar; esta
+ *     é a rede para toda renovação que não passe por lá.
+ *
+ *  2. `pausa_por_expiracao` — marca do modelo antigo, quando o cron desligava
+ *     o agente escrevendo `agente_ativo = false`. A data futura sozinha não
+ *     desfaz uma escrita antiga: sem isto, um cliente renovado continuaria
+ *     com o agente mudo. Some naturalmente quando não sobrar nenhuma linha
+ *     marcada — pausa manual do admin tem a flag em false e não é tocada.
+ */
+async function reconciliarRenovados(): Promise<number> {
+  const { data: marcados } = await supabase
+    .from('tenants')
+    .select('id, nome, expira_em, status_comercial, pausa_por_expiracao')
+    .or('expirado_em.not.is.null,pausa_por_expiracao.is.true')
+
+  if (!marcados || marcados.length === 0) return 0
+
+  let religados = 0
+
+  for (const tenant of marcados) {
+    if (!podeOperar(tenant)) continue
+
+    const pausaNossa = tenant.pausa_por_expiracao === true
+
+    await supabase
+      .from('tenants')
+      .update({
+        expirado_em: null,
+        ...(pausaNossa ? {
+          agente_ativo: true,
+          pausado_por_admin: false,
+          pausa_por_expiracao: false,
+          agente_pausado_em: null,
+        } : {}),
+      })
+      .eq('id', tenant.id)
+
+    await supabase.from('admin_logs').insert({
+      tenant_id: tenant.id,
+      tenant_nome: tenant.nome,
+      acao: 'expiracao_revertida',
+      de: 'expirado',
+      para: 'operante',
+      automatico: true,
+      detalhes: {
+        expira_em: tenant.expira_em,
+        pausa_legada_revertida: pausaNossa,
+      },
+    })
+
+    religados++
+  }
+
+  return religados
 }
 
 export async function GET(request: Request) {
@@ -164,6 +241,10 @@ export async function GET(request: Request) {
   // ninguém vencendo em 7/1 dias — e os vencidos não podem depender disso.
   const expirados = await processarExpirados(hoje)
 
+  // E o caminho de volta: quem renovou volta a atender sem depender de alguém
+  // lembrar de reverter a pausa na mão.
+  const religados = await reconciliarRenovados()
+
   // Busca tenants que vencem em 7 dias ou 1 dia
   const { data: tenants } = await supabase
     .from('tenants')
@@ -174,7 +255,7 @@ export async function GET(request: Request) {
     )
 
   if (!tenants || tenants.length === 0) {
-    return NextResponse.json({ ok: true, processados: 0, expirados })
+    return NextResponse.json({ ok: true, processados: 0, expirados, religados })
   }
 
   let processados = 0
@@ -267,5 +348,5 @@ export async function GET(request: Request) {
     processados++
   }
 
-  return NextResponse.json({ ok: true, processados, expirados })
+  return NextResponse.json({ ok: true, processados, expirados, religados })
 }

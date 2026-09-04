@@ -93,3 +93,51 @@ export function elegivelParaExpurgoEm(arquivadoEm: string): Date {
   d.setFullYear(d.getFullYear() + RETENCAO_ANOS)
   return d
 }
+
+/**
+ * Por que o acesso está bloqueado — ou `null` quando o cliente pode operar.
+ *
+ * Existe para que as telas e as rotas de API digam ao usuário a MESMA coisa
+ * que `podeOperar` decidiu, em vez de cada uma reconstruir o motivo (e errar a
+ * ordem de precedência: cancelado vence expirado, porque um cliente cancelado
+ * cujo plano também venceu não deve ser convidado a renovar).
+ */
+export type MotivoBloqueio = 'cancelado' | 'arquivado' | 'expirado'
+
+export function motivoBloqueio(tenant: EstadoTenant): MotivoBloqueio | null {
+  const comercial = statusComercialDe(tenant.status_comercial)
+  if (comercial !== 'ativo') return comercial
+  if (estaExpirado(tenant.expira_em)) return 'expirado'
+  return null
+}
+
+export interface EstadoAgente extends EstadoTenant {
+  agente_ativo?: boolean | null
+  pausado_por_admin?: boolean | null
+}
+
+/**
+ * O agente está de fato atendendo? Estado DERIVADO, nunca persistido.
+ *
+ * Esta é a mudança central do ciclo de vida: o vencimento do plano não escreve
+ * mais nada em `agente_ativo`. Ele não precisa — o agente para porque
+ * `podeOperar` é falso, e volta sozinho no instante em que o plano é renovado.
+ *
+ * Antes, o cron pausava o agente escrevendo `agente_ativo = false`. Isso criava
+ * dois problemas que apareceram em produção:
+ *
+ *  1. Quem já estava com o agente desligado por escolha própria não tinha a
+ *     pausa marcada como "por expiração", e a renovação (que só religa
+ *     `pausa_por_expiracao = true`) deixava o cliente renovado com o agente
+ *     mudo, sem ninguém entender por quê.
+ *  2. A pausa comercial e a preferência do cliente disputavam a mesma coluna,
+ *     então religar uma sempre corria o risco de apagar a outra.
+ *
+ * Com o estado derivado, `agente_ativo` volta a significar só uma coisa — o que
+ * o CLIENTE escolheu — e o plano é avaliado por cima, a cada consulta.
+ */
+export function agenteOperando(tenant: EstadoAgente): boolean {
+  if (!podeOperar(tenant)) return false
+  if (tenant.pausado_por_admin) return false
+  return tenant.agente_ativo ?? true
+}
