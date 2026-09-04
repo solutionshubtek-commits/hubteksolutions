@@ -21,6 +21,8 @@ export interface ResultadoFechamento {
   /** Caixa: valor dos lotes ativados no mês. Não entra na margem. */
   creditos_vendidos_valor: number
   valor_cobrado: number
+  /** Por que a mensalidade nao virou receita, ou null quando o ciclo foi faturado. */
+  motivo_sem_receita: MotivoSemReceita | null
   margem: number
 }
 
@@ -110,6 +112,63 @@ function intervaloDoMes(mesRef: string): { inicio: string; fim: string } {
   }
 }
 
+export type MotivoSemReceita = 'conta_demo' | 'cortesia' | 'sem_acesso'
+
+export interface EstadoFaturamento {
+  conta_demo?: boolean | null
+  faturamento_cortesia_ate?: string | null
+  status_comercial?: string | null
+  expira_em?: string | null
+}
+
+/**
+ * A mensalidade daquele ciclo vira receita? E, se não, por quê.
+ *
+ * Existe porque o fechamento tratava mensalidade CONTRATADA como receita
+ * REALIZADA. A margem estimada somava R$ 3.500/mês da conta demo da própria
+ * Hubtek e os meses de bônus de implantação de um cliente — dinheiro que nunca
+ * entrou. O custo continuava certo; a receita, não.
+ *
+ * A decisão usa o estado do cliente NAQUELE mês, não o de hoje: quem pagou de
+ * janeiro a junho e venceu em julho mantém a receita de jan-jun. Reavaliar o
+ * passado pelo presente faria a margem histórica mudar sozinha a cada
+ * vencimento e a cada renovação.
+ *
+ * Precedência: conta demo (nunca fatura) > cortesia (bônus combinado) > sem
+ * acesso (cancelado, ou vencido durante o mês inteiro).
+ */
+export function motivoSemReceitaDoCiclo(
+  tenant: EstadoFaturamento,
+  mesRef: string
+): MotivoSemReceita | null {
+  if (tenant.conta_demo === true) return 'conta_demo'
+
+  const [ano, mes] = mesRef.split('-').map(Number)
+  const inicioDoMes = new Date(Date.UTC(ano, mes - 1, 1))
+
+  // O ciclo está na cortesia quando o mês COMEÇA dentro dela. Um bônus que
+  // termina no dia 20 cobre o mês inteiro: cobrar 10 dias quebrados não é o
+  // que se combina com o cliente na implantação.
+  if (tenant.faturamento_cortesia_ate) {
+    const limite = new Date(`${tenant.faturamento_cortesia_ate}T23:59:59Z`)
+    if (inicioDoMes.getTime() <= limite.getTime()) return 'cortesia'
+  }
+
+  // Cancelado/arquivado: não há o que cobrar do mês.
+  if (tenant.status_comercial === 'cancelado' || tenant.status_comercial === 'arquivado') {
+    return 'sem_acesso'
+  }
+
+  // Vencido ANTES de o mês começar — passou o mês inteiro sem acesso. Vencer no
+  // meio do mês continua faturando: o cliente usou parte do período, e cobrar
+  // proporcional é decisão comercial, não do fechamento.
+  if (tenant.expira_em && new Date(tenant.expira_em).getTime() < inicioDoMes.getTime()) {
+    return 'sem_acesso'
+  }
+
+  return null
+}
+
 /**
  * Fecha o ciclo de um tenant num mês de referência.
  *
@@ -137,7 +196,7 @@ export async function fecharCicloDoTenant(
 
   const { data: tenant } = await supabase
     .from('tenants')
-    .select('nome, plano')
+    .select('nome, plano, conta_demo, faturamento_cortesia_ate, status_comercial, expira_em')
     .eq('id', tenantId)
     .single()
 
@@ -188,11 +247,25 @@ export async function fecharCicloDoTenant(
 
   const creditos = await receitaCreditos(supabase, tenantId, mesRef, inicio, fim)
 
+  // Reconhecimento de receita. Quando o ciclo não é faturado, as receitas zeram
+  // e ele passa a mostrar a margem NEGATIVA que realmente teve — conversas,
+  // tokens e custo continuam gravados, porque a operação existiu e custou.
+  //
+  // Crédito extra é comprado à parte, então em cortesia ou em mês sem acesso ele
+  // CONTINUA sendo receita: o cliente pagou por aquilo. Só a conta demo zera
+  // tudo, porque ali nem a compra é real.
+  const motivoSemReceita = motivoSemReceitaDoCiclo(tenant ?? {}, mesRef)
+  const semReceita = motivoSemReceita !== null
+
+  const receitaPlano   = semReceita ? 0 : valorPlano
+  const receitaInst    = semReceita ? 0 : receitaInstExtras
+  const receitaCredito = motivoSemReceita === 'conta_demo' ? 0 : creditos.consumida
+
   // A receita de crédito entra pela COMPETÊNCIA (consumo), não pela venda: o
   // custo de IA de um atendimento pago com crédito cai no mês em que ele
   // acontece, e usar o valor da venda faria o mês da compra parecer ótimo e o
   // mês do uso parecer prejuízo, sem nada ter mudado na operação.
-  const margem = valorPlano + receitaInstExtras + creditos.consumida
+  const margem = receitaPlano + receitaInst + receitaCredito
     - custoBrl - custoFixoRateado
 
   const linha = {
@@ -208,12 +281,13 @@ export async function fecharCicloDoTenant(
     plano:                planoKey,
     valor_plano:          valorPlano,
     instancias_extras:    instanciasExtras,
-    receita_inst_extras:  receitaInstExtras,
+    receita_inst_extras:  receitaInst,
     atendimentos_credito:    creditos.atendimentos,
-    receita_creditos:        creditos.consumida,
+    receita_creditos:        receitaCredito,
     creditos_vendidos_qtd:   creditos.vendidaQtd,
     creditos_vendidos_valor: creditos.vendidaValor,
-    valor_cobrado:        valorPlano,
+    valor_cobrado:        receitaPlano,
+    motivo_sem_receita:   motivoSemReceita,
     fechado_por:          opcoes.usuarioId ?? null,
     fechado_automatico:   opcoes.automatico ?? false,
     fechado_em:           new Date().toISOString(),
@@ -237,11 +311,12 @@ export async function fecharCicloDoTenant(
     custo_fixo_rateado: custoFixoRateado,
     valor_plano: valorPlano,
     instancias_extras: instanciasExtras,
-    receita_inst_extras: receitaInstExtras,
+    receita_inst_extras: receitaInst,
     atendimentos_credito: creditos.atendimentos,
-    receita_creditos: creditos.consumida,
+    receita_creditos: receitaCredito,
     creditos_vendidos_valor: creditos.vendidaValor,
-    valor_cobrado: valorPlano,
+    valor_cobrado: receitaPlano,
+    motivo_sem_receita: motivoSemReceita,
     margem,
   }
 }

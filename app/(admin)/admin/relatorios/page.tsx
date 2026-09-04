@@ -51,6 +51,25 @@ interface CicloFechado {
   receita_creditos?: number | null
   creditos_vendidos_qtd?: number | null
   creditos_vendidos_valor?: number | null
+  // Coluna da migration 016. Diz por que a mensalidade daquele mês não virou
+  // receita. `null`/ausente = ciclo faturado normalmente.
+  motivo_sem_receita?: MotivoSemReceita | null
+}
+
+type MotivoSemReceita = 'conta_demo' | 'cortesia' | 'sem_acesso'
+
+/**
+ * Rótulo e cor de um ciclo que não gerou receita.
+ *
+ * O selo não é decoração: sem ele, uma linha com "Plano cobrado R$ 0,00" e
+ * margem negativa parece defeito, e a reação natural seria re-fechar o ciclo
+ * para "corrigir" — o que não corrigiria nada, porque o fechamento chegaria
+ * exatamente ao mesmo resultado.
+ */
+const MOTIVO_SEM_RECEITA: Record<MotivoSemReceita, { label: string; cor: string }> = {
+  conta_demo: { label: 'Conta demo',  cor: '#818CF8' },
+  cortesia:   { label: 'Cortesia',    cor: '#F59E0B' },
+  sem_acesso: { label: 'Sem acesso',  cor: '#71717A' },
 }
 
 // Instâncias extras congeladas no fechamento; para ciclos antigos, cai na
@@ -61,6 +80,11 @@ function instExtrasDoCiclo(c: CicloFechado, instanciasHoje: number): number {
 }
 
 function receitaInstDoCiclo(c: CicloFechado, instanciasHoje: number): number {
+  // Ciclo não faturado não tem receita nenhuma — nem a de instância extra. Sem
+  // esta guarda, o fallback abaixo (que estima pela contagem de HOJE, para
+  // ciclos anteriores à migration 008) devolveria receita para um mês de
+  // cortesia ou de conta demo.
+  if (c.motivo_sem_receita) return 0
   return c.receita_inst_extras ?? instExtrasDoCiclo(c, instanciasHoje) * CUSTO_INSTANCIA_EXTRA
 }
 
@@ -116,8 +140,11 @@ function mesRefShort(mesRef: string) {
  * aparece em coluna própria, sem afetar a margem.
  */
 function calcMargem(c: CicloFechado, instExtras: number) {
+  // `valor_cobrado` já chega zerado do fechamento quando o ciclo não é
+  // faturado (conta demo, cortesia, mês sem acesso), então a margem cai
+  // sozinha para o resultado real: só custo.
   const receitaPlano   = Number(c.valor_cobrado ?? 0)
-  const receitaInst    = instExtras * CUSTO_INSTANCIA_EXTRA
+  const receitaInst    = c.motivo_sem_receita ? 0 : instExtras * CUSTO_INSTANCIA_EXTRA
   const receitaCredito = Number(c.receita_creditos ?? 0)
   const custoAPI       = Number(c.custo_brl ?? 0)
   const custoFixo      = Number(c.custo_fixo_rateado ?? 0)
@@ -198,6 +225,14 @@ export default function RelatoriosPage() {
   // 008 não têm o campo e entram como 0 — o custo fixo daquele mês não foi
   // registrado e não há como reconstituí-lo.
   const totalCustoFixo = ciclos.reduce((s, c) => s + Number(c.custo_fixo_rateado ?? 0), 0)
+
+  // Mensalidade contratada dos ciclos que NÃO foram faturados. Não entra na
+  // margem — existe para explicar a diferença entre o que o contrato diz e o
+  // que entrou, que era justamente a origem da margem inflada de R$ 6,6 mil.
+  const totalNaoFaturado = ciclos.reduce(
+    (s, c) => s + (c.motivo_sem_receita ? Number(c.valor_plano ?? 0) : 0), 0
+  )
+  const ciclosNaoFaturados = ciclos.filter(c => c.motivo_sem_receita).length
 
   // Margem = receita (plano + instâncias extras) - custo de API - custo fixo.
   // O custo fixo entrava zerado aqui porque não existia no fechamento.
@@ -450,7 +485,9 @@ export default function RelatoriosPage() {
         <KpiCard icon={<TrendingUp size={18} />}    label="Margem estimada"
           value={fmtBRL(totalMargem)}
           accent={totalMargem >= 0 ? '#10B981' : '#EF4444'}
-          sub="plano + inst. extras − custo API" />
+          sub={ciclosNaoFaturados > 0
+            ? `${fmtBRL(totalNaoFaturado)} não faturado em ${ciclosNaoFaturados} ciclo(s)`
+            : "plano + inst. extras − custo API"} />
       </div>
 
       {/* Resumo consolidado do período */}
@@ -468,7 +505,12 @@ export default function RelatoriosPage() {
             <BalizCard label="Conversas iniciadas" value={String(totalConversas)}      sub="no período"             cor="#6366F1" />
             <BalizCard label="Tokens consumidos"   value={fmtTokens(totalTokens)}     sub="no período"             cor="#8B5CF6" />
             <BalizCard label="Custo API"            value={fmtBRL(totalCustoAPI)}       sub="custo operacional"      cor="#10A37F" />
-            <BalizCard label="Receita planos"       value={fmtBRL(totalCobrado)}        sub="valor cobrado"          cor="#10B981" />
+            <BalizCard
+              label="Receita planos"
+              value={fmtBRL(totalCobrado)}
+              sub={ciclosNaoFaturados > 0 ? `exclui ${fmtBRL(totalNaoFaturado)} não faturado` : "valor cobrado"}
+              cor="#10B981"
+            />
             <BalizCard
               label="Inst. extras"
               value={totalReceitaInstExtras > 0 ? fmtBRL(totalReceitaInstExtras) : '—'}
@@ -482,6 +524,16 @@ export default function RelatoriosPage() {
               cor={totalMargem >= 0 ? '#10B981' : '#EF4444'}
             />
           </div>
+          {/* Sem esta nota, a diferença entre a mensalidade dos contratos e a
+              receita do período vira desconfiança do relatório. */}
+          {ciclosNaoFaturados > 0 && (
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              {ciclosNaoFaturados} ciclo(s) do período não geraram receita ({fmtBRL(totalNaoFaturado)} de
+              mensalidade contratada) — conta demo, cortesia de implantação ou cliente sem acesso no mês.
+              Conversas, tokens e custo de API desses ciclos continuam contabilizados acima.
+            </p>
+          )}
+
           {totalInstanciasExtras > 0 && (
             <div className="flex items-center gap-2 text-xs pt-1" style={{ color: 'var(--text-secondary)' }}>
               <span className="w-2 h-2 rounded-full inline-block" style={{ background: '#F59E0B' }} />
@@ -554,7 +606,19 @@ export default function RelatoriosPage() {
                       <td className="px-4 py-3 text-right" style={{ color: '#818CF8' }}>{c.conversas}</td>
                       <td className="px-4 py-3 text-right" style={{ color: 'var(--text-secondary)' }}>{fmtTokens(Number(c.tokens))}</td>
                       <td className="px-4 py-3 text-right" style={{ color: '#EF4444' }}>{fmtBRL(Number(c.custo_brl))}</td>
-                      <td className="px-4 py-3 text-right" style={{ color: '#10B981' }}>{fmtBRL(Number(c.valor_cobrado))}</td>
+                      <td className="px-4 py-3 text-right">
+                        {c.motivo_sem_receita ? (
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
+                            style={{
+                              background: MOTIVO_SEM_RECEITA[c.motivo_sem_receita].cor + '18',
+                              color: MOTIVO_SEM_RECEITA[c.motivo_sem_receita].cor,
+                            }}>
+                            {MOTIVO_SEM_RECEITA[c.motivo_sem_receita].label}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#10B981' }}>{fmtBRL(Number(c.valor_cobrado))}</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         {instExtras > 0 ? (
                           <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: '#F59E0B18', color: '#F59E0B' }}>

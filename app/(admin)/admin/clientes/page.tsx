@@ -17,6 +17,9 @@ interface Tenant {
   // Eixo 1 — ciclo de vida comercial. Separado de `status`/`expira_em` de
   // propósito: um cliente pode estar comercialmente ativo E com o plano vencido.
   status_comercial: string | null
+  // Bônus de implantação / período de teste: enquanto o ciclo começar até esta
+  // data, a mensalidade não é reconhecida como receita no fechamento.
+  faturamento_cortesia_ate?: string | null
   cancelado_em: string | null; arquivado_em: string | null; conta_demo: boolean | null
 }
 interface TenantInstance {
@@ -360,6 +363,7 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
   const [expiraEdit, setExpiraEdit] = useState(tenant.expira_em?.slice(0, 10) ?? '')
   const [planoEdit, setPlanoEdit] = useState(tenant.plano ?? 'essencial')
   const [contaDemoEdit, setContaDemoEdit] = useState(tenant.conta_demo === true)
+  const [cortesiaFatEdit, setCortesiaFatEdit] = useState(tenant.faturamento_cortesia_ate?.slice(0, 10) ?? '')
   const [salvandoEdit, setSalvandoEdit] = useState(false)
   const [erroEdit, setErroEdit] = useState('')
   const [sucessoEdit, setSucessoEdit] = useState('')
@@ -508,6 +512,7 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
       .update({
         nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit,
         conta_demo: contaDemoEdit,
+        faturamento_cortesia_ate: cortesiaFatEdit || null,
         // Limpa a marca de processamento do cron, senão um vencimento futuro
         // nunca mais seria aplicado neste tenant.
         ...(voltouAValer ? { expirado_em: null } : {}),
@@ -579,7 +584,11 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
         ? 'Salvo. Acesso renovado — atendimento e movimentações liberados.'
         : 'Salvo com sucesso!'
     )
-    onAtualizado({ ...tenant, nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit, conta_demo: contaDemoEdit })
+    onAtualizado({
+      ...tenant,
+      nome: nomeEdit, expira_em: novaExpiracao, plano: planoEdit,
+      conta_demo: contaDemoEdit, faturamento_cortesia_ate: cortesiaFatEdit || null,
+    })
     setTimeout(() => setSucessoEdit(''), 3500)
   }
 
@@ -879,6 +888,23 @@ function SlideOver({ tenant, onClose, onAtualizado, onRecarregar }: {
                 <input type="date" value={expiraEdit} onChange={(e) => setExpiraEdit(e.target.value)}
                   className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none [color-scheme:dark]" style={inputStyle} />
               </div>
+              {/* Cortesia de FATURAMENTO — não confundir com a cortesia de
+                  recursos (`cortesia_recursos_ate`), que libera funcionalidade
+                  acima do plano e nada tem a ver com cobrança. Existe cliente
+                  pagante com recurso liberado, e existe cliente em bônus de
+                  implantação usando exatamente o que o plano dele dá. */}
+              <div>
+                <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  Cortesia de faturamento até
+                </label>
+                <input type="date" value={cortesiaFatEdit} onChange={(e) => setCortesiaFatEdit(e.target.value)}
+                  className="w-full rounded-lg px-4 py-2.5 text-sm focus:outline-none [color-scheme:dark]" style={inputStyle} />
+                <p className="text-xs mt-1.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  Bônus de implantação ou período de teste. Os ciclos que começarem até esta data
+                  entram no relatório com conversas, tokens e custo normais, mas sem receita de
+                  mensalidade. Deixe em branco para cobrar desde o primeiro mês.
+                </p>
+              </div>
               <div>
                 <label className="text-sm font-medium block mb-1.5" style={{ color: 'var(--text-secondary)' }}>Plano contratado</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -1031,7 +1057,7 @@ export default function AdminClientesPage() {
   const fetchTenants = useCallback(async () => {
     const supabase = createClient()
     const { data } = await supabase.from('tenants')
-      .select('id, nome, slug, status, expira_em, criado_em, plano, status_comercial, cancelado_em, arquivado_em, conta_demo')
+      .select('id, nome, slug, status, expira_em, criado_em, plano, status_comercial, cancelado_em, arquivado_em, conta_demo, faturamento_cortesia_ate')
       .order('criado_em', { ascending: false })
     setTenants((data ?? []) as Tenant[])
     setCarregando(false)
