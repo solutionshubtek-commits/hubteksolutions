@@ -141,3 +141,67 @@ export function agenteOperando(tenant: EstadoAgente): boolean {
   if (tenant.pausado_por_admin) return false
   return tenant.agente_ativo ?? true
 }
+
+// ─── Reconhecimento de receita ──────────────────────────────────────────────
+//
+// Terceiro eixo, e o mais recente: os dois primeiros dizem se o cliente PODE
+// operar; este diz se aquele mês vira dinheiro. São independentes — uma conta
+// demo opera normalmente e nunca fatura; um cliente vencido não opera e mesmo
+// assim pode ter faturado o mês em que venceu.
+
+export type MotivoSemReceita = 'conta_demo' | 'cortesia' | 'sem_acesso'
+
+export interface EstadoFaturamento {
+  conta_demo?: boolean | null
+  faturamento_cortesia_ate?: string | null
+  status_comercial?: string | null
+  expira_em?: string | null
+}
+
+/**
+ * A mensalidade daquele ciclo vira receita? E, se não, por quê.
+ *
+ * Existe porque o fechamento tratava mensalidade CONTRATADA como receita
+ * REALIZADA. A margem estimada somava R$ 3.500/mês da conta demo da própria
+ * Hubtek e os meses de bônus de implantação de um cliente — dinheiro que nunca
+ * entrou. O custo continuava certo; a receita, não.
+ *
+ * A decisão usa o estado do cliente NAQUELE mês, não o de hoje: quem pagou de
+ * janeiro a junho e venceu em julho mantém a receita de jan-jun. Reavaliar o
+ * passado pelo presente faria a margem histórica mudar sozinha a cada
+ * vencimento e a cada renovação.
+ *
+ * Precedência: conta demo (nunca fatura) > cortesia (bônus combinado) > sem
+ * acesso (cancelado, ou vencido durante o mês inteiro).
+ */
+export function motivoSemReceitaDoCiclo(
+  tenant: EstadoFaturamento,
+  mesRef: string
+): MotivoSemReceita | null {
+  if (tenant.conta_demo === true) return 'conta_demo'
+
+  const [ano, mes] = mesRef.split('-').map(Number)
+  const inicioDoMes = new Date(Date.UTC(ano, mes - 1, 1))
+
+  // O ciclo está na cortesia quando o mês COMEÇA dentro dela. Um bônus que
+  // termina no dia 20 cobre o mês inteiro: cobrar 10 dias quebrados não é o
+  // que se combina com o cliente na implantação.
+  if (tenant.faturamento_cortesia_ate) {
+    const limite = new Date(`${tenant.faturamento_cortesia_ate}T23:59:59Z`)
+    if (inicioDoMes.getTime() <= limite.getTime()) return 'cortesia'
+  }
+
+  // Cancelado/arquivado: não há o que cobrar do mês.
+  if (tenant.status_comercial === 'cancelado' || tenant.status_comercial === 'arquivado') {
+    return 'sem_acesso'
+  }
+
+  // Vencido ANTES de o mês começar — passou o mês inteiro sem acesso. Vencer no
+  // meio do mês continua faturando: o cliente usou parte do período, e cobrar
+  // proporcional é decisão comercial, não do fechamento.
+  if (tenant.expira_em && new Date(tenant.expira_em).getTime() < inicioDoMes.getTime()) {
+    return 'sem_acesso'
+  }
+
+  return null
+}

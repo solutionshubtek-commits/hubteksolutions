@@ -1,5 +1,12 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { PLANOS_MAP, planoInstanciasInclusas } from '@/lib/planos'
+import { motivoSemReceitaDoCiclo, type MotivoSemReceita } from '@/lib/ciclo-vida'
+
+// A regra de reconhecimento de receita mora em `lib/ciclo-vida`, junto do
+// resto do ciclo de vida do cliente e livre de qualquer dependência de
+// servidor: as telas admin precisam dela no browser, e importar este módulo
+// de billing lá arrastaria o fechamento inteiro para o bundle do cliente.
+export { motivoSemReceitaDoCiclo, type MotivoSemReceita, type EstadoFaturamento } from '@/lib/ciclo-vida'
 
 export const CUSTO_INSTANCIA_EXTRA = 67.0
 
@@ -112,63 +119,6 @@ function intervaloDoMes(mesRef: string): { inicio: string; fim: string } {
   }
 }
 
-export type MotivoSemReceita = 'conta_demo' | 'cortesia' | 'sem_acesso'
-
-export interface EstadoFaturamento {
-  conta_demo?: boolean | null
-  faturamento_cortesia_ate?: string | null
-  status_comercial?: string | null
-  expira_em?: string | null
-}
-
-/**
- * A mensalidade daquele ciclo vira receita? E, se não, por quê.
- *
- * Existe porque o fechamento tratava mensalidade CONTRATADA como receita
- * REALIZADA. A margem estimada somava R$ 3.500/mês da conta demo da própria
- * Hubtek e os meses de bônus de implantação de um cliente — dinheiro que nunca
- * entrou. O custo continuava certo; a receita, não.
- *
- * A decisão usa o estado do cliente NAQUELE mês, não o de hoje: quem pagou de
- * janeiro a junho e venceu em julho mantém a receita de jan-jun. Reavaliar o
- * passado pelo presente faria a margem histórica mudar sozinha a cada
- * vencimento e a cada renovação.
- *
- * Precedência: conta demo (nunca fatura) > cortesia (bônus combinado) > sem
- * acesso (cancelado, ou vencido durante o mês inteiro).
- */
-export function motivoSemReceitaDoCiclo(
-  tenant: EstadoFaturamento,
-  mesRef: string
-): MotivoSemReceita | null {
-  if (tenant.conta_demo === true) return 'conta_demo'
-
-  const [ano, mes] = mesRef.split('-').map(Number)
-  const inicioDoMes = new Date(Date.UTC(ano, mes - 1, 1))
-
-  // O ciclo está na cortesia quando o mês COMEÇA dentro dela. Um bônus que
-  // termina no dia 20 cobre o mês inteiro: cobrar 10 dias quebrados não é o
-  // que se combina com o cliente na implantação.
-  if (tenant.faturamento_cortesia_ate) {
-    const limite = new Date(`${tenant.faturamento_cortesia_ate}T23:59:59Z`)
-    if (inicioDoMes.getTime() <= limite.getTime()) return 'cortesia'
-  }
-
-  // Cancelado/arquivado: não há o que cobrar do mês.
-  if (tenant.status_comercial === 'cancelado' || tenant.status_comercial === 'arquivado') {
-    return 'sem_acesso'
-  }
-
-  // Vencido ANTES de o mês começar — passou o mês inteiro sem acesso. Vencer no
-  // meio do mês continua faturando: o cliente usou parte do período, e cobrar
-  // proporcional é decisão comercial, não do fechamento.
-  if (tenant.expira_em && new Date(tenant.expira_em).getTime() < inicioDoMes.getTime()) {
-    return 'sem_acesso'
-  }
-
-  return null
-}
-
 /**
  * Fecha o ciclo de um tenant num mês de referência.
  *
@@ -243,7 +193,7 @@ export async function fecharCicloDoTenant(
 
   // Custo fixo rateado, congelado no fechamento. O rateio muda quando entra ou
   // sai cliente; recalcular depois daria um número diferente do que valia aqui.
-  const custoFixoRateado = await calcularCustoFixoRateado(supabase, mesRef)
+  const custoFixoRateado = await calcularCustoFixoRateado(supabase, mesRef, fim)
 
   const creditos = await receitaCreditos(supabase, tenantId, mesRef, inicio, fim)
 
@@ -322,15 +272,34 @@ export async function fecharCicloDoTenant(
 }
 
 /**
- * Custo fixo do mês dividido pelo número de clientes usado no rateio.
+ * Custo fixo do mês dividido pelos clientes que existiam naquele mês.
  *
  * Lê `custos_operacionais` (migration 007). Se a competência não tiver
  * lançamento, herda da anterior mais recente — mesma regra da tela de custos,
  * senão um fechamento no dia 1º sairia com custo fixo zero.
+ *
+ * O DIVISOR É CONTADO NO BANCO, não lido de `num_clientes`.
+ *
+ * `num_clientes` era um número digitado à mão na tela de custos e ficou em 1
+ * enquanto a base crescia. Com isso cada ciclo recebia o custo fixo INTEIRO em
+ * vez da sua fatia: com 2 clientes, a operação inteira era cobrada duas vezes
+ * por mês. Em jul+ago/2026 isso lançou R$ 1.172,84 de custo fixo onde a
+ * operação custou R$ 586,42, e a margem do período apareceu como −R$ 1.189,18
+ * em vez de −R$ 602,76.
+ *
+ * A regra que torna o rateio coerente é simples: a soma das fatias tem que dar
+ * o total. Por isso conta TODO cliente vivo no mês, inclusive conta demo e
+ * cliente em cortesia — eles consomem a mesma infraestrutura, e deixá-los de
+ * fora empurraria o custo deles para quem paga. É também o que torna visível
+ * quanto custa manter uma conta que não fatura.
+ *
+ * Arquivado não entra: saiu da operação. Cliente criado depois do mês também
+ * não — ele não existia para ratear nada.
  */
 async function calcularCustoFixoRateado(
   supabase: SupabaseClient,
-  mesRef: string
+  mesRef: string,
+  fimDoMes: string
 ): Promise<number> {
   const competencia = `${mesRef}-01`
 
@@ -357,11 +326,22 @@ async function calcularCustoFixoRateado(
 
   if (linhas.length === 0) return 0
 
-  let total = 0
-  let numClientes = 1
-  for (const l of linhas) {
-    if (l.chave === 'num_clientes') numClientes = Math.max(1, Number(l.valor))
-    else total += Number(l.valor)
-  }
+  // `num_clientes` continua sendo ignorado de propósito ao somar: ele é um
+  // parâmetro de rateio, não uma despesa. Somá-lo inflaria o custo fixo.
+  const total = linhas
+    .filter(l => l.chave !== 'num_clientes')
+    .reduce((s, l) => s + Number(l.valor), 0)
+
+  const { count } = await supabase
+    .from('tenants')
+    .select('id', { count: 'exact', head: true })
+    .neq('status_comercial', 'arquivado')
+    .lte('criado_em', fimDoMes)
+
+  // Nunca divide por zero, e nunca infla a fatia por uma contagem que falhou:
+  // no pior caso o ciclo carrega o custo inteiro, que é o comportamento antigo
+  // e conservador — erra para o lado de mostrar margem menor, não maior.
+  const numClientes = Math.max(1, count ?? 1)
+
   return total / numClientes
 }

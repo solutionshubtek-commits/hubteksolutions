@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { exportPDF } from '@/lib/exportPDF'
 import { PLANOS_MAP as PLANOS } from '@/lib/planos'
+import { motivoSemReceitaDoCiclo, type MotivoSemReceita } from '@/lib/billing/fechar-ciclo'
 
 // ─── Planos ───────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,21 @@ interface TenantOption {
   id: string
   nome: string
   plano?: string
+  // Estado de faturamento — a mensalidade deste cliente conta como receita?
+  // Sem isto a tela somava o plano de TODO cliente cadastrado, inclusive a
+  // conta demo da própria Hubtek, e exibia margem positiva para um período em
+  // que ninguém pagou.
+  conta_demo?: boolean | null
+  faturamento_cortesia_ate?: string | null
+  status_comercial?: string | null
+  expira_em?: string | null
+  criado_em?: string | null
+}
+
+const MOTIVO_SEM_RECEITA: Record<MotivoSemReceita, { label: string; cor: string }> = {
+  conta_demo: { label: 'Conta demo', cor: '#818CF8' },
+  cortesia:   { label: 'Cortesia',   cor: '#F59E0B' },
+  sem_acesso: { label: 'Sem acesso', cor: '#71717A' },
 }
 
 interface MesData {
@@ -180,7 +196,7 @@ export default function CustosIAPage() {
   const [showCustosModal, setShowCustosModal] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
   const [custosFixos, setCustosFixos] = useState<CustosFixos>(CUSTOS_FIXOS_DEFAULT)
-  const [numClientes, setNumClientes] = useState(1)
+
   const [salvandoCustos, setSalvandoCustos] = useState(false)
   const [erroCustos, setErroCustos] = useState('')
   // Competência de onde os valores vieram, quando o mês selecionado ainda não
@@ -197,7 +213,9 @@ export default function CustosIAPage() {
     const supabase = createClient()
     setLoading(true)
     try {
-      const { data: tData } = await supabase.from('tenants').select('id, nome, plano').order('nome')
+      const { data: tData } = await supabase.from('tenants')
+        .select('id, nome, plano, conta_demo, faturamento_cortesia_ate, status_comercial, expira_em, criado_em')
+        .order('nome')
       setTenants((tData ?? []) as TenantOption[])
 
       // Busca instâncias por tenant
@@ -268,6 +286,9 @@ export default function CustosIAPage() {
   // próprio: o período é escolhido num lugar só, no topo da página.
   const balizMes = selectedMes === 'todos' ? new Date().getMonth() + 1 : selectedMes
   const competencia = `${selectedAno}-${String(balizMes).padStart(2, '0')}`
+  // Último instante do mês baliza: quem foi criado depois disso não existia
+  // para ratear custo nem para gerar receita naquele mês.
+  const fimDoMesBaliz = new Date(Date.UTC(selectedAno, balizMes, 0, 23, 59, 59))
 
   const carregarCustos = useCallback(async () => {
     setErroCustos('')
@@ -286,9 +307,6 @@ export default function CustosIAPage() {
         }
         return proximo
       })
-      if ('num_clientes' in data.valores) {
-        setNumClientes(Math.max(1, data.valores.num_clientes))
-      }
     } catch (err) {
       console.error('[custos-ia] falha ao carregar custos fixos:', err)
       setErroCustos('Não foi possível carregar os custos salvos. Os valores exibidos são os padrões.')
@@ -301,7 +319,11 @@ export default function CustosIAPage() {
     setSalvandoCustos(true)
     setErroCustos('')
     try {
-      const valores: Record<string, number> = { num_clientes: numClientes }
+      // Gravado como registro histórico do que valeu naquela competência. O
+      // fechamento não lê mais este campo — ele conta os clientes por conta
+      // própria — mas manter o valor certo evita que um relatório antigo
+      // contradiga o número que a tela mostra.
+      const valores: Record<string, number> = { num_clientes: clientesNoRateio }
       for (const [campo, chaveApi] of Object.entries(CHAVE_API) as Array<[keyof CustosFixos, string]>) {
         valores[chaveApi] = custosFixos[campo]
       }
@@ -359,7 +381,21 @@ export default function CustosIAPage() {
   const totalAnthropic = dadosPeriodo.filter(r => r.motor_utilizado === 'anthropic').reduce((s, r) => s + Number(r.custo_estimado_reais), 0)
   const totalConversasPeriodo = conversasPeriodo.length
   const totalFixoMensal = Object.values(custosFixos).reduce((s, v) => s + v, 0)
-  const fixoPorCliente = numClientes > 0 ? totalFixoMensal / numClientes : totalFixoMensal
+
+  // Divisor CONTADO, não digitado. `num_clientes` era um campo manual que ficou
+  // em 1 enquanto a base crescia, e cada ciclo passou a receber o custo fixo
+  // inteiro em vez da sua fatia — a operação inteira cobrada uma vez por
+  // cliente. É a mesma contagem que `calcularCustoFixoRateado` faz no
+  // fechamento, para a tela e o banco não divergirem.
+  //
+  // Conta demo e cliente em cortesia entram no divisor: consomem a mesma
+  // infraestrutura, e tirá-los empurraria o custo deles para quem paga.
+  const clientesNoRateio = tenants.filter(t =>
+    t.status_comercial !== 'arquivado' &&
+    (!t.criado_em || new Date(t.criado_em) <= fimDoMesBaliz)
+  ).length
+
+  const fixoPorCliente = totalFixoMensal / Math.max(1, clientesNoRateio)
 
   // Instâncias extras do tenant selecionado (ou soma de todos)
   const instanciasExtras = (() => {
@@ -461,9 +497,25 @@ export default function CustosIAPage() {
   // No consolidado a receita é a soma dos planos de todos os clientes; antes
   // usava o plano 'essencial' como padrão para o conjunto inteiro, o que fazia
   // a margem consolidada comparar o custo de N clientes com a mensalidade de um.
+  // Reconhecimento de receita — a MESMA regra do fechamento e da tela de
+  // relatórios. Antes, esta tela somava a mensalidade de todo cliente
+  // cadastrado e mostrava margem positiva para meses em que ninguém pagou:
+  // conta demo, bônus de implantação e cliente sem acesso entravam como
+  // receita. Duas telas do mesmo admin davam respostas opostas sobre o mesmo
+  // mês.
+  const semReceitaDe = (t: TenantOption) => motivoSemReceitaDoCiclo(t, competencia)
+
   const balizReceitaPlano = ehConsolidado
-    ? tenants.reduce((s, t) => s + (PLANOS[t.plano ?? 'essencial']?.valor ?? 0), 0)
-    : balizPlano.valor
+    ? tenants.reduce(
+        (s, t) => s + (semReceitaDe(t) ? 0 : (PLANOS[t.plano ?? 'essencial']?.valor ?? 0)), 0
+      )
+    : (balizTenant && semReceitaDe(balizTenant) ? 0 : balizPlano.valor)
+
+  const balizMotivo = balizTenant ? semReceitaDe(balizTenant) : null
+  const tenantsSemReceita = tenants.filter(t => semReceitaDe(t))
+  const totalNaoFaturado = tenantsSemReceita.reduce(
+    (s, t) => s + (PLANOS[t.plano ?? 'essencial']?.valor ?? 0), 0
+  )
 
   // Custo operacional = API + fixo (instâncias extras são receita, não custo)
   const balizCustoTotal = balizCustoAPI + balizCustoFixo
@@ -491,7 +543,11 @@ export default function CustosIAPage() {
     // a tela, que é a definição correta.
     const receitaInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
     const custoTotal = custoAPI + fixoPorCliente
-    const margem = plano.valor + receitaInstExtras - custoTotal
+    // Mesma regra da tela: mês de conta demo, cortesia ou sem acesso não vira
+    // receita. O arquivo entregue não pode discordar do card na tela.
+    const motivoExport = tenant ? semReceitaDe(tenant) : null
+    const receitaPlanoExport = motivoExport ? 0 : plano.valor
+    const margem = receitaPlanoExport + receitaInstExtras - custoTotal
     const custoPorConv = conversas > 0 ? custoAPI / conversas : 0
     const mesNome = `${MESES_FULL[balizMes - 1]} ${selectedAno}`
     const pad = (s: string, n: number) => s.padEnd(n, ' ')
@@ -509,7 +565,7 @@ export default function CustosIAPage() {
       `${pad('Custo fixo rateado:', 25)} ${fmtBRL(fixoPorCliente)}`,
       `${pad('Custo total operacional:', 25)} ${fmtBRL(custoTotal)}`,
       `─────────────────────────────────────`,
-      `${pad('Valor do plano:', 25)} ${fmtBRL(plano.valor)}`,
+      `${pad('Valor do plano:', 25)} ${fmtBRL(receitaPlanoExport)}${motivoExport ? ` (nao faturado — ${MOTIVO_SEM_RECEITA[motivoExport].label.toLowerCase()}; contratado ${fmtBRL(plano.valor)})` : ''}`,
       ...(instExtras > 0 ? [`${pad('Instâncias extras:', 25)} ${instExtras}x ${fmtBRL(CUSTO_INSTANCIA_EXTRA)} = ${fmtBRL(receitaInstExtras)} (receita)`] : []),
       `${pad('Margem estimada:', 25)} ${fmtBRL(margem)}`,
       `${pad('Custo médio/conversa:', 25)} ${fmtBRL(custoPorConv)}`,
@@ -529,7 +585,7 @@ export default function CustosIAPage() {
       `Resend:     ${fmtBRL(custosFixos.resend)}`,
       `Créditos OpenAI:    ${fmtBRL(custosFixos.creditosOpenai)}`,
       `Créditos Anthropic: ${fmtBRL(custosFixos.creditosAnthropic)}`,
-      `Total fixo: ${fmtBRL(totalFixoMensal)} ÷ ${numClientes} cliente(s) = ${fmtBRL(fixoPorCliente)}/cliente`,
+      `Total fixo: ${fmtBRL(totalFixoMensal)} ÷ ${clientesNoRateio} cliente(s) = ${fmtBRL(fixoPorCliente)}/cliente`,
       ...(instExtras > 0 ? [`Instâncias extras (receita): ${instExtras}x R$ ${CUSTO_INSTANCIA_EXTRA.toFixed(2)} = ${fmtBRL(receitaInstExtras)}`] : []),
       ``,
       `─────────────────────────────────────`,
@@ -561,7 +617,9 @@ export default function CustosIAPage() {
     // Mesma correção do TXT: instância extra é receita, não custo.
     const receitaInstExtras = instExtras * CUSTO_INSTANCIA_EXTRA
     const custoTotal = custoAPI + fixoPorCliente
-    const margem = plano.valor + receitaInstExtras - custoTotal
+    const motivoExport = tenant ? semReceitaDe(tenant) : null
+    const receitaPlanoExport = motivoExport ? 0 : plano.valor
+    const margem = receitaPlanoExport + receitaInstExtras - custoTotal
     const mesNome = `${MESES_FULL[balizMes - 1]} ${selectedAno}`
 
     const linhasPDF = [
@@ -569,7 +627,12 @@ export default function CustosIAPage() {
       { descricao: 'Custo estimado (API)',     valor: fmtBRL(custoAPI) },
       { descricao: 'Custo fixo rateado',       valor: fmtBRL(fixoPorCliente) },
       { descricao: 'Custo total operacional',  valor: fmtBRL(custoTotal) },
-      { descricao: 'Valor do plano',           valor: fmtBRL(plano.valor) },
+      {
+        descricao: motivoExport
+          ? `Valor do plano — nao faturado (${MOTIVO_SEM_RECEITA[motivoExport].label.toLowerCase()})`
+          : 'Valor do plano',
+        valor: fmtBRL(receitaPlanoExport),
+      },
       ...(instExtras > 0 ? [{ descricao: `Instâncias extras — receita (${instExtras}x R$${CUSTO_INSTANCIA_EXTRA})`, valor: fmtBRL(receitaInstExtras) }] : []),
       { descricao: 'Margem estimada',          valor: fmtBRL(margem) },
     ]
@@ -723,7 +786,7 @@ export default function CustosIAPage() {
           <BalizCard
             label={ehConsolidado ? 'Custo fixo total' : 'Custo fixo rateado'}
             value={fmtBRL(balizCustoFixo)}
-            sub={ehConsolidado ? 'todos os clientes' : `1 de ${numClientes} cliente(s)`}
+            sub={ehConsolidado ? 'todos os clientes' : `1 de ${clientesNoRateio} cliente(s)`}
             cor="#8B5CF6"
           />
           <BalizCard
@@ -736,11 +799,26 @@ export default function CustosIAPage() {
           <BalizCard
             label={ehConsolidado ? 'Receita dos planos' : 'Valor do plano'}
             value={fmtBRL(balizReceitaPlano)}
-            sub={ehConsolidado ? `${tenants.length} cliente(s)` : balizPlano.label}
-            cor="#10B981"
+            sub={ehConsolidado
+              ? `${tenants.length - tenantsSemReceita.length} de ${tenants.length} faturam`
+              : (balizMotivo ? MOTIVO_SEM_RECEITA[balizMotivo].label : balizPlano.label)}
+            cor={balizReceitaPlano > 0 ? "#10B981" : "var(--text-secondary)"}
           />
           <BalizCard label="Margem estimada" value={fmtBRL(balizMargem)} sub={`${balizMargemPct.toFixed(0)}% da receita`} cor={balizMargem >= 0 ? '#10B981' : '#EF4444'} />
         </div>
+
+        {/* A tela precisa DIZER por que a receita é menor que a soma dos planos.
+            Sem isto, o admin compara este card com a lista de clientes, vê os
+            planos contratados lá e conclui que o número está errado. */}
+        {tenantsSemReceita.length > 0 && (
+          <div className="mt-3 pt-3 border-t text-xs leading-relaxed"
+            style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
+            {tenantsSemReceita.length} cliente(s) não geram receita em {periodoLabel}
+            ({fmtBRL(totalNaoFaturado)} de mensalidade contratada):{' '}
+            {tenantsSemReceita.map(t => `${t.nome} (${MOTIVO_SEM_RECEITA[semReceitaDe(t)!].label.toLowerCase()})`).join(', ')}.
+            {' '}O custo de API e o rateio do custo fixo deles continuam contabilizados.
+          </div>
+        )}
 
         {balizConversas > 0 && (
           <div className="mt-3 pt-3 border-t space-y-1 text-xs" style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
@@ -813,7 +891,33 @@ export default function CustosIAPage() {
                       <tr key={c.tenantId} style={{ background: i % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-secondary)', borderTop: '1px solid var(--border)' }}>
                         <td className="px-5 py-3 font-medium" style={{ color: 'var(--text-primary)' }}>{c.nome}</td>
                         <td className="px-4 py-3 text-right">
-                          <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: '#10B98118', color: '#10B981' }}>{plano.label}</span>
+                          {(() => {
+                            // O plano contratado continua visível — é informação de
+                            // contrato. O selo ao lado diz se ele vira receita, que é
+                            // outra pergunta e estava sem resposta nesta tela.
+                            const tenantRow = tenants.find(t => t.id === c.tenantId)
+                            const motivo = tenantRow ? semReceitaDe(tenantRow) : null
+                            return (
+                              <div className="flex items-center gap-1.5 justify-end flex-wrap">
+                                <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+                                  style={{
+                                    background: motivo ? 'var(--bg-hover)' : '#10B98118',
+                                    color: motivo ? 'var(--text-secondary)' : '#10B981',
+                                  }}>
+                                  {plano.label}
+                                </span>
+                                {motivo && (
+                                  <span className="text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap"
+                                    style={{
+                                      background: MOTIVO_SEM_RECEITA[motivo].cor + '18',
+                                      color: MOTIVO_SEM_RECEITA[motivo].cor,
+                                    }}>
+                                    {MOTIVO_SEM_RECEITA[motivo].label}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          })()}
                         </td>
                         <td className="px-4 py-3 text-right" style={{ color: '#818CF8' }}>{c.conversas_ano}</td>
                         <td className="px-4 py-3 text-right" style={{ color: '#10A37F' }}>
@@ -930,12 +1034,20 @@ export default function CustosIAPage() {
                 Total recarregado: {fmtBRL(custosFixos.creditosOpenai + custosFixos.creditosAnthropic)}
               </p>
             </div>
-            <div>
-              <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Nº de clientes ativos (para rateio)</label>
-              <input type="number" min={1} value={numClientes}
-                onChange={e => setNumClientes(Math.max(1, Number(e.target.value)))}
-                className="w-full mt-1 px-3 py-1.5 rounded-lg text-sm focus:outline-none"
-                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+            {/* Era um campo digitado, e ficou em 1 enquanto a base crescia: cada
+                cliente passou a receber o custo fixo INTEIRO no fechamento, em
+                vez da sua fatia. Um número que precisa ser mantido à mão para o
+                resultado financeiro sair certo é um número que vai ficar errado.
+                Agora é contado, aqui e no fechamento, pela mesma regra. */}
+            <div className="p-3 rounded-lg text-xs" style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
+              <p className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                Rateio: {clientesNoRateio} cliente(s) (automático)
+              </p>
+              <p>
+                Contados no banco: todo cliente não arquivado que já existia em {periodoLabel}.
+                Conta demo e cliente em cortesia entram no rateio — consomem a mesma
+                infraestrutura, e deixá-los de fora empurraria o custo deles para quem paga.
+              </p>
             </div>
             <div className="p-3 rounded-lg text-xs" style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
               <p className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Instâncias extras (automático)</p>
